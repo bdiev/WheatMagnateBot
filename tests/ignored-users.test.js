@@ -64,6 +64,7 @@ async function run() {
       cleanMinecraftChatMessage: value => value,
       isPrivateMinecraftChatLine: () => false,
       bot: { username: 'Bot' },
+      observerBot: { username: 'Bot' },
       recentlyForwardedGameChat: new Map(), recentWhispers: new Map(), outboundWhispers: new Map(), pendingChatTimers: new Map(),
       consumeOutboundSelfEcho: () => false,
       isIgnoredChatPlayer: (name, uuid) => isIgnoredIdentity(entries, name, uuid),

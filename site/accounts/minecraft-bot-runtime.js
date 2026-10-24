@@ -54,6 +54,8 @@ class MinecraftBotRuntime extends BotContext {
     this.status = 'stopped';
     this.task = 'idle';
     this.startedAt = null;
+    // When this connection's player came into the world; null while not in game
+    this.spawnedAt = null;
     this.reconnectTimer = null;
     this.intervals = new Set();
     this.destroyed = false;
@@ -346,6 +348,7 @@ class MinecraftBotRuntime extends BotContext {
           if (this.status === 'error') return;
         }
         this.lastError = null;
+        if (this.bot === bot) this.spawnedAt = Date.now();
         const restartDateParts = getServerRestartDateParts(this.now());
         this.postRestartSpawnDateKey = isPostRestartStartupWindow(restartDateParts)
           ? restartDateParts.dateKey
@@ -395,15 +398,15 @@ class MinecraftBotRuntime extends BotContext {
           uuid:player?.uuid || null
         });
       });
-      if (this.isPrimary || this.account.role === 'pearl_loader') {
-        bot.on?.('whisper',(username,message) => this.emit('whisper',{accountId:this.account.id,username,message}));
-      }
+      // Every bot answers its own private messages
+      bot.on?.('whisper',(username,message) => this.emit('whisper',{accountId:this.account.id,username,message}));
       bot.once?.('end', reason => {
         const securityDisconnect = this.securityDisconnectPending;
         this.securityDisconnectPending = false;
         const connectedForMs = this.startedAt ? Math.max(0, Date.now()-this.startedAt.getTime()) : 0;
         if (connectedForMs >= STABLE_CONNECTION_RESET_MS) this.reconnectAttempts = 0;
         this.detachBot(bot);
+        this.spawnedAt = null;
         this.nearbySnapshot = [];
         this.clearRuntimeIntervals();
         bot.removeAllListeners?.();
@@ -443,6 +446,7 @@ class MinecraftBotRuntime extends BotContext {
     this.clearRuntimeIntervals();
     const bot = this.bot;
     this.detachBot(bot);
+    this.spawnedAt = null;
     if (this.authCacheStore) await this.authCacheStore.persist(this.account.id,this.authCachePath).catch(error => this.emit('auth-cache-error',error));
     this.bot = null;
     this.nearbySnapshot = [];

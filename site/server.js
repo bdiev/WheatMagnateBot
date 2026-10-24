@@ -1939,8 +1939,14 @@ async function getLiveObsidianStats(currentUser, url) {
   };
 }
 
+// Private messages belong to the bot they were sent to; the Pearl Loader,
+// which only comes into the game for a request, has none
 async function whisperAccountId(currentUser, source) {
-  return primaryOnlyAccountId(currentUser, source);
+  const accountId = await primaryOnlyAccountId(currentUser, source);
+  if ((await getAccountRegistry()).get(accountId)?.role === 'pearl_loader') {
+    throw Object.assign(new Error('The Pearl Loader account has no private messages.'), { statusCode:403 });
+  }
+  return accountId;
 }
 
 async function queueSiteChatMessage(currentUser, body) {
@@ -6443,11 +6449,6 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/whisper/online' && req.method === 'GET') {
-      const scoped = await scopedAccountRuntime(url, currentUser);
-      if (scoped) {
-        sendJson(res, 200, { players:[], available:false, accountId:scoped.account.id });
-        return;
-      }
       sendJson(res, 200, await getWhisperOnlinePlayers(currentUser, url));
       return;
     }

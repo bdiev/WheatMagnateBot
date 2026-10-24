@@ -351,8 +351,12 @@ function createPearlLoaderFeature({
     ])).catch(error => console.error('[PearlLoader] Could not record the request:', error.message));
   }
 
+  // A player who asked another of our bots hears back from that bot
+  const replyRoutes = new Map();
   const tellPrimary = async (username, message) => {
-    if (typeof sendPrimaryWhisper === 'function') await sendPrimaryWhisper(username, message);
+    const reply = replyRoutes.get(String(username || '').toLowerCase());
+    if (typeof reply === 'function') await reply(message);
+    else if (typeof sendPrimaryWhisper === 'function') await sendPrimaryWhisper(username, message);
   };
 
   async function loaderAccount() {
@@ -978,8 +982,14 @@ function createPearlLoaderFeature({
     }
   }
 
-  async function handlePrimaryWhisper(username, message) {
+  // reply: sends a whisper back from the bot that got this one (the primary when left out)
+  async function handlePrimaryWhisper(username, message, { reply = null } = {}) {
     const text = cleanWhisperText(message);
+    if (CANCEL_COMMAND.test(text) || LOAD_COMMAND.test(text) || CHECK_COMMAND.test(text)) {
+      const key = String(username || '').toLowerCase();
+      if (typeof reply === 'function') replyRoutes.set(key, reply);
+      else replyRoutes.delete(key);
+    }
     // "cancel" is only taken from someone queued or being served; anyone else's goes on as a whisper
     if (CANCEL_COMMAND.test(text)) return cancel(username);
     const mode = LOAD_COMMAND.test(text) ? 'load' : CHECK_COMMAND.test(text) ? 'check' : null;
@@ -1057,6 +1067,7 @@ function createPearlLoaderFeature({
     clearTimer(advanceTimer);
     advanceTimer = null;
     for (const entry of queue.splice(0)) clearTimer(entry.timer);
+    replyRoutes.clear();
   }
 
   return { handlePrimaryWhisper, handleLoaderWhisper, recordRuntimeEvent, isExpectedPlayer, getStatus, dispose, __test:{ isTrapdoor, trapdoorIsOpen, trapdoorInteraction, loadPlayerHatch } };

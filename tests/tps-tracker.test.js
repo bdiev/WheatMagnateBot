@@ -75,6 +75,7 @@ assert.equal(tracker.getMeasuredTps(), null);
 const botSource = fs.readFileSync(path.join(__dirname, '..', 'bot.js'), 'utf8');
 assert.doesNotMatch(botSource, /tpsHistory|realTps/);
 assert.match(botSource, /tpsTracker\.observeWorldAge\(/);
-assert.match(botSource, /bot\.on\('end', \(reason\) => \{\s*resetTpsTracking\(\);/);
+// TPS is measured from the server observer's world clock and restarts when the watch moves
+assert.match(botSource, /function refreshObserver[\s\S]*?observerBot = nextBot;[\s\S]*?resetTpsTracking\(\);/);
 
 console.log('tps-tracker tests passed');

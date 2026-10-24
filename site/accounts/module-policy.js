@@ -1,8 +1,11 @@
 'use strict';
 
-const PER_BOT_MODULES = new Set(['obsidianFarm', 'killAura', 'follow']);
+// Every bot keeps its own private messages ("whisper"). Watching the server
+// (player observation, chat collection, playtime) is done by one bot at a
+// time for all, WheatMagnate first (features/serverObserver)
+const PER_BOT_MODULES = new Set(['obsidianFarm', 'killAura', 'follow', 'whisper']);
 const PRIMARY_ONLY_MODULES = new Set([
-  'growingChild', 'whisper', 'playerObservation', 'chatCollection', 'greenChat',
+  'growingChild', 'playerObservation', 'chatCollection', 'greenChat',
   'discordBridge', 'globalPlaytime', 'serverObservation', 'globalTelemetry'
 ]);
 

@@ -39,6 +39,8 @@ Minecraft bot with Discord integration, PostgreSQL-backed stats, and a local web
 - Discord chat bridge for Minecraft messages.
 - Local web dashboard with chat, bot stats, server stats, obsidian farm stats, player profiles, and admin tools.
 - Player activity tracking: online status, last seen, playtime, chat stats, and nearby sightings.
+- Any bot can watch the server: one bot at a time (the primary while it is in game, otherwise the first other bot in game in account order, never the Pearl Loader) collects player joins and leaves, playtime, ping, TPS and public chat and feeds the Discord status. The primary takes the watch back about 5 seconds after it rejoins. A handover keeps players' sessions open; they are closed only when no bot is left in game.
+- Every bot answers its own private messages: they reach the site (in that account's dialogs) and Discord (labelled with the bot they were sent to), `Load`/`Check`/`Cancel` work through any bot, and replies from Discord go out from the bot the player last wrote to. The Pearl Loader account has no dialogs.
 - Safety scanner: disconnects when a nearby player is not whitelisted.
 - Bot inventory viewer with armor, offhand, held item, durability, tooltips, and item drop action.
 - Obsidian farm analytics with efficiency, downtime, supply forecasts, confidence explanations, anomalies, goals, period comparisons, graph annotations, CSV export, and scheduled Discord reports.

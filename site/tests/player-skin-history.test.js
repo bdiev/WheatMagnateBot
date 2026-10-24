@@ -41,7 +41,7 @@ assert.match(serverSource, /renderOfficialMinecraftAvatar[\s\S]*const sources = 
 assert.match(serverSource, /const displayCapeRows = \[\.\.\.capeResult\.rows\]/, 'the wardrobe must show the complete saved Mojang and NameMC cape history');
 assert.doesNotMatch(serverSource, /nameMcCapeRows\.length[\s\S]*cape_source !== 'namemc'/, 'NameMC imports must not hide older Mojang cape observations');
 assert.match(historySource, /activeRefreshes\.get[\s\S]*activeRefreshes\.set/, 'concurrent external skin refreshes must be deduplicated');
-assert.match(botSource, /bot\.on\('playerJoined'[\s\S]*schedulePlayerSkinHistoryRefresh\(player\)/, 'the primary bot must refresh skin history after every player join');
+assert.match(botSource, /on\('playerJoined'[\s\S]*schedulePlayerSkinHistoryRefresh\(player\)/, 'the server observer must refresh skin history after every player join');
 assert.match(runtimeSource, /bot\.on\?\.\('playerJoined'[\s\S]*this\.emit\('player-joined'/, 'managed Minecraft runtimes must forward player join events');
 assert.match(botSource, /runtime\.on\('player-joined'[\s\S]*schedulePlayerSkinHistoryRefresh\(player/, 'managed accounts must refresh skin history from forwarded join events');
 assert.match(serverSource, /\/api\/player-skins/, 'the authenticated skin-history endpoint must exist');

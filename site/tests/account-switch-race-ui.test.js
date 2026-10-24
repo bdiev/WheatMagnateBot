@@ -13,8 +13,8 @@ assert.match(source, /const accountId=avatar\.dataset\.accountId;[\s\S]*?selectA
   'mobile profile taps capture and select the account before collapsing the switcher');
 assert.match(styles, /\.topbar-actions\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?\.topbar-actions #themeToggle\s*\{[\s\S]*?flex:\s*0 0 74px;[\s\S]*?\.topbar-actions #logoutButton\s*\{[\s\S]*?flex:\s*1 1 0;/,
   'the phone header lets Log out grow before the fixed-width theme toggle');
-assert.match(source, /whisperPanel\.classList\.toggle\('account-scope-hidden', restricted\)/,
-  'secondary accounts must collapse the primary-only dialogs control');
+assert.match(source, /const whispersHidden = account\?\.role === 'pearl_loader';[\s\S]*?whisperPanel\.classList\.toggle\('account-scope-hidden', whispersHidden\)/,
+  'only the Pearl Loader account, which has no private messages, collapses the dialogs control');
 assert.match(styles, /\.whisper-panel\.account-scope-hidden\s*\{[\s\S]*?flex-basis:\s*0;[\s\S]*?margin-right:\s*-10px;[\s\S]*?opacity:\s*0;/,
   'the dialogs slot must animate closed without leaving the flex gap behind');
 assert.match(styles, /body\.account-switcher-open \.topbar\s*\{\s*z-index:\s*180;\s*\}[\s\S]*?\.account-switcher-backdrop\s*\{[^}]*z-index:\s*150;/,

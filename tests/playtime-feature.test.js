@@ -275,9 +275,9 @@ async function run() {
   assert.equal(finalQueries.filter(sql => /WITH elapsed AS/.test(sql)).length, 1);
 
   const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
-  assert.match(botSource, /bot\.on\('playerJoined'[\s\S]*?if \(player\.username && bot === createdBot\) \{[\s\S]*?syncWhitelistPlaytime\(onlineUsernames\)/,
+  assert.match(botSource, /on\('playerJoined'[\s\S]*?if \(player\.username && observerBot === target\) \{[\s\S]*?syncWhitelistPlaytime\(onlineUsernames\)/,
     'a join handler that outlives its connection must not restart PT timers after the disconnect flush');
-  assert.match(botSource, /bot\.on\('playerLeft'[\s\S]*?if \(player\.username && bot === createdBot\) \{[\s\S]*?syncWhitelistPlaytime\(onlineUsernames\)/);
+  assert.match(botSource, /on\('playerLeft'[\s\S]*?if \(player\.username && observerBot === target\) \{[\s\S]*?syncWhitelistPlaytime\(onlineUsernames\)/);
   const nixpacksSource = fs.readFileSync(path.resolve(__dirname, '..', 'nixpacks.toml'), 'utf8');
   assert.match(botSource, /playtime_non_whitelist_search_modal[\s\S]*playtime_search_query/, 'the search button must open a nickname modal');
   assert.match(botSource, /searchNonWhitelistPlaytime\(query, 25\)/, 'the modal must run the non-whitelist playtime search');

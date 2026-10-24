@@ -59,6 +59,7 @@ const {
 } = require('./features/playerInfoBackfill');
 const { createWhisperFeature } = require('./features/whisper');
 const { createPearlLoaderFeature, PEARL_LOADER_ROLE } = require('./features/pearlLoader');
+const { chooseObserver } = require('./features/serverObserver');
 const { createFollowFeature } = require('./features/follow');
 const { createKillAuraFeature } = require('./features/killAura');
 const { isValidKillAuraRange, normalizeKillAuraRange } = require('./features/killAura/range');
@@ -1550,6 +1551,19 @@ function buildPlayerWhisperCommands(username, rawText) {
 
 function isGameCommandText(text) {
   return /^[/!]/.test(String(text || '').trim());
+}
+
+// Which bot each player last whispered: replies from Discord go out from it
+const whisperReplyAccounts = new Map();
+
+// The bot a reply to this player goes out from: the one the player last
+// whispered while it is in game, else WheatMagnate, else the server observer
+function whisperSenderFor(username) {
+  const accountId = whisperReplyAccounts.get(String(username || '').toLowerCase());
+  const runtimeBot = accountId && accountId !== DEFAULT_ACCOUNT_ID ? multiBotManager?.get(accountId)?.bot : null;
+  if (runtimeBot?.entity) return runtimeBot;
+  if (bot?.entity) return bot;
+  return observerBot?.entity ? observerBot : null;
 }
 
 function markOutboundWhisper(username, text) {
@@ -3234,18 +3248,173 @@ async function dropItemToNearestPlayer(item) {
 
 
 
+// -------------- SERVER OBSERVER --------------
+// One bot at a time watches the server for everyone: player joins and leaves,
+// playtime, ping, TPS, public chat and the Discord status. It is WheatMagnate
+// while it is in game, otherwise the first other bot in game in account order
+// (never the Pearl Loader). Handing the watch over keeps the players' sessions
+// open; they are closed only when no bot is left in game.
+let observerBot = null;
+let observerAccountId = null;
+let detachObserverListeners = null;
+let primarySpawnedAt = null;
+
+function primaryUsernameKey() {
+  return String(bot?.username || config.username || '').toLowerCase();
+}
+
+function observerCandidates(goneBot = null) {
+  const candidates = [];
+  if (bot?.entity && bot !== goneBot && primarySpawnedAt) {
+    candidates.push({ accountId: DEFAULT_ACCOUNT_ID, bot, isPrimary: true, spawnedAt: primarySpawnedAt });
+  }
+  for (const account of multiAccountRegistry?.list?.() || []) {
+    if (account.isDefault || account.role === PEARL_LOADER_ROLE) continue;
+    const runtime = multiBotManager?.get(account.id);
+    const runtimeBot = runtime?.bot;
+    if (!runtimeBot?.entity || runtimeBot === goneBot || !runtime.spawnedAt) continue;
+    candidates.push({ accountId: account.id, bot: runtimeBot, isPrimary: false, spawnedAt: runtime.spawnedAt });
+  }
+  return candidates;
+}
+
+function startObserverIntervals() {
+  if (!playerActivitySyncInterval) {
+    playerActivitySyncInterval = setInterval(() => {
+      if (!playerActivityJoinEventsReady) return;
+      syncPlayerActivityOnlineState().catch(err => {
+        console.error('[PlayerActivity] Sync interval failed:', err.message);
+      });
+    }, 1000);
+  }
+  if (!playtimeSyncInterval) {
+    playtimeSyncInterval = setInterval(() => {
+      syncWhitelistPlaytime().catch(err => console.error('[Playtime] Sync interval failed:', err.message));
+    }, 30_000);
+  }
+  // TPS: TAB header/footer first, /tps reply as fallback, world-age measurement otherwise
+  if (!tpsTabInterval) tpsTabInterval = setInterval(pollServerTps, 10000);
+  playerPing.start();
+  playerPing.sample().catch(err => console.error('[PlayerPing] Initial sample failed:', err.message));
+}
+
+function stopObserverIntervals() {
+  clearInterval(playerActivitySyncInterval);
+  playerActivitySyncInterval = null;
+  clearInterval(playtimeSyncInterval);
+  playtimeSyncInterval = null;
+  clearInterval(tpsTabInterval);
+  tpsTabInterval = null;
+  playerPing.stop();
+}
+
+// No bot is left in game: every player seen online is closed at this moment.
+// Without it the session history keeps them "online" until their next event,
+// which inflated unique-player periods and online history.
+function closeObservedPlayerSessions() {
+  const observedOnline = lastObservedOnlinePlayerKeys;
+  lastObservedOnlinePlayerKeys = null;
+  playerActivityJoinEventsReady = false;
+  if (observedOnline?.size) {
+    Promise.all([...observedOnline.values()].map(username =>
+      updatePlayerActivity(username, false, { recordEvent: true })
+    ))
+      .catch(err => console.error('[PlayerActivity] Disconnect offline flush failed:', err.message));
+  }
+  if (!multiAccountShuttingDown) {
+    syncWhitelistPlaytime([], { allowEmptySnapshot: true })
+      .catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
+  }
+}
+
+// gone: a bot whose connection has just ended but may still look in game
+function refreshObserver({ gone = null } = {}) {
+  const next = chooseObserver({
+    candidates: observerCandidates(gone),
+    currentBot: observerBot === gone ? null : observerBot,
+    now: Date.now()
+  });
+  const nextBot = next?.bot || null;
+  if (nextBot === observerBot) return;
+
+  const previousBot = observerBot;
+  detachObserverListeners?.();
+  detachObserverListeners = null;
+  observerBot = nextBot;
+  observerAccountId = next?.accountId || null;
+  // TPS and game time are measured from one connection's world clock
+  resetTpsTracking();
+  gameTimePushMonitor.reset();
+
+  if (!nextBot) {
+    stopObserverIntervals();
+    closeObservedPlayerSessions();
+    recordSystemLog({ level: 'warn', category: 'minecraft', message: 'No bot is in game to watch the server.' }).catch(() => {});
+    updateStatusMessage().catch(() => {});
+    return;
+  }
+
+  detachObserverListeners = attachObserverListeners(nextBot);
+  recordSystemLog({
+    level: 'info',
+    category: 'minecraft',
+    message: `${nextBot.username} watches the server.`,
+    details: { accountId: observerAccountId, previous: previousBot?.username || null }
+  }).catch(() => {});
+
+  if (previousBot) {
+    // The new observer has been in game for a while, so its player list is
+    // complete: the sessions go on, and the next sync only applies the joins
+    // and leaves that happened during the handover
+    playerActivityJoinEventsReady = true;
+    syncPlayerActivityOnlineState()
+      .then(() => syncWhitelistPlaytime())
+      .catch(err => console.error('[PlayerActivity] Sync after observer handover failed:', err.message));
+  } else {
+    // A fresh view of the server: startup playerJoined packets are incremental,
+    // so the first authoritative sync waits for the list to settle and also
+    // repairs rows left online by a dead process
+    playerActivityJoinEventsReady = false;
+    playerActivityReconciliationPending = true;
+    setTimeout(async () => {
+      // A short-lived connection may end before this delayed callback. Never
+      // let its stale startup task authorize or reconcile a replacement bot.
+      if (observerBot !== nextBot || !nextBot.entity) return;
+      try {
+        playerActivityJoinEventsReady = true;
+        await syncPlayerActivityOnlineState();
+        await syncWhitelistPlaytime();
+      } catch (err) {
+        console.error('[PlayerActivity] Initial sync after spawn failed:', err.message);
+      }
+    }, 3000);
+  }
+  startObserverIntervals();
+  updateStatusMessage().catch(() => {});
+}
+
+// Picks up settling bots (the primary taking the watch back) and connections
+// that ended without an event reaching here
+setInterval(() => {
+  try {
+    refreshObserver();
+  } catch (err) {
+    console.error('[Observer] Refresh failed:', err.message);
+  }
+}, 1000).unref?.();
+
 function getOnlineWhitelistUsernames() {
-  if (!bot || !bot.players) return [];
-  const usernames = Object.values(bot.players)
+  if (!observerBot || !observerBot.players) return [];
+  const usernames = Object.values(observerBot.players)
     .map(player => player.username)
     .filter(username => username && isWhitelistedPlayer(username));
   if (
-    bot.username &&
-    bot.entity &&
-    isWhitelistedPlayer(bot.username, bot.player?.uuid || null) &&
-    !usernames.some(username => username.toLowerCase() === bot.username.toLowerCase())
+    observerBot.username &&
+    observerBot.entity &&
+    isWhitelistedPlayer(observerBot.username, observerBot.player?.uuid || null) &&
+    !usernames.some(username => username.toLowerCase() === observerBot.username.toLowerCase())
   ) {
-    usernames.push(bot.username);
+    usernames.push(observerBot.username);
   }
   return usernames;
 }
@@ -3260,14 +3429,14 @@ function addObservedOnlineUsername(usernames, rawUsername) {
 }
 
 function getOnlinePlayerUsernames() {
-  if (!bot) return [];
+  if (!observerBot) return [];
   const usernames = new Map();
 
-  for (const player of Object.values(bot.players || {})) {
+  for (const player of Object.values(observerBot.players || {})) {
     addObservedOnlineUsername(usernames, player?.username);
   }
 
-  for (const player of Object.values(bot.tablist?.players || {})) {
+  for (const player of Object.values(observerBot.tablist?.players || {})) {
     addObservedOnlineUsername(usernames, player?.username);
     addObservedOnlineUsername(usernames, player?.profile?.name);
   }
@@ -3277,14 +3446,14 @@ function getOnlinePlayerUsernames() {
 
 function getOnlinePlayerUuid(username) {
   const usernameKey = String(username || '').toLowerCase();
-  if (!usernameKey || !bot) return null;
+  if (!usernameKey || !observerBot) return null;
 
-  const player = Object.values(bot.players || {}).find(candidate =>
+  const player = Object.values(observerBot.players || {}).find(candidate =>
     String(candidate?.username || '').toLowerCase() === usernameKey
   );
   if (player?.uuid) return dashedMinecraftUuid(player.uuid);
 
-  const tablistEntry = Object.entries(bot.tablist?.players || {}).find(([, candidate]) =>
+  const tablistEntry = Object.entries(observerBot.tablist?.players || {}).find(([, candidate]) =>
     [candidate?.username, candidate?.profile?.name].some(name =>
       String(name || '').toLowerCase() === usernameKey
     )
@@ -3298,14 +3467,14 @@ function getOnlinePlayerUuid(username) {
 
 function getOnlinePlayerUsernameByUuid(value) {
   const uuid = dashedMinecraftUuid(value);
-  if (!uuid || !bot) return null;
+  if (!uuid || !observerBot) return null;
   const compactUuid = uuid.replace(/-/g, '');
-  const directPlayer = Object.values(bot.players || {}).find(candidate =>
+  const directPlayer = Object.values(observerBot.players || {}).find(candidate =>
     dashedMinecraftUuid(candidate?.uuid)?.replace(/-/g, '') === compactUuid
   );
   if (directPlayer?.username) return directPlayer.username;
 
-  const tablistEntry = Object.entries(bot.tablist?.players || {}).find(([key, candidate]) =>
+  const tablistEntry = Object.entries(observerBot.tablist?.players || {}).find(([key, candidate]) =>
     [candidate?.uuid, candidate?.profile?.id, key].some(candidateUuid =>
       dashedMinecraftUuid(candidateUuid)?.replace(/-/g, '') === compactUuid
     )
@@ -3314,14 +3483,17 @@ function getOnlinePlayerUsernameByUuid(value) {
 }
 
 async function syncPlayerActivityOnlineState() {
-  if (!pool || !bot || playerActivitySyncRunning) return;
+  if (!pool || !observerBot || playerActivitySyncRunning) return;
 
   playerActivitySyncRunning = true;
   try {
-    const botUsername = String(bot.username || '').toLowerCase();
+    const observerUsername = String(observerBot.username || '').toLowerCase();
+    // WheatMagnate is never counted as a player; the other bots always are,
+    // whichever bot watches, so handing the watch over logs no false joins
+    const botUsername = primaryUsernameKey();
     const observedUsernames = getOnlinePlayerUsernames();
     const hasAnyObservedPlayers = observedUsernames.length > 0;
-    const hasObservedSelf = botUsername && observedUsernames.some(username => username.toLowerCase() === botUsername);
+    const hasObservedSelf = observerUsername && observedUsernames.some(username => username.toLowerCase() === observerUsername);
     if (!hasAnyObservedPlayers && lastObservedOnlinePlayerKeys) {
       console.warn('[PlayerActivity] Skipping offline sync because Mineflayer returned an empty player snapshot.');
       return;
@@ -3335,7 +3507,7 @@ async function syncPlayerActivityOnlineState() {
     // departures against the players observed when this sync started, and
     // re-check the live list before writing one, so a stale snapshot never
     // logs a false leave over a fresh join.
-    const syncBot = bot;
+    const syncBot = observerBot;
     const previouslyObserved = lastObservedOnlinePlayerKeys ? new Map(lastObservedOnlinePlayerKeys) : null;
     const liveOnlineKeys = () => new Set(getOnlinePlayerUsernames().map(username => username.toLowerCase()));
 
@@ -3367,7 +3539,7 @@ async function syncPlayerActivityOnlineState() {
     });
     // The connection ended or was replaced meanwhile; its end handler owns
     // the offline flush and the next connection builds its own snapshot.
-    if (bot !== syncBot) return;
+    if (observerBot !== syncBot) return;
 
     if (previouslyObserved) {
       // Iterate keys, not [key, value] entries: entries never matched, so a
@@ -3446,13 +3618,13 @@ const {
 });
 
 function getOnlinePlayerPings() {
-  if (!bot) return [];
-  const players = Object.values(bot.players || {}).map(player => ({
+  if (!observerBot) return [];
+  const players = Object.values(observerBot.players || {}).map(player => ({
     username: player?.username,
     uuid: dashedMinecraftUuid(player?.uuid),
     ping: player?.ping
   }));
-  for (const [key, player] of Object.entries(bot.tablist?.players || {})) {
+  for (const [key, player] of Object.entries(observerBot.tablist?.players || {})) {
     players.push({
       username: player?.username || player?.profile?.name,
       uuid: dashedMinecraftUuid(player?.uuid || player?.profile?.id || key),
@@ -3465,7 +3637,7 @@ function getOnlinePlayerPings() {
 const playerPing = createPlayerPingFeature({
   pool,
   getPlayers: getOnlinePlayerPings,
-  getBotUsername: () => bot?.username || null
+  getBotUsername: () => observerBot?.username || null
 });
 
 const discordPlayerInfoFetchTimers = new Map();
@@ -6071,8 +6243,10 @@ function rememberBotPublicChatPhrase(message) {
   updateStatusMessage().catch(() => {});
 }
 
+// Sends as WheatMagnate, or as options.bot
 function sendMinecraftChat(message, options = {}) {
-  if (!bot || typeof bot.chat !== 'function') return false;
+  const sender = options.bot || bot;
+  if (!sender || typeof sender.chat !== 'function') return false;
   const normalized = normalizeOutboundChat(message);
   const cutoff = Date.now() - 10_000;
   for (const [key, timestamps] of recentOutboundChat.entries()) {
@@ -6085,9 +6259,15 @@ function sendMinecraftChat(message, options = {}) {
     timestamps.push(Date.now());
     recentOutboundChat.set(normalized, timestamps);
   }
-  bot.chat(message);
+  sender.chat(message);
   if (options.trackStatus) rememberBotPublicChatPhrase(message);
   return true;
+}
+
+// Replies to what the server observer saw (public chat commands, /tps) come
+// from the observer, which is WheatMagnate while it is in game
+function sendServerChat(message, options = {}) {
+  return sendMinecraftChat(message, { ...options, bot: observerBot || bot });
 }
 
 function splitMinecraftMessage(text, maxLength = MINECRAFT_PRIVATE_MESSAGE_LENGTH) {
@@ -6141,8 +6321,8 @@ async function sendPrivateMinecraftMessage(username, text) {
     .trim();
 
   for (const chunk of splitMinecraftMessage(cleanText)) {
-    if (!bot?.entity) return;
-    sendMinecraftChat(`/msg ${username} ${chunk}`);
+    if (!(observerBot || bot)?.entity) return;
+    sendServerChat(`/msg ${username} ${chunk}`);
     outboundWhispers.set(`OUTBOUND:${String(username).toLowerCase()}:${cleanMinecraftChatMessage(chunk)}`, Date.now());
     await new Promise(resolve => setTimeout(resolve, 400));
   }
@@ -6494,8 +6674,8 @@ async function preparePlayerInfoRefresh(payload, cleanMessage) {
 
 function isMinecraftPlayerOnline(username) {
   const target = String(username || '').toLowerCase();
-  if (!target || !bot?.players) return false;
-  return Object.values(bot.players).some(player =>
+  if (!target || !observerBot?.players) return false;
+  return Object.values(observerBot.players).some(player =>
     String(player?.username || '').toLowerCase() === target
   );
 }
@@ -7139,6 +7319,7 @@ async function initializeMultiAccountManager() {
         runtime.setKillAuraEnabled(true);
       }
       runtime.on('status', status => {
+        refreshObserver();
         persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message));
         enqueueManagedFarmWrite('Farm state persistence', () => syncManagedFarmState(
           pool,
@@ -7171,6 +7352,8 @@ async function initializeMultiAccountManager() {
       runtime.on('auth-cache-error', error => console.error(`[Accounts] Auth-cache persistence failed for ${account.id}:`,error.message));
       runtime.on('monitor-error', error => console.error(`[Accounts] AFK monitor failed for ${account.id}:`,error.message));
       runtime.on('chat', event => {
+        // The observer's chat already goes through attachObserverListeners
+        if (runtime.bot && runtime.bot === observerBot) return;
         playerInfoObservation.observe(event.username, event.message);
       });
       runtime.on('player-joined', player => {
@@ -7180,10 +7363,8 @@ async function initializeMultiAccountManager() {
       });
       runtime.on('whisper', async whisper => {
         if (account.role === PEARL_LOADER_ROLE && await pearlLoaderFeature?.handleLoaderWhisper(account.id, whisper.username, whisper.message)) return;
-        const key = `${account.id}:${String(whisper.username || '').toLowerCase()}`;
-        const target = siteWhisperTargets.get(key);
-        const siteUsername = typeof target === 'object' && target.siteUsername ? target.siteUsername : DEFAULT_SITE_WHISPER_USERNAME;
-        recordSiteWhisperMessage(whisper.username,'incoming',whisper.message,siteUsername,account.id).catch(error => console.error(`[Accounts] Whisper persistence failed for ${account.id}:`,error.message));
+        await handleAccountWhisper(runtime.account || account, runtime, whisper)
+          .catch(error => console.error(`[Accounts] Whisper handling failed for ${account.id}:`, error.message));
       });
       runtime.on('profile-resolved', async profile => {
         try {
@@ -7209,6 +7390,7 @@ async function initializeMultiAccountManager() {
         sendOwnerDM('Microsoft Login', `Account: **${account.username}**\nAccount ID: \`${account.id}\`\n\nOpen ${verificationUri} and enter code **${userCode || 'shown in the server log'}**.`, 16776960);
       });
       runtime.on('end', reason => {
+        refreshObserver();
         const normalizedReason = normalizeStatusReason(reason) || 'Connection closed';
         persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
         if (pearlLoaderFeature?.recordRuntimeEvent(account.id, 'warn', `${account.displayName}: Minecraft connection ended.`, { reason: normalizedReason })) return;
@@ -7239,6 +7421,55 @@ async function initializeMultiAccountManager() {
     .filter(item => item.role !== PEARL_LOADER_ROLE)) {
     await multiBotManager.start(account.id).catch(error => console.error(`[Accounts] Could not start ${account.displayName}:`, error.message));
   }
+}
+
+// A private message to one of the other bots gets the same handling as one to
+// WheatMagnate (commands, the site, Discord) and is answered from that bot
+async function handleAccountWhisper(account, runtime, { username, message }) {
+  const receiver = runtime?.bot;
+  const safeUsername = String(username || '').trim();
+  if (!safeUsername || safeUsername.toLowerCase() === String(receiver?.username || account.username || '').toLowerCase()) return;
+  const usernameKey = safeUsername.toLowerCase();
+  const cleanedWhisper = cleanMinecraftChatMessage(String(message || '')
+    .replace(/§[0-9a-fk-or]/gi, '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .trim());
+  const siteKey = `${account.id}:${usernameKey}`;
+  if (isIgnoredChatPlayer(safeUsername)) {
+    siteWhisperTargets.delete(siteKey);
+    return;
+  }
+
+  const reply = text => {
+    if (!receiver?.entity || !sendMinecraftChat(`/w ${safeUsername} ${String(text || '').replace(/[\r\n]+/g, ' ').trim()}`, { bot: receiver })) {
+      throw new Error(`${account.displayName || account.username} is not in game.`);
+    }
+  };
+  // The Pearl Loader account only comes in for a request; it takes no commands
+  if (account.role !== PEARL_LOADER_ROLE &&
+      await pearlLoaderFeature?.handlePrimaryWhisper(safeUsername, cleanedWhisper, { reply })) return;
+
+  // The observer may also have read the line as public chat
+  recentWhispers.set(`WHISPER:${safeUsername}:${cleanedWhisper}`, Date.now());
+  recentWhispers.set(`WHISPER:${usernameKey}:${cleanedWhisper}`, Date.now());
+  cancelPendingGameChat(safeUsername, cleanedWhisper);
+  whisperReplyAccounts.set(usernameKey, account.id);
+
+  const siteState = siteWhisperTargets.get(siteKey);
+  const siteTimestamp = typeof siteState === 'object' ? siteState?.timestamp : siteState;
+  const hasActiveSiteDialog = Boolean(siteTimestamp) && Date.now() - siteTimestamp <= SITE_WHISPER_TTL_MS;
+  if (siteState && !hasActiveSiteDialog) siteWhisperTargets.delete(siteKey);
+  const siteUsername = typeof siteState === 'object' && siteState.siteUsername
+    ? siteState.siteUsername
+    : DEFAULT_SITE_WHISPER_USERNAME;
+  recordSiteWhisperMessage(safeUsername, 'incoming', cleanedWhisper, siteUsername, account.id)
+    .catch(error => console.error(`[Accounts] Whisper persistence failed for ${account.id}:`, error.message));
+
+  if (hasActiveSiteDialog) {
+    siteWhisperTargets.set(siteKey, { timestamp: Date.now(), siteUsername });
+    return;
+  }
+  await sendWhisperToDiscord(safeUsername, cleanedWhisper, { recipient: receiver?.username || account.username });
 }
 
 async function executeManagedAccountCommand(command) {
@@ -7279,6 +7510,56 @@ async function executeManagedAccountCommand(command) {
   }
   if (type === 'pause') return runtime.pause();
   if (type === 'resume') return runtime.resume();
+  if (type === 'site_whisper_claim') {
+    const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+    if (!username) throw new Error('Whisper target is required.');
+    siteWhisperTargets.set(`${command.account_id}:${username.toLowerCase()}`, {
+      timestamp: Date.now(),
+      siteUsername: sanitizeBridgeSender(command.requested_by || command.source) || null
+    });
+    await removeWhisperClaimPrompt(username);
+    return { username, claimed: true };
+  }
+  if (type === 'site_whisper') {
+    const receiver = runtime.bot;
+    if (!receiver?.entity) throw new Error('Account is not connected.');
+    const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+    const cleanMessage = sanitizeSiteChatMessage(payload.message);
+    const commandAlias = String(payload.commandAlias || '').toLowerCase() === 'w' ? 'w' : 'msg';
+    if (!username) throw new Error('Whisper target is required.');
+    if (!cleanMessage) throw new Error('Queued whisper is empty.');
+    if (!isMinecraftPlayerOnline(username)) {
+      throw new DeferredBotCommandError(`Whisper target ${username} is offline; waiting for join.`, {
+        offlineUntilJoin: true,
+        deferredUntil: null
+      });
+    }
+    siteWhisperTargets.set(`${command.account_id}:${username.toLowerCase()}`, {
+      timestamp: Date.now(),
+      siteUsername: sanitizeBridgeSender(command.requested_by || command.source) || null
+    });
+    whisperReplyAccounts.set(username.toLowerCase(), command.account_id);
+    await removeWhisperClaimPrompt(username);
+    let sentChunks = 0;
+    for (const chunk of splitMinecraftMessage(cleanMessage)) {
+      if (!receiver.entity || !sendMinecraftChat(`/${commandAlias} ${username} ${chunk}`, { bot: receiver })) {
+        throw new Error('Account is not connected.');
+      }
+      outboundWhispers.set(`OUTBOUND:${username.toLowerCase()}:${cleanMinecraftChatMessage(chunk)}`, Date.now());
+      sentChunks += 1;
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+    const messageId = String(payload.messageId || '').replace(/[^\d]/g, '');
+    if (messageId && pool) {
+      await pool.query(`
+        UPDATE site_whisper_messages
+        SET delivery_status = 'delivered'
+        WHERE id = $1
+          AND direction = 'outgoing'
+      `, [messageId]);
+    }
+    return { username, chunks: sentChunks };
+  }
   if (type === 'chat') {
     if (!runtime.bot?.chat) throw new Error('Account is not connected.');
     const cleanMessage = sanitizeSiteChatMessage(payload.message);
@@ -7443,7 +7724,10 @@ async function processManagedAccountCommands() {
       WHERE account_id<>$1::uuid AND status='processing' AND lease_expires_at<NOW()`, [DEFAULT_ACCOUNT_ID]);
   }
   const claimed = await pool.query(`WITH next AS (
-      SELECT id FROM bot_commands WHERE account_id<>$1::uuid AND status='pending' ORDER BY created_at LIMIT 10 FOR UPDATE SKIP LOCKED
+      SELECT id FROM bot_commands WHERE account_id<>$1::uuid AND status='pending'
+        AND (command_type <> 'site_whisper' OR COALESCE(payload->>'offlineUntilJoin','false') <> 'true')
+        AND (command_type <> 'site_whisper' OR payload->>'deferredUntil' IS NULL OR (payload->>'deferredUntil')::timestamptz <= NOW())
+        ORDER BY created_at LIMIT 10 FOR UPDATE SKIP LOCKED
     ) UPDATE bot_commands c SET status='processing',started_at=NOW(),locked_by=$2,lease_expires_at=NOW()+INTERVAL '45 seconds',attempt_count=c.attempt_count+1
     FROM next WHERE c.id=next.id RETURNING c.*`, [DEFAULT_ACCOUNT_ID, COMMAND_WORKER_ID]);
   for (const command of claimed.rows) {
@@ -7451,6 +7735,11 @@ async function processManagedAccountCommands() {
       const result = await executeManagedAccountCommand(command);
       await pool.query(`UPDATE bot_commands SET status='done',result=$2,error=NULL,finished_at=NOW(),locked_by=NULL,lease_expires_at=NULL WHERE id=$1`, [command.id, result || {}]);
     } catch (error) {
+      if (error instanceof DeferredBotCommandError) {
+        await pool.query(`UPDATE bot_commands SET status='pending',payload=payload||$2::jsonb,result=jsonb_build_object('deferred',true,'reason',$3::text),error=NULL,started_at=NULL,locked_by=NULL,lease_expires_at=NULL WHERE id=$1`,
+          [command.id, JSON.stringify(error.payloadPatch || {}), error.message]);
+        continue;
+      }
       await pool.query(`UPDATE bot_commands SET status='failed',error=$2,finished_at=NOW(),locked_by=NULL,lease_expires_at=NULL WHERE id=$1`, [command.id, error.message]);
     }
   }
@@ -7606,7 +7895,7 @@ function isMinecraftSystemUsername(username) {
 
 function isPrivateMinecraftChatLine(text) {
   return isPrivateMinecraftChatText(cleanMinecraftChatMessage(text), {
-    recipientUsernames: bot?.username ? [bot.username] : []
+    recipientUsernames: observerBot?.username ? [observerBot.username] : []
   });
 }
 
@@ -7650,7 +7939,9 @@ function scheduleGameChatForward(username, message, source = 'chat', { waitForDe
   }
 
   const nowTs = Date.now();
-  const isSelfMessage = bot?.username && safeUsername.toLowerCase() === bot.username.toLowerCase();
+  // What the observer or WheatMagnate sent itself is already mirrored where it was sent from
+  const isSelfMessage = [observerBot?.username, bot?.username]
+    .some(name => name && safeUsername.toLowerCase() === name.toLowerCase());
   const pendingKey = `CHAT:${safeUsername.toLowerCase()}:${cleanMessage}`;
   for (const [key, state] of recentlyForwardedGameChat.entries()) {
     if (nowTs - state.timestamp > 2_000) recentlyForwardedGameChat.delete(key);
@@ -7983,11 +8274,11 @@ async function handleWmCommand(username, question) {
     });
     const chunks = splitMinecraftMessage(answer.replace(/[\r\n]+/g, ' '), WM_CHAT_CHUNK_LENGTH);
     for (let index = 0; index < chunks.length; index++) {
-      if (!bot?.entity) return;
+      if (!observerBot?.entity) return;
       const prefix = chunks.length > 1 ? `[${index + 1}/${chunks.length}] ` : '';
       const message = `> ${prefix}${chunks[index]}`;
-      sendMinecraftChat(message);
-      await sendGameChatMessageToDiscord(bot.username, message, {
+      sendServerChat(message);
+      await sendGameChatMessageToDiscord(observerBot.username, message, {
         allowMentions: false,
         source: 'wm-command-response'
       });
@@ -8389,7 +8680,8 @@ async function safeEditInteraction(interaction, payload) {
 }
 
 // Function to send whispers to Discord with buttons
-async function sendWhisperToDiscord(username, message) {
+// recipient: the bot the player wrote to, when it is not WheatMagnate
+async function sendWhisperToDiscord(username, message, { recipient = null } = {}) {
   if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
     console.log('[Discord] Bot not ready for whisper.');
     return;
@@ -8411,7 +8703,7 @@ async function sendWhisperToDiscord(username, message) {
 
   if (targets.length === 0) {
     console.log(`[Whisper] No private channel for ${username}, skipping.`);
-    await sendWhisperClaimPrompt(username, body);
+    await sendWhisperClaimPrompt(username, body, recipient);
     return;
   }
 
@@ -8426,7 +8718,7 @@ async function sendWhisperToDiscord(username, message) {
       }
 
       await sendWhisperEmbed(channel, {
-        senderLabel: username,
+        senderLabel: recipient ? `${username} → ${recipient}` : username,
         body: `**${body}**`
       });
       const effectiveTTL = customDialogTTL.get(channel.id) || WHISPER_TTL_MS;
@@ -8481,7 +8773,7 @@ async function refreshServerStatusHiddenPlayers({ force = false } = {}) {
 
 function isServerStatusPlayerHidden(username) {
   const normalizedUsername = String(username || '').trim().toLowerCase();
-  const onlinePlayer = Object.values(bot?.players || {}).find(player =>
+  const onlinePlayer = Object.values(observerBot?.players || {}).find(player =>
     String(player?.username || '').trim().toLowerCase() === normalizedUsername
   );
   return isServerStatusIdentityHidden(serverStatusHiddenIndex, {
@@ -8491,7 +8783,7 @@ function isServerStatusPlayerHidden(username) {
 }
 
 function getVisibleServerStatusOnlinePlayers() {
-  return Object.values(bot?.players || {})
+  return Object.values(observerBot?.players || {})
     .filter(player => player?.username && !isServerStatusPlayerHidden(player.username))
     .map(player => player.username);
 }
@@ -8524,7 +8816,7 @@ function getCurrentTpsDisplay() {
 }
 
 function getCurrentTpsNumber() {
-  if (!bot || !bot.entity) return null;
+  if (!observerBot || !observerBot.entity) return null;
   return tpsTracker.getTps();
 }
 
@@ -8552,10 +8844,10 @@ function refreshTpsStatusIfChanged() {
 }
 
 function pollServerTps() {
-  if (!bot || !bot.entity) return;
+  if (!observerBot || !observerBot.entity) return;
   let text = '';
-  if (bot.tablist?.header) text += chatComponentToString(bot.tablist.header) + ' ';
-  if (bot.tablist?.footer) text += chatComponentToString(bot.tablist.footer);
+  if (observerBot.tablist?.header) text += chatComponentToString(observerBot.tablist.header) + ' ';
+  if (observerBot.tablist?.footer) text += chatComponentToString(observerBot.tablist.footer);
   const tabTps = tpsTracker.setReported(parseTpsText(text), 'tab');
   if (tabTps !== null) {
     reportCurrentTps(tabTps);
@@ -8581,7 +8873,7 @@ function requestTpsViaChat() {
       return;
     }
   }
-  if (!sendMinecraftChat('/tps')) return;
+  if (!sendServerChat('/tps')) return;
   lastTpsChatRequestAt = now;
   tpsChatResponseDeadline = now + TPS_CHAT_RESPONSE_WINDOW_MS;
 }
@@ -8599,12 +8891,12 @@ function handleTpsChatResponse(text) {
 }
 
 function getBotPingDisplay() {
-  const ping = bot?.player?.ping ?? bot?.players?.[bot.username]?.ping;
+  const ping = observerBot?.player?.ping ?? observerBot?.players?.[observerBot.username]?.ping;
   return Number.isFinite(ping) ? `${Math.round(ping)} ms` : 'N/A';
 }
 
 async function recordTpsSample(force = false) {
-  if (!pool || !bot || !bot.entity) return;
+  if (!pool || !observerBot || !observerBot.entity) return;
   const tps = getCurrentTpsNumber();
   if (!Number.isFinite(tps)) return;
   const now = Date.now();
@@ -8723,11 +9015,11 @@ async function getRecentNearbyPlayerSightings(limit = 5) {
 }
 
 function getDiscordPresenceText() {
-  if (!bot?.entity) {
+  if (!observerBot?.entity) {
     return shouldReconnect ? 'Reconnecting to oldfag.org' : 'Paused on oldfag.org';
   }
 
-  const playerCount = Object.keys(bot.players || {}).length;
+  const playerCount = Object.keys(observerBot.players || {}).length;
   return `${playerCount} players · ${getCurrentTpsDisplay()} TPS · oldfag.org`;
 }
 
@@ -8896,32 +9188,24 @@ async function refreshAggregateObsidianStatus({ force = false } = {}) {
 }
 
 function getStatusDescription() {
-  const reasonLine = lastDisconnectReason ? `\n${STATUS_EMOJIS.map} Reason: ${lastDisconnectReason}` : '';
+  const primaryInGame = Boolean(bot?.entity);
+  // WheatMagnate's own line while it is out of the game
+  const primaryOfflineLines = () => shouldReconnect
+    ? [`${STATUS_EMOJIS.update} Primary bot is trying to reconnect.`, getWheatMagnateStatusLine()]
+    : [lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`, getWheatMagnateStatusLine()];
 
-  if (!bot || !bot.entity) {
-    if (!shouldReconnect) {
-      return [
-        lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`,
-        getWheatMagnateStatusLine(),
-        '',
-        ...getObsidianStatusLines()
-      ].join('\n');
-    }
-    if (shouldReconnect) {
-      return [
-        `${STATUS_EMOJIS.update} Primary bot is trying to reconnect.`,
-        getWheatMagnateStatusLine(),
-        '',
-        ...getObsidianStatusLines()
-      ].join('\n');
-    }
-    return `❌ Bot not connected${reasonLine}`;
+  if (!observerBot?.entity) {
+    return [
+      ...primaryOfflineLines(),
+      '',
+      ...getObsidianStatusLines()
+    ].join('\n');
   }
 
-  const playerCount = Object.keys(bot.players || {}).length;
+  const playerCount = Object.keys(observerBot.players || {}).length;
   const onlinePlayers = getVisibleServerStatusOnlinePlayers();
   const whitelistOnline = [...new Set(onlinePlayers
-    .filter(username => username.toLowerCase() !== bot.username.toLowerCase())
+    .filter(username => username.toLowerCase() !== String(bot?.username || '').toLowerCase())
     .map(getCanonicalWhitelistUsername)
     .filter(Boolean))];
   const nearbyPlayers = getVisibleServerStatusNearbyPlayers();
@@ -8937,12 +9221,17 @@ function getStatusDescription() {
   return [
     '**Server**',
     `${STATUS_EMOJIS.players} Players: **${playerCount}** · ${STATUS_EMOJIS.tps} TPS: **${avgTps}**${tpsIndicator ? ` ${tpsIndicator}` : ''} · ${STATUS_EMOJIS.serverPing} Ping: **${getBotPingDisplay()}**`,
-    ...formatStatusPlayerList(`${STATUS_EMOJIS.nearby} Nearby`, nearbyNames),
+    ...(primaryInGame ? formatStatusPlayerList(`${STATUS_EMOJIS.nearby} Nearby`, nearbyNames) : []),
     ...formatStatusPlayerList(`${STATUS_EMOJIS.whitelist} Whitelist online`, whitelistOnlineNames),
+    ...(primaryInGame ? [] : [`-# Watched by ${escapeStatusDescriptionText(observerBot.username)}`]),
     '',
     '**Bot**',
-    `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${bot.username}** · ${STATUS_EMOJIS.playtime} Uptime: **${botUptime}** · Playtime: **${wheatMagnatePlaytimeDisplay}**`,
-    ...getBotVitalsStatusLines(),
+    ...(primaryInGame
+      ? [
+          `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${bot.username}** · ${STATUS_EMOJIS.playtime} Uptime: **${botUptime}** · Playtime: **${wheatMagnatePlaytimeDisplay}**`,
+          ...getBotVitalsStatusLines()
+        ]
+      : primaryOfflineLines()),
     '',
     ...getObsidianStatusLines()
   ].join('\n');
@@ -9036,7 +9325,7 @@ function buildRosterFields(title, entries, { empty = 'None online', inlineCodeLi
 }
 
 function getPlayerPingMs(username) {
-  const ping = bot?.players?.[username]?.ping;
+  const ping = observerBot?.players?.[username]?.ping;
   return Number.isFinite(ping) && ping > 0 ? Math.round(ping) : null;
 }
 
@@ -9064,7 +9353,7 @@ async function getOnlineSinceByUsername(usernames) {
 }
 
 async function buildOnlinePlayersMessage() {
-  const allOnlinePlayers = [...new Set(Object.values(bot?.players || {})
+  const allOnlinePlayers = [...new Set(Object.values(observerBot?.players || {})
     .map(player => player.username)
     .filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
@@ -9281,8 +9570,8 @@ function createAdminSettingsSelects() {
 }
 
 function getSortedOnlinePlayerNamesExceptBot() {
-  const selfKey = String(bot?.username || '').toLowerCase();
-  return Object.values(bot?.players || {})
+  const selfKey = String(observerBot?.username || '').toLowerCase();
+  return Object.values(observerBot?.players || {})
     .map(player => player?.username)
     .filter(username => username && username.toLowerCase() !== selfKey)
     .sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
@@ -10123,7 +10412,6 @@ function createBot() {
     return;
   }
 
-  resetTpsTracking(); // Reset TPS tracking for new bot
   recordSystemLog({
     level: 'info',
     category: 'minecraft',
@@ -10133,7 +10421,6 @@ function createBot() {
   try {
     bot = createMinecraftBot(config);
     attachPrimaryBot(bot, 'connecting');
-    gameTimePushMonitor.reset();
   } catch (err) {
     bot = null;
     detachPrimaryBot('offline');
@@ -10231,14 +10518,6 @@ function createBot() {
 
   bot.on('entityUpdate', checkBotFireState);
 
-  bot.on('time', () => {
-    if (bot !== createdBot) return;
-    tpsTracker.observeWorldAge(createdBot.time?.age);
-    gameTimePushMonitor.observe(createdBot.time?.time, {
-      daylightCycle: createdBot.time?.doDaylightCycle !== false
-    });
-  });
-
   bot.on('login', async () => {
     reachedLogin = true;
     if (bot && bot.username) {
@@ -10308,8 +10587,6 @@ function createBot() {
       category: 'minecraft',
       message: 'Minecraft bot spawned.'
     });
-    playerActivityJoinEventsReady = false;
-    playerActivityReconciliationPending = true;
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
     clearIntervals();
     startFoodMonitor();
@@ -10318,6 +10595,8 @@ function createBot() {
     startObsidianFarmWatchdog();
     startObsidianSupplySnapshotWriter();
     killAura.attachBot(createdBot);
+    primarySpawnedAt = Date.now();
+    refreshObserver();
     scheduleQueuedSiteWhispersForOnlinePlayers().catch(err => {
       console.error('[Site Whisper] Failed to schedule queued whispers after spawn:', err.message);
     });
@@ -10331,39 +10610,6 @@ function createBot() {
       });
     }
 
-    // Keep website online/offline state aligned with Mineflayer's current player list.
-    setTimeout(async () => {
-      // A short-lived connection may end before this delayed callback. Never
-      // let its stale startup task authorize or reconcile a replacement bot.
-      if (bot !== createdBot || !createdBot.entity) return;
-      try {
-        // Mark the snapshot as settled before synchronizing so the first
-        // authoritative pass also repairs rows left by a dead process.
-        playerActivityJoinEventsReady = true;
-        await syncPlayerActivityOnlineState();
-        await syncWhitelistPlaytime();
-      } catch (err) {
-        console.error('[PlayerActivity] Initial sync after spawn failed:', err.message);
-      }
-    }, 3000);
-
-    playerActivitySyncInterval = setInterval(() => {
-      if (!playerActivityJoinEventsReady) return;
-      syncPlayerActivityOnlineState().catch(err => {
-        console.error('[PlayerActivity] Sync interval failed:', err.message);
-      });
-    }, 1000);
-
-    playtimeSyncInterval = setInterval(() => {
-      syncWhitelistPlaytime().catch(err => console.error('[Playtime] Sync interval failed:', err.message));
-    }, 30_000);
-
-    playerPing.start();
-    playerPing.sample().catch(err => console.error('[PlayerPing] Initial sample failed:', err.message));
-
-    // TPS: TAB header/footer first, /tps reply as fallback, world-age measurement otherwise
-    if (tpsTabInterval) clearInterval(tpsTabInterval);
-    tpsTabInterval = setInterval(pollServerTps, 10000);
 
     // Reuse or create single persistent status message after spawn
     if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
@@ -10384,7 +10630,6 @@ function createBot() {
 
 
   bot.on('end', (reason) => {
-    resetTpsTracking();
     if (!suppressDefaultAuthCachePersist) authCacheStore.persist(DEFAULT_ACCOUNT_ID,config.profilesFolder).catch(error => console.error('[Accounts] Default auth-cache persistence failed:',error.message));
     recordFarmAnnotation('bot_disconnected', 'Bot disconnected', { reason: normalizeStatusReason(reason) }).catch(() => {});
     const reasonStr = chatComponentToString(reason);
@@ -10397,21 +10642,9 @@ function createBot() {
       message: 'Minecraft bot disconnected.',
       details: { reason: disconnectReason || null }
     }).catch(() => {});
-    const observedOnlineAtDisconnect = lastObservedOnlinePlayerKeys;
-    lastObservedOnlinePlayerKeys = null;
-    playerActivityJoinEventsReady = false;
-    if (observedOnlineAtDisconnect?.size) {
-      // Close each observed session at the disconnect. Without a leave event the
-      // session history keeps the player "online" until their next event, which
-      // inflated unique-player periods and online history.
-      Promise.all([...observedOnlineAtDisconnect.values()].map(username =>
-        updatePlayerActivity(username, false, { recordEvent: true })
-      ))
-        .catch(err => console.error('[PlayerActivity] Disconnect offline flush failed:', err.message));
-    }
-    if (!multiAccountShuttingDown) {
-      syncWhitelistPlaytime([], { allowEmptySnapshot: true })
-        .catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
+    if (primarySpawnedAt) {
+      primarySpawnedAt = null;
+      refreshObserver({ gone: createdBot });
     }
     const now = new Date();
     const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
@@ -10472,9 +10705,96 @@ function createBot() {
     sendDiscordNotification('Bot died. :skull:', 16711680);
   });
 
+  // Player joins and leaves and public chat go to the server observer
+  // (attachObserverListeners); WheatMagnate's own whispers stay here
+  bot.on('whisper', async (username, message, translate, jsonMsg, matches) => {
+    debugLog(`[Whisper] ⭐ EVENT FIRED for ${username}: "${message}"`);
+
+    let cleanedWhisper = message
+      .replace(/§[0-9a-fk-or]/gi, '')
+      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+      .trim();
+    cleanedWhisper = cleanMinecraftChatMessage(cleanedWhisper);
+
+    debugLog(`[Whisper] Cleaned: "${cleanedWhisper}"`);
+
+    const whisperUsernameKey = String(username || '').toLowerCase();
+    if (isIgnoredChatPlayer(username)) {
+      siteWhisperTargets.delete(whisperUsernameKey);
+      debugLog(`[Whisper] Suppressed private message from ignored player ${username}.`);
+      return;
+    }
+
+    if (await pearlLoaderFeature?.handlePrimaryWhisper(username, cleanedWhisper)) return;
+    whisperReplyAccounts.set(whisperUsernameKey, DEFAULT_ACCOUNT_ID);
+
+    const whisperKey = `WHISPER:${username}:${cleanedWhisper}`;
+    recentWhispers.set(whisperKey, Date.now());
+    recentWhispers.set(`WHISPER:${String(username).toLowerCase()}:${cleanedWhisper}`, Date.now());
+    debugLog(`[Whisper] MARKED whisper key: ${whisperKey}`);
+
+    // Cancel any pending public chat send for this message
+    const pendingKey = `CHAT:${String(username).toLowerCase()}:${cleanedWhisper}`;
+    if (cancelPendingGameChat(username, cleanedWhisper)) {
+      debugLog(`[Whisper] 🛑 Canceled pending chat forward for: ${pendingKey}`);
+    }
+
+    // Cleanup old whisper marks
+    for (const [k, ts] of recentWhispers.entries()) {
+      if (k.startsWith('WHISPER:') && Date.now() - ts > WHISPER_MARK_TTL_MS) {
+        recentWhispers.delete(k);
+      }
+    }
+
+    const siteWhisperKey = whisperUsernameKey;
+    for (const [target, state] of siteWhisperTargets.entries()) {
+      const timestamp = typeof state === 'object' ? state.timestamp : state;
+      if (Date.now() - timestamp > SITE_WHISPER_TTL_MS) siteWhisperTargets.delete(target);
+    }
+    const siteWhisperState = siteWhisperTargets.get(siteWhisperKey);
+    const hasActiveSiteDialog = siteWhisperTargets.has(siteWhisperKey);
+    const siteUsername = typeof siteWhisperState === 'object' && siteWhisperState.siteUsername
+      ? siteWhisperState.siteUsername
+      : DEFAULT_SITE_WHISPER_USERNAME;
+    recordSiteWhisperMessage(username, 'incoming', cleanedWhisper, siteUsername).catch(() => {});
+
+    debugLog(`[Whisper] Calling sendWhisperToDiscord...`);
+    if (hasActiveSiteDialog) {
+      removeWhisperClaimPrompt(username).catch(() => {});
+      siteWhisperTargets.set(siteWhisperKey, {
+        timestamp: Date.now(),
+        siteUsername
+      });
+      debugLog(`[Whisper] Routed ${username} reply to site dialog only.`);
+      return;
+    }
+    sendWhisperToDiscord(username, message);
+  });
+
+
+}
+
+
+// Listeners of the server observer: they go on whichever bot watches the
+// server (see refreshObserver) and come off it when the watch moves on.
+function attachObserverListeners(target) {
+  const listeners = [];
+  const on = (event, handler) => {
+    target.on(event, handler);
+    listeners.push([event, handler]);
+  };
+
+  on('time', () => {
+    if (observerBot !== target) return;
+    tpsTracker.observeWorldAge(target.time?.age);
+    gameTimePushMonitor.observe(target.time?.time, {
+      daylightCycle: target.time?.doDaylightCycle !== false
+    });
+  });
+
   // Track player joins and leaves
-  bot.on('playerJoined', async (player) => {
-    if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
+  on('playerJoined', async (player) => {
+    if (player.username && player.username.toLowerCase() !== primaryUsernameKey()) {
       if (!lastObservedOnlinePlayerKeys) lastObservedOnlinePlayerKeys = new Map();
       lastObservedOnlinePlayerKeys.set(player.username.toLowerCase(), player.username);
       const activityResult = await updatePlayerActivity(player.username, true, {
@@ -10489,7 +10809,7 @@ function createBot() {
     }
     // The awaits above can outlive this connection. A snapshot taken after the
     // disconnect flush would restart timers and count the offline gap as PT.
-    if (player.username && bot === createdBot) {
+    if (player.username && observerBot === target) {
       const onlineUsernames = getOnlinePlayerUsernames();
       if (!onlineUsernames.some(username => username.toLowerCase() === player.username.toLowerCase())) {
         onlineUsernames.push(player.username);
@@ -10498,13 +10818,13 @@ function createBot() {
     }
   });
 
-  bot.on('playerLeft', async (player) => {
-    if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
+  on('playerLeft', async (player) => {
+    if (player.username && player.username.toLowerCase() !== primaryUsernameKey()) {
       lastObservedOnlinePlayerKeys?.delete(player.username.toLowerCase());
       await updatePlayerActivity(player.username, false, { uuid: player.uuid });
       playerInfoFirstJoinCheck?.playerLeft(player.username);
     }
-    if (player.username && bot === createdBot) {
+    if (player.username && observerBot === target) {
       const onlineUsernames = getOnlinePlayerUsernames().filter(
         username => username.toLowerCase() !== player.username.toLowerCase()
       );
@@ -10519,7 +10839,7 @@ function createBot() {
       handledGreenChatComponents.has(jsonMessage) ||
       handledPrivateChatComponents.has(jsonMessage) ||
       isPrivateMinecraftChatComponent(jsonMessage, {
-        recipientUsernames: bot?.username ? [bot.username] : []
+        recipientUsernames: target.username ? [target.username] : []
       })
     )) {
       handledPrivateChatComponents.mark(jsonMessage);
@@ -10553,15 +10873,15 @@ function createBot() {
     if (username.toLowerCase() === 'theonlyslash' && /^!(?:pt|playtime)$/i.test(message.trim())) {
       const playtime = await getEffectivePlayerPlaytime(username);
       if (playtime.error) {
-        sendMinecraftChat(`Playtime unavailable for ${username}: ${playtime.error}`);
+        sendServerChat(`Playtime unavailable for ${username}: ${playtime.error}`);
       } else {
-        sendMinecraftChat(`${username}: ${formatPlaytime(playtime.totalSeconds)}`);
+        sendServerChat(`${username}: ${formatPlaytime(playtime.totalSeconds)}`);
       }
       return;
     }
 
     if (
-      username.toLowerCase() !== String(bot?.username || '').toLowerCase() &&
+      username.toLowerCase() !== String(target.username || '').toLowerCase() &&
       !message.startsWith('!') &&
       !message.startsWith('/')
     ) {
@@ -10583,7 +10903,7 @@ function createBot() {
         console.log(`[Command] restart by ${username}`);
         lastCommandUser = `${username} (in-game)`;
         setDisconnectReason(`Restart requested by ${lastCommandUser}`);
-        bot.quit('Restart command');
+        bot?.quit('Restart command');
         return;
       }
 
@@ -10593,7 +10913,7 @@ function createBot() {
         shouldReconnect = false;
         clearReconnectTimer();
         setDisconnectReason(`Paused for 10m by ${lastCommandUser}`);
-        bot.quit('Pause 10m');
+        bot?.quit('Pause 10m');
         scheduleResume(10 * 60 * 1000, '[Bot] Paused for 10 minutes.');
         return;
       }
@@ -10608,7 +10928,7 @@ function createBot() {
           clearReconnectTimer();
           clearResumeTimer();
           setDisconnectReason(`Paused for ${minutes}m by ${lastCommandUser}`);
-          bot.quit(`Paused ${minutes}m`);
+          bot?.quit(`Paused ${minutes}m`);
           scheduleResume(minutes * 60 * 1000, `[Bot] Paused for ${minutes} minutes.`);
         }
         return;
@@ -10692,75 +11012,12 @@ function createBot() {
     scheduleGameChatForward(username, message, source, { senderUuid: context?.senderUuid });
   };
 
-  bot.on('chat', handleMinecraftPlayerChat);
+  on('chat', handleMinecraftPlayerChat);
 
-  bot.on('whisper', async (username, message, translate, jsonMsg, matches) => {
-    debugLog(`[Whisper] ⭐ EVENT FIRED for ${username}: "${message}"`);
-
-    let cleanedWhisper = message
-      .replace(/§[0-9a-fk-or]/gi, '')
-      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
-      .trim();
-    cleanedWhisper = cleanMinecraftChatMessage(cleanedWhisper);
-
-    debugLog(`[Whisper] Cleaned: "${cleanedWhisper}"`);
-
-    const whisperUsernameKey = String(username || '').toLowerCase();
-    if (isIgnoredChatPlayer(username)) {
-      siteWhisperTargets.delete(whisperUsernameKey);
-      debugLog(`[Whisper] Suppressed private message from ignored player ${username}.`);
-      return;
-    }
-
-    if (await pearlLoaderFeature?.handlePrimaryWhisper(username, cleanedWhisper)) return;
-
-    const whisperKey = `WHISPER:${username}:${cleanedWhisper}`;
-    recentWhispers.set(whisperKey, Date.now());
-    recentWhispers.set(`WHISPER:${String(username).toLowerCase()}:${cleanedWhisper}`, Date.now());
-    debugLog(`[Whisper] MARKED whisper key: ${whisperKey}`);
-
-    // Cancel any pending public chat send for this message
-    const pendingKey = `CHAT:${String(username).toLowerCase()}:${cleanedWhisper}`;
-    if (cancelPendingGameChat(username, cleanedWhisper)) {
-      debugLog(`[Whisper] 🛑 Canceled pending chat forward for: ${pendingKey}`);
-    }
-
-    // Cleanup old whisper marks
-    for (const [k, ts] of recentWhispers.entries()) {
-      if (k.startsWith('WHISPER:') && Date.now() - ts > WHISPER_MARK_TTL_MS) {
-        recentWhispers.delete(k);
-      }
-    }
-
-    const siteWhisperKey = whisperUsernameKey;
-    for (const [target, state] of siteWhisperTargets.entries()) {
-      const timestamp = typeof state === 'object' ? state.timestamp : state;
-      if (Date.now() - timestamp > SITE_WHISPER_TTL_MS) siteWhisperTargets.delete(target);
-    }
-    const siteWhisperState = siteWhisperTargets.get(siteWhisperKey);
-    const hasActiveSiteDialog = siteWhisperTargets.has(siteWhisperKey);
-    const siteUsername = typeof siteWhisperState === 'object' && siteWhisperState.siteUsername
-      ? siteWhisperState.siteUsername
-      : DEFAULT_SITE_WHISPER_USERNAME;
-    recordSiteWhisperMessage(username, 'incoming', cleanedWhisper, siteUsername).catch(() => {});
-
-    debugLog(`[Whisper] Calling sendWhisperToDiscord...`);
-    if (hasActiveSiteDialog) {
-      removeWhisperClaimPrompt(username).catch(() => {});
-      siteWhisperTargets.set(siteWhisperKey, {
-        timestamp: Date.now(),
-        siteUsername
-      });
-      debugLog(`[Whisper] Routed ${username} reply to site dialog only.`);
-      return;
-    }
-    sendWhisperToDiscord(username, message);
-  });
-
-  bot.on('message', (message, position, senderUuid) => {
+  on('message', (message, position, senderUuid) => {
     const text = chatComponentToString(message);
     if (isPrivateMinecraftChatComponent(message, {
-      recipientUsernames: bot?.username ? [bot.username] : []
+      recipientUsernames: target.username ? [target.username] : []
     })) {
       handledPrivateChatComponents.mark(message);
       return;
@@ -10792,12 +11049,12 @@ function createBot() {
     forwardRawPublicChatText(text, 'mineflayer-message-legacy', position);
   });
 
-  bot.on('messagestr', (message, position, originalMessage) => {
+  on('messagestr', (message, position, originalMessage) => {
     if (originalMessage && (
       handledGreenChatComponents.has(originalMessage) ||
       handledPrivateChatComponents.has(originalMessage) ||
       isPrivateMinecraftChatComponent(originalMessage, {
-        recipientUsernames: bot?.username ? [bot.username] : []
+        recipientUsernames: target.username ? [target.username] : []
       })
     )) {
       return;
@@ -10805,6 +11062,10 @@ function createBot() {
     if (isPrivateMinecraftChatLine(message)) return;
     forwardRawPublicChatText(message, 'mineflayer-messagestr-legacy', position);
   });
+
+  return () => {
+    for (const [event, handler] of listeners) target.removeListener?.(event, handler);
+  };
 }
 
 // -------------- INTERVALS MANAGEMENT --------------
@@ -10816,19 +11077,6 @@ function clearIntervals() {
   if (playerScannerInterval) {
     clearInterval(playerScannerInterval);
     playerScannerInterval = null;
-  }
-  if (tpsTabInterval) {
-    clearInterval(tpsTabInterval);
-    tpsTabInterval = null;
-  }
-  if (playtimeSyncInterval) {
-    clearInterval(playtimeSyncInterval);
-    playtimeSyncInterval = null;
-  }
-  playerPing.stop();
-  if (playerActivitySyncInterval) {
-    clearInterval(playerActivitySyncInterval);
-    playerActivitySyncInterval = null;
   }
   if (restartProtectionInterval) {
     clearInterval(restartProtectionInterval);
@@ -12452,9 +12700,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const encodedUsername = interaction.customId.split('_')[2];
       const username = b64decode(encodedUsername);
       const whispers = buildPlayerWhisperCommands(username, interaction.fields.getTextInputValue('reply_message'));
-      if (whispers.length > 0 && bot) {
+      const replySender = whisperSenderFor(username);
+      if (whispers.length > 0 && replySender) {
         for (const whisper of whispers) {
-          sendMinecraftChat(whisper.command);
+          sendMinecraftChat(whisper.command, { bot: replySender });
           // Mark outbound whisper to suppress any unexpected public echo
           markOutboundWhisper(username, whisper.text);
         }
@@ -12464,7 +12713,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const now = new Date();
         const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         const displayMessage = whispers.map(whisper => whisper.text).join('\n');
-        const replyEntry = `[${timeStr}] ➡️ ${bot.username}: ${displayMessage}`;
+        const replyEntry = `[${timeStr}] ➡️ ${replySender.username}: ${displayMessage}`;
 
         if (whisperConversations.has(username)) {
           // Update existing conversation
@@ -12538,15 +12787,16 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const encodedUsername = interaction.customId.split('_')[2];
       const selectedUsername = b64decode(encodedUsername);
       const whispers = buildPlayerWhisperCommands(selectedUsername, interaction.fields.getTextInputValue('message_text'));
-      if (!bot || whispers.length === 0) {
+      const messageSender = whisperSenderFor(selectedUsername);
+      if (!messageSender || whispers.length === 0) {
         await interaction.reply({
-          content: bot ? 'Message is empty.' : 'Bot is offline, message not sent.',
+          content: messageSender ? 'Message is empty.' : 'Bot is offline, message not sent.',
           flags: MessageFlags.Ephemeral
         });
         setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
       } else {
         for (const whisper of whispers) {
-          sendMinecraftChat(whisper.command);
+          sendMinecraftChat(whisper.command, { bot: messageSender });
           // Mark outbound whisper(s) to suppress any unexpected public echoes
           markOutboundWhisper(selectedUsername, whisper.text);
         }
@@ -12925,9 +13175,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const whispers = buildPlayerWhisperCommands(mcUsername, message.content);
         if (whispers.length === 0) return;
 
+        const relaySender = whisperSenderFor(mcUsername);
         for (const whisper of whispers) {
           try {
-            sendMinecraftChat(whisper.command);
+            if (!sendMinecraftChat(whisper.command, { bot: relaySender })) throw new Error('No bot is in game.');
             console.log(`[Whisper Relay] Sent to ${mcUsername}: ${whisper.text} (by ${message.author.tag})`);
           } catch (e) {
             console.error('[Whisper Relay] Failed to send message:', e.message);

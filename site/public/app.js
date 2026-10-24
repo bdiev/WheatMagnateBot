@@ -1483,13 +1483,14 @@ function applyAccountTabScope(account) {
   applyNavigationVisibility();
   $$('[data-primary-only]').forEach(element => { element.hidden = restricted; });
   const whisperPanel = $('#whisperPanel');
-  if (restricted) setWhisperOpen(false);
+  const whispersHidden = account?.role === 'pearl_loader';
+  if (whispersHidden) setWhisperOpen(false);
   if (whisperPanel) {
-    whisperPanel.classList.toggle('account-scope-hidden', restricted);
-    whisperPanel.setAttribute('aria-hidden', String(restricted));
-    whisperPanel.inert = restricted;
+    whisperPanel.classList.toggle('account-scope-hidden', whispersHidden);
+    whisperPanel.setAttribute('aria-hidden', String(whispersHidden));
+    whisperPanel.inert = whispersHidden;
     const whisperToggle = $('#whisperToggle');
-    if (whisperToggle) whisperToggle.disabled = restricted;
+    if (whisperToggle) whisperToggle.disabled = whispersHidden;
   }
   document.body.classList.toggle('secondary-account-active', restricted);
   updateObsidianStatsScopeVisibility();
@@ -5133,7 +5134,7 @@ function setWhisperOpen(open) {
   const toggle = $('#whisperToggle');
   const popover = $('#whisperPopover');
   if (!panel || !toggle || !popover) return;
-  if (open && !activeAccountIsPrimary()) open = false;
+  if (open && !activeAccountHasWhispers()) open = false;
   if (open) {
     setNavMenuOpen(false);
     clearSeenSearch({ collapse: true });
@@ -5463,7 +5464,7 @@ function updateWhisperDialogTitle() {
 }
 
 async function loadWhisperOnlinePlayers({ force = false } = {}) {
-  if (!activeAccountIsPrimary()) {
+  if (!activeAccountHasWhispers()) {
     state.whisperPlayers = [];
     state.whisperUnreadCount = 0;
     renderWhisperBadge();
@@ -5529,7 +5530,7 @@ function renderWhisperMessages(messages) {
 }
 
 async function loadWhisperDialog() {
-  if (!activeAccountIsPrimary()) return false;
+  if (!activeAccountHasWhispers()) return false;
   if (!state.whisperTarget || !$('#whisperPanel')?.classList.contains('open')) return;
   const payload = await fetchJson(`/api/whisper/dialog?username=${encodeURIComponent(state.whisperTarget)}&limit=80`);
   mergeWhisperPlayerStatus(payload.player);
@@ -9767,6 +9768,13 @@ function activeAccountIsPrimary() {
   return Boolean(state.accounts.find(account => account.id === state.activeAccountId)?.isDefault);
 }
 
+// Every bot has its own private messages, except the Pearl Loader, which only
+// comes into the game for a request
+function activeAccountHasWhispers() {
+  const account = state.accounts.find(candidate => candidate.id === state.activeAccountId);
+  return Boolean(account) && account.role !== 'pearl_loader';
+}
+
 function updateObsidianStatsScopeVisibility() {
   const control = $('#obsidianStatsScope');
   const visible = state.currentUser?.role === 'admin'
@@ -13339,7 +13347,7 @@ function scheduleRealtimeChartRefresh() {
 }
 
 async function refreshWhispersFromEvent() {
-  if (!activeAccountIsPrimary()) return;
+  if (!activeAccountHasWhispers()) return;
   await loadWhisperOnlinePlayers({ force: true });
   if ($('#whisperPanel')?.classList.contains('open')) await loadWhisperDialog();
 }

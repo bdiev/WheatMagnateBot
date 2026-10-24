@@ -201,13 +201,14 @@ function createWhisperFeature({
     state.whisperCleanupTimers.set(channelId, timer);
   }
 
-  async function sendWhisperClaimPrompt(mcUsername, body) {
+  // recipient: the bot the player wrote to, when it is not the primary one
+  async function sendWhisperClaimPrompt(mcUsername, body, recipient = null) {
     if (!discordChannelId || !discordClient || !discordClient.isReady()) return;
     const mcKey = mcUsername.toLowerCase();
     const channel = await discordClient.channels.fetch(discordChannelId);
     if (!channel || !channel.isTextBased()) return;
 
-    const description = `New /msg from **${mcUsername}**\n> ${body}`;
+    const description = `New /msg from **${mcUsername}**${recipient ? ` to **${recipient}**` : ''}\n> ${body}`;
     const components = [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()

@@ -19,7 +19,7 @@ assert.match(
 );
 assert.match(
   botSource,
-  /bot\.on\('playerJoined'[\s\S]*playerInfoFirstJoinCheck\?\.playerJoined\(player\.username\)[\s\S]*bot\.on\('playerLeft'[\s\S]*playerInfoFirstJoinCheck\?\.playerLeft\(player\.username\)/,
+  /on\('playerJoined'[\s\S]*playerInfoFirstJoinCheck\?\.playerJoined\(player\.username\)[\s\S]*on\('playerLeft'[\s\S]*playerInfoFirstJoinCheck\?\.playerLeft\(player\.username\)/,
   'first-join checks must pause on join and resume only after leave'
 );
 

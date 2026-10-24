@@ -61,7 +61,7 @@ assert.match(serverSource, /const PLAYER_STATS_CACHE_SCHEMA = \d+;[\s\S]*?cached
 assert.match(serverSource, /online_now AS \([\s\S]*presence_observed_at >= NOW\(\) - \(\$1::double precision \* INTERVAL '1 millisecond'\)/,
   'current unique-player counts must ignore expired online-presence leases before the cleanup sweep runs');
 const botSource = fs.readFileSync(path.join(siteDirectory, '..', 'bot.js'), 'utf8');
-assert.match(botSource, /observedOnlineAtDisconnect\.values\(\)\]\.map\(username =>\s*updatePlayerActivity\(username, false, \{ recordEvent: true \}\)/,
-  'a bot disconnect must close the observed sessions with leave events');
+assert.match(botSource, /function closeObservedPlayerSessions[\s\S]*?observedOnline\.values\(\)\]\.map\(username =>\s*updatePlayerActivity\(username, false, \{ recordEvent: true \}\)/,
+  'losing the last bot in game must close the observed sessions with leave events');
 
 console.log('Unique player period UI tests passed.');

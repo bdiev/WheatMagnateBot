@@ -31,7 +31,7 @@ async function main(){
   assert.equal(manager.getPrimaryContext()?.accountId,first.id,'primary context is resolved by account metadata');
   assert.equal(manager.getContext(second.id)?.accountId,second.id);
   assert.equal(manager.getBot(second.id),bots[1]);
-  assert.equal(bots[1].listenerCount('whisper'),0,'secondary does not register Whisper listeners');
+  assert.equal(bots[1].listenerCount('whisper'),1,'every bot answers its own private messages');
   assert.notEqual(factoryOptions[0].profilesFolder,factoryOptions[1].profilesFolder,'auth-cache directories are isolated');
   const firstRuntime=manager.get(first.id); const secondRuntime=manager.get(second.id); assert.notEqual(firstRuntime.intervals,secondRuntime.intervals,'timer collections are isolated');
   const duplicate=await Promise.all([manager.start(first.id),manager.start(first.id)]); assert.equal(bots.length,2,'concurrent starts do not create duplicate runtimes'); assert.equal(duplicate[0].accountId,first.id);

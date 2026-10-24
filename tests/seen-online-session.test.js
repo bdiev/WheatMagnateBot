@@ -96,7 +96,7 @@ async function run() {
     const botSource = fs.readFileSync(path.join(root, 'bot.js'), 'utf8');
     assert.match(botSource, /let playerActivityReconciliationPending = true;/,
       'database reconciliation must not be inferred from an incremental player list');
-    assert.match(botSource, /playerActivityReconciliationPending = true;[\s\S]*if \(bot !== createdBot \|\| !createdBot\.entity\) return;/,
+    assert.match(botSource, /playerActivityReconciliationPending = true;[\s\S]*if \(observerBot !== nextBot \|\| !nextBot\.entity\) return;/,
       'every reconnect must require a settled snapshot and reject stale startup callbacks');
     assert.match(botSource, /if \(!playerActivityJoinEventsReady\) return;[\s\S]*syncPlayerActivityOnlineState/,
       'the periodic synchronizer must wait for the settled startup snapshot');
