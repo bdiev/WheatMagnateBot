@@ -7,6 +7,8 @@ const { nextInteractionSequence } = require('../obsidianFarm/interaction-sequenc
 
 const PEARL_LOADER_ROLE = 'pearl_loader';
 const LOAD_COMMAND = /^load$/i;
+// Only looks whether the pearl is in its stasis chamber; the trapdoor is not touched
+const CHECK_COMMAND = /^(?:check|pearl)$/i;
 const CANCEL_COMMAND = /^cancel$/i;
 // Players waiting while the loader serves someone else: how many, and how long a place is held
 const MAX_QUEUE_LENGTH = 20;
@@ -657,6 +659,22 @@ function createPearlLoaderFeature({
     advanceQueue();
   }
 
+  async function finishCheck(job, pearlSet) {
+    if (!job || activeJob !== job) return;
+    clearJobTimers(job);
+    job.runtime?.assignTask?.('idle');
+    activeJob = null;
+    note(job, 'info', pearlSet ? 'Ender pearl found near the hatch.' : 'No ender pearl found near the hatch.', { radius:PEARL_SEARCH_RADIUS });
+    await job.runtime?.stop?.('Pearl Loader check complete').catch(() => {});
+    // A check is not a load, so it is left out of the Control center counter
+    writeJobLog(job, 'info', `Pearl Loader checked the pearl of ${job.username}: ${pearlSet ? 'set' : 'not set'}.`, {
+      check:true,
+      pearlSet,
+      radius:PEARL_SEARCH_RADIUS
+    });
+    advanceQueue();
+  }
+
   async function finishMissingPearl(job) {
     if (!job || activeJob !== job) return;
     clearJobTimers(job);
@@ -691,7 +709,7 @@ function createPearlLoaderFeature({
     return `${minutes} minute${minutes === 1 ? '' : 's'}`;
   }
 
-  async function enqueue(username, key) {
+  async function enqueue(username, key, mode) {
     const position = queuePosition(key);
     if (position) {
       await tellPrimary(username, `You are #${position} in the Pearl Loader queue. Whisper "cancel" to leave it.`);
@@ -702,11 +720,11 @@ function createPearlLoaderFeature({
       return;
     }
     const now = Date.now();
-    const entry = { username, usernameKey:key, requestedAt:new Date(now).toISOString(), expiresAt:new Date(now + queueTimeoutMs).toISOString(), timer:null };
+    const entry = { username, usernameKey:key, mode, requestedAt:new Date(now).toISOString(), expiresAt:new Date(now + queueTimeoutMs).toISOString(), timer:null };
     entry.timer = setTimer(() => {
       if (!removeFromQueue(key)) return;
       log('info', `Pearl Loader queue place of ${username} expired.`, { username, requestedAt:entry.requestedAt });
-      void tellPrimary(username, 'Your place in the Pearl Loader queue expired. Whisper "load" to ask again.').catch(() => {});
+      void tellPrimary(username, `Your place in the Pearl Loader queue expired. Whisper "${mode}" to ask again.`).catch(() => {});
     }, queueTimeoutMs);
     entry.timer?.unref?.();
     queue.push(entry);
@@ -725,7 +743,7 @@ function createPearlLoaderFeature({
       if (!next) return;
       clearTimer(next.timer);
       void tellPrimary(next.username, 'Your turn: Pearl Loader is on its way to your pearl.').catch(() => {});
-      void begin(next.username).catch(error =>
+      void begin(next.username, next.mode).catch(error =>
         tellPrimary(next.username, `Pearl Loader unavailable: ${error?.message || String(error)}`).catch(() => {}));
     }, 0);
   }
@@ -784,11 +802,11 @@ function createPearlLoaderFeature({
     check();
   }
 
-  async function begin(username) {
+  async function begin(username, mode = 'load') {
     const key = String(username || '').toLowerCase();
     if (activeJob) {
       if (activeJob.usernameKey === key) await tellPrimary(username, 'Your Pearl Loader request is already in progress. Whisper "cancel" to call it off.');
-      else await enqueue(username, key);
+      else await enqueue(username, key, mode);
       return;
     }
     // Asked again while queued, just as the loader came free: served now
@@ -796,6 +814,7 @@ function createPearlLoaderFeature({
     const job = {
       username,
       usernameKey: key,
+      mode,
       accountId: null,
       hatch: null,
       stage: 'lookup',
@@ -835,7 +854,7 @@ function createPearlLoaderFeature({
         stage:'connecting'
       });
       reportingJob = job;
-      note(job, 'info', 'Load requested; connecting the loader.');
+      note(job, 'info', mode === 'check' ? 'Pearl check requested; connecting the loader.' : 'Load requested; connecting the loader.');
       if (manager.get(account.id)) await manager.recreate(account.id);
       else await manager.start(account.id);
       const runtime = manager.get(account.id);
@@ -859,6 +878,14 @@ function createPearlLoaderFeature({
       await navigateToHatch(loaderBot, hatch);
       if (activeJob !== job || runtime.bot !== loaderBot) throw new Error('Pearl Loader connection changed while navigating.');
       job.stage = 'checking_pearl';
+      if (mode === 'check') {
+        const pearlSet = hasEnderPearlNear(loaderBot, hatch);
+        sendPrivateWhisper(loaderBot, job.username, pearlSet
+          ? 'Your ender pearl is set. Whisper "load" when you need it.'
+          : 'Your ender pearl is not set.');
+        await finishCheck(job, pearlSet);
+        return;
+      }
       if (!hasEnderPearlNear(loaderBot, hatch)) {
         sendPrivateWhisper(loaderBot, job.username, 'Your ender pearl is not set.');
         await finishMissingPearl(job);
@@ -894,8 +921,9 @@ function createPearlLoaderFeature({
     const text = cleanWhisperText(message);
     // "cancel" is only taken from someone queued or being served; anyone else's goes on as a whisper
     if (CANCEL_COMMAND.test(text)) return cancel(username);
-    if (!LOAD_COMMAND.test(text)) return false;
-    try { await begin(username); }
+    const mode = LOAD_COMMAND.test(text) ? 'load' : CHECK_COMMAND.test(text) ? 'check' : null;
+    if (!mode) return false;
+    try { await begin(username, mode); }
     catch (error) { await tellPrimary(username, `Pearl Loader unavailable: ${error?.message || String(error)}`).catch(() => {}); }
     return true;
   }

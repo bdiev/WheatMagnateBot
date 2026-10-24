@@ -475,6 +475,54 @@ async function testMissingEnderPearl() {
   assert.equal(runtime.stopReason,'Pearl Loader ender pearl is not set');
 }
 
+async function testPearlCheck() {
+  for (const pearlSet of [true,false]) {
+    const chats = [];
+    let clicked = 0;
+    const bot = {
+      entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+      entities:pearlSet ? {pearl:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)}} : {},
+      world:{raycast:() => ({position:new Vec3(10,64,-20)})},
+      pathfinder:{setMovements() {},async goto() {}},
+      async waitForChunksToLoad() {},
+      blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open:true})}),
+      canSeeBlock:() => true,
+      supportFeature:() => true,
+      _client:{write() { clicked += 1; }},
+      chat:message => chats.push(message)
+    };
+    const runtime = new EventEmitter();
+    runtime.bot = bot;
+    runtime.assignTask = () => {};
+    runtime.stop = async reason => { runtime.stopReason = reason; runtime.bot = null; };
+    const logs = [];
+    const recorded = [];
+    const feature = createPearlLoaderFeature({
+      log:(level,message,details) => logs.push({level,message,details}),
+      pool:{query:async sql => {
+        if (/INSERT INTO pearl_loader_requests/.test(sql)) recorded.push(sql);
+        return {rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]};
+      }},
+      getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+      getManager:() => ({get:() => runtime,recreate:async () => {}}),
+      movementsFactory:() => ({})
+    });
+
+    assert.equal(await feature.handlePrimaryWhisper('bdiev_',' Check '),true);
+    assert.deepEqual(chats,[pearlSet
+      ? '/w bdiev_ Your ender pearl is set. Whisper "load" when you need it.'
+      : '/w bdiev_ Your ender pearl is not set.']);
+    assert.equal(clicked,0,'a check never touches the trapdoor');
+    assert.deepEqual(feature.getStatus(),{active:false});
+    assert.equal(runtime.stopReason,'Pearl Loader check complete');
+    assert.equal(logs.length,1);
+    assert.equal(logs[0].details.pearlSet,pearlSet);
+    await delay(0);
+    assert.deepEqual(recorded,[],'a check is not counted as a load');
+    feature.dispose();
+  }
+}
+
 async function testReadyConfirmationTimeout() {
   assert.equal(READY_TIMEOUT_MS, 120_000, 'the default Yes timeout must be two minutes');
   const chats = [];
@@ -688,6 +736,7 @@ async function testLoaderRuntimeWhispers() {
   await testFalseNavigationSuccessIsRejected();
   await testTrapdoorRaycastBoundaryMissDoesNotBlockClick();
   await testMissingEnderPearl();
+  await testPearlCheck();
   await testReadyConfirmationTimeout();
   await testQueue();
   testEnderPearlRadius();
