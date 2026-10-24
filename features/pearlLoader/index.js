@@ -274,6 +274,12 @@ function createPearlLoaderFeature({
   interactionTimeoutMs = 1_500,
   interactionAttempts = 3,
   queueTimeoutMs = QUEUE_TIMEOUT_MS,
+  // Pearl entities can arrive a moment after the loader reaches the hatch
+  pearlRecheckMs = 1_000,
+  pearlRecheckAttempts = 3,
+  // A whisper sent just before leaving is waited for in the server's echo
+  whisperEchoTimeoutMs = 3_000,
+  whisperFlushMs = 500,
   maxQueueLength = MAX_QUEUE_LENGTH,
   navigationRange = 2.5,
   interactionReach = 4.5,
@@ -394,11 +400,17 @@ function createPearlLoaderFeature({
         resolve(connectedBot);
       };
       const onEnd = reason => {
+        // A failed attempt (the server unreachable for a moment) is retried
+        // by the runtime itself; the request waits for it until the deadline
+        if (runtime?.status === 'connecting') {
+          noteCurrent('warn', 'Connection attempt failed; the loader tries again.', { reason:String(reason || 'connection closed') });
+          return;
+        }
         cleanup();
         reject(new Error(`Pearl Loader disconnected: ${String(reason || 'connection closed')}`));
       };
       runtime?.on?.('status', onStatus);
-      runtime?.once?.('end', onEnd);
+      runtime?.on?.('end', onEnd);
       timer = setTimer(() => {
         cleanup();
         reject(timeoutError('Pearl Loader did not join the server in time.'));
@@ -605,6 +617,54 @@ function createPearlLoaderFeature({
       `Pearl Loader could not ${shouldOpen ? 'open' : 'close'} the trapdoor after ${attempts} attempts ` +
       `(facing=${properties?.facing || 'unknown'}, half=${properties?.half || 'unknown'}).`
     );
+  }
+
+  async function findPearl(job, bot, hatch) {
+    const attempts = Math.max(1, Number(pearlRecheckAttempts) || 1);
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      if (hasEnderPearlNear(bot, hatch)) return true;
+      if (attempt < attempts) {
+        note(job, 'info', 'No ender pearl seen yet; looking again.', { attempt, attempts });
+        await new Promise(resolve => setTimer(resolve, pearlRecheckMs));
+        if (activeJob !== job) return false;
+      }
+    }
+    return false;
+  }
+
+  function waitForWhisperEcho(bot, message) {
+    const expected = cleanWhisperText(message).toLowerCase();
+    return new Promise(resolve => {
+      let timer = null;
+      const onMessage = line => {
+        if (!cleanWhisperText(String(line ?? '')).toLowerCase().includes(expected)) return;
+        done(true);
+      };
+      const done = echoed => {
+        clearTimer(timer);
+        bot.off?.('messagestr', onMessage);
+        resolve(echoed);
+      };
+      bot.on('messagestr', onMessage);
+      timer = setTimer(() => done(false), whisperEchoTimeoutMs);
+    });
+  }
+
+  // The last whisper before the loader leaves: it is resent once if the server
+  // does not echo it, and the loader stays a moment so the packet goes out.
+  async function sendLastWhisper(job, bot, message) {
+    if (typeof bot?.on !== 'function') {
+      sendPrivateWhisper(bot, job.username, message);
+    } else {
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        const echo = waitForWhisperEcho(bot, message);
+        sendPrivateWhisper(bot, job.username, message);
+        if (await echo) break;
+        note(job, 'warn', 'The server did not echo the whisper.', { attempt, whisper:message });
+        if (!bot.entity) break;
+      }
+    }
+    await new Promise(resolve => setTimer(resolve, whisperFlushMs));
   }
 
   function clearJobTimers(job) {
@@ -878,16 +938,17 @@ function createPearlLoaderFeature({
       await navigateToHatch(loaderBot, hatch);
       if (activeJob !== job || runtime.bot !== loaderBot) throw new Error('Pearl Loader connection changed while navigating.');
       job.stage = 'checking_pearl';
+      const pearlSet = await findPearl(job, loaderBot, hatch);
+      if (activeJob !== job) return;
       if (mode === 'check') {
-        const pearlSet = hasEnderPearlNear(loaderBot, hatch);
-        sendPrivateWhisper(loaderBot, job.username, pearlSet
+        await sendLastWhisper(job, loaderBot, pearlSet
           ? 'Your ender pearl is set. Whisper "load" when you need it.'
           : 'Your ender pearl is not set.');
         await finishCheck(job, pearlSet);
         return;
       }
-      if (!hasEnderPearlNear(loaderBot, hatch)) {
-        sendPrivateWhisper(loaderBot, job.username, 'Your ender pearl is not set.');
+      if (!pearlSet) {
+        await sendLastWhisper(job, loaderBot, 'Your ender pearl is not set.');
         await finishMissingPearl(job);
         return;
       }

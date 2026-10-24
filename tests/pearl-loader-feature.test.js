@@ -465,7 +465,9 @@ async function testMissingEnderPearl() {
     pool:{query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
     getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
     getManager:() => ({get:() => runtime,recreate:async () => {}}),
-    movementsFactory:() => ({})
+    movementsFactory:() => ({}),
+    pearlRecheckMs:1,
+    whisperFlushMs:1
   });
 
   await feature.handlePrimaryWhisper('bdiev_','Load');
@@ -505,7 +507,8 @@ async function testPearlCheck() {
       }},
       getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
       getManager:() => ({get:() => runtime,recreate:async () => {}}),
-      movementsFactory:() => ({})
+      movementsFactory:() => ({}),
+      pearlRecheckMs:1
     });
 
     assert.equal(await feature.handlePrimaryWhisper('bdiev_',' Check '),true);
@@ -521,6 +524,102 @@ async function testPearlCheck() {
     assert.deepEqual(recorded,[],'a check is not counted as a load');
     feature.dispose();
   }
+}
+
+// The pearl shows up only after the loader has looked once, and the server
+// drops the first whisper: the loader looks again, and resends until echoed.
+async function testPearlCheckRecheckAndWhisperEcho() {
+  const chats = [];
+  let looks = 0;
+  const bot = new EventEmitter();
+  Object.assign(bot, {
+    entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+    world:{raycast:() => ({position:new Vec3(10,64,-20)})},
+    pathfinder:{setMovements() {},async goto() {}},
+    async waitForChunksToLoad() {},
+    blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open:true})}),
+    canSeeBlock:() => true,
+    chat(message) {
+      chats.push(message);
+      if (chats.length > 1) setImmediate(() => bot.emit('messagestr',`To bdiev_: ${message.replace('/w bdiev_ ','')}`));
+    }
+  });
+  Object.defineProperty(bot,'entities',{get() {
+    looks += 1;
+    return looks > 2 ? {pearl:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)}} : {};
+  }});
+  const runtime = new EventEmitter();
+  runtime.bot = bot;
+  runtime.assignTask = () => {};
+  const order = [];
+  runtime.stop = async () => { order.push('stop'); runtime.bot = null; };
+  const logs = [];
+  const feature = createPearlLoaderFeature({
+    log:(level,message,details) => logs.push({level,message,details}),
+    pool:{query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => {}}),
+    movementsFactory:() => ({}),
+    pearlRecheckMs:1,
+    whisperEchoTimeoutMs:20,
+    whisperFlushMs:1
+  });
+
+  await feature.handlePrimaryWhisper('bdiev_','pearl');
+  assert.equal(looks,3,'the loader looks again before saying the pearl is not set');
+  assert.deepEqual(chats,Array(2).fill('/w bdiev_ Your ender pearl is set. Whisper "load" when you need it.'),
+    'a whisper the server did not echo is sent once more');
+  assert.equal(order.at(-1),'stop','the loader leaves only after the whisper went out');
+  assert.equal(logs[0].details.pearlSet,true);
+  const timeline = logs[0].details.timeline.map(entry => entry.message);
+  assert.ok(timeline.includes('No ender pearl seen yet; looking again.'));
+  assert.ok(timeline.includes('The server did not echo the whisper.'));
+  feature.dispose();
+}
+
+// The server is unreachable on the first try (EHOSTUNREACH): the runtime
+// reconnects by itself, and the request goes on instead of failing.
+async function testConnectionRetry() {
+  const chats = [];
+  const bot = {
+    entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+    entities:{pearl:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)}},
+    world:{raycast:() => ({position:new Vec3(10,64,-20)})},
+    pathfinder:{setMovements() {},async goto() {}},
+    async waitForChunksToLoad() {},
+    blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open:true})}),
+    canSeeBlock:() => true,
+    chat:message => chats.push(message)
+  };
+  const runtime = new EventEmitter();
+  runtime.status = 'connecting';
+  runtime.assignTask = () => {};
+  runtime.stop = async reason => { runtime.stopReason = reason; runtime.bot = null; runtime.status = 'stopped'; };
+  const logs = [];
+  const feature = createPearlLoaderFeature({
+    log:(level,message,details) => logs.push({level,message,details}),
+    pool:{query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => {}}),
+    movementsFactory:() => ({}),
+    whisperFlushMs:1
+  });
+
+  const request = feature.handlePrimaryWhisper('bdiev_','check');
+  await delay(5);
+  runtime.emit('status',{status:'error'});
+  runtime.emit('end','socketClosed');
+  await delay(5);
+  assert.equal(feature.getStatus().stage,'connecting','a failed attempt does not end the request');
+  runtime.bot = bot;
+  runtime.status = 'connected';
+  runtime.emit('status',{status:'connected'});
+  await request;
+  assert.deepEqual(chats,['/w bdiev_ Your ender pearl is set. Whisper "load" when you need it.']);
+  assert.equal(runtime.stopReason,'Pearl Loader check complete');
+  assert.equal(logs[0].details.pearlSet,true);
+  assert.ok(logs[0].details.timeline.some(entry => entry.message === 'Connection attempt failed; the loader tries again.'));
+  feature.dispose();
 }
 
 async function testReadyConfirmationTimeout() {
@@ -593,7 +692,9 @@ async function testQueue() {
     sendPrimaryWhisper:async (username,message) => replies.push({username,message}),
     movementsFactory:() => ({}),
     navigationSettleMs:1,
-    queueTimeoutMs:40
+    queueTimeoutMs:40,
+    pearlRecheckAttempts:1,
+    whisperFlushMs:1
   });
 
   const first = feature.handlePrimaryWhisper('Alice','load');
@@ -737,6 +838,8 @@ async function testLoaderRuntimeWhispers() {
   await testTrapdoorRaycastBoundaryMissDoesNotBlockClick();
   await testMissingEnderPearl();
   await testPearlCheck();
+  await testPearlCheckRecheckAndWhisperEcho();
+  await testConnectionRetry();
   await testReadyConfirmationTimeout();
   await testQueue();
   testEnderPearlRadius();
