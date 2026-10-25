@@ -1,6 +1,7 @@
 package dev.onfocus.addon.modules;
 
 import dev.onfocus.addon.OnFocusAddon;
+import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
@@ -27,7 +28,6 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtString;
-import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSignC2SPacket;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
@@ -80,25 +80,28 @@ public class AutoSignDate extends Module {
         learningPos = null;
     }
 
+    // Runs before the client predicts the placement: by the time the interact packet is sent, a sign
+    // placed into grass or snow already stands at the clicked position and looks like an existing one.
+    @EventHandler
+    private void onInteractBlock(InteractBlockEvent event) {
+        if (mc.player == null || mc.world == null) return;
+
+        Item item = mc.player.getStackInHand(event.hand).getItem();
+        if (!(item instanceof SignItem || item instanceof HangingSignItem)) return;
+
+        boolean shift = isShiftHeld();
+        // Clicking an existing sign without Shift edits it instead of placing a new one.
+        if (!shift && mc.world.getBlockState(event.result.getBlockPos()).getBlock() instanceof AbstractSignBlock) {
+            placedAtMs = 0;
+            return;
+        }
+        placedAtMs = System.currentTimeMillis();
+        placedManual = shift;
+    }
+
     @EventHandler(priority = EventPriority.HIGH)
     private void onSendPacket(PacketEvent.Send event) {
         if (sendingOwn || mc.player == null || mc.world == null) return;
-
-        if (event.packet instanceof PlayerInteractBlockC2SPacket interact) {
-            Item item = mc.player.getStackInHand(interact.getHand()).getItem();
-            if (!(item instanceof SignItem || item instanceof HangingSignItem)) return;
-
-            boolean shift = isShiftHeld();
-            // Clicking an existing sign without Shift edits it instead of placing a new one.
-            if (!shift && mc.world.getBlockState(interact.getBlockHitResult().getBlockPos()).getBlock() instanceof AbstractSignBlock) {
-                placedAtMs = 0;
-                return;
-            }
-            placedAtMs = System.currentTimeMillis();
-            placedManual = shift;
-            return;
-        }
-
         if (!(event.packet instanceof UpdateSignC2SPacket update) || learningPos == null) return;
         if (!update.getPos().equals(learningPos)) return;
         learningPos = null;

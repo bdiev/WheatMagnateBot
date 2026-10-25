@@ -1372,8 +1372,12 @@ let botStatusSnapshotInterval = null;
 // The snapshot is checked every second but written only when it changed, plus a
 // heartbeat: every write makes the site push a refresh to each open tab.
 const BOT_STATUS_SNAPSHOT_HEARTBEAT_MS = 15_000;
+// The site treats a runtime row older than 15 s as offline, so the account row
+// gets its own, shorter heartbeat. Writing it does not refresh open tabs.
+const BOT_RUNTIME_STATE_HEARTBEAT_MS = 5_000;
 let lastBotStatusSnapshotKey = null;
 let lastBotStatusSnapshotWriteAt = 0;
+let lastBotRuntimeStateWriteAt = 0;
 let wheatMagnatePlaytimeDisplay = 'N/A';
 let wheatMagnatePlaytimeCacheAt = 0;
 const DANGER_RADIUS_OPTIONS = [100, 200, 300, 500, 1000];
@@ -10038,10 +10042,12 @@ async function writeBotStatusSnapshot({ force = false } = {}) {
   if (!pool) return;
   const snapshot = getBotStatusSnapshot();
   const key = botStatusSnapshotKey(snapshot);
-  if (!force && key === lastBotStatusSnapshotKey
-    && Date.now() - lastBotStatusSnapshotWriteAt < BOT_STATUS_SNAPSHOT_HEARTBEAT_MS) return;
+  const now = Date.now();
+  const snapshotDue = force || key !== lastBotStatusSnapshotKey
+    || now - lastBotStatusSnapshotWriteAt >= BOT_STATUS_SNAPSHOT_HEARTBEAT_MS;
+  if (!snapshotDue && now - lastBotRuntimeStateWriteAt < BOT_RUNTIME_STATE_HEARTBEAT_MS) return;
   try {
-    await pool.query(`
+    if (snapshotDue) await pool.query(`
       INSERT INTO bot_status_snapshots (id, status, observed_at)
       VALUES (1, $1, NOW())
       ON CONFLICT (id)
@@ -10062,8 +10068,11 @@ async function writeBotStatusSnapshot({ force = false } = {}) {
       bot?.entity ? new Date(startTime) : null,
       snapshot
     ]);
-    lastBotStatusSnapshotKey = key;
-    lastBotStatusSnapshotWriteAt = Date.now();
+    lastBotRuntimeStateWriteAt = Date.now();
+    if (snapshotDue) {
+      lastBotStatusSnapshotKey = key;
+      lastBotStatusSnapshotWriteAt = lastBotRuntimeStateWriteAt;
+    }
   } catch (err) {
     console.error('[Bot Status] Failed to write snapshot:', err.message);
   }
