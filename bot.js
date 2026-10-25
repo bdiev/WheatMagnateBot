@@ -7247,6 +7247,8 @@ async function initializeMultiAccountManager() {
     maxConcurrentBots: MAX_CONCURRENT_BOTS,
     startDelayMs: BOT_START_DELAY_MS,
     startJitterMs: BOT_START_JITTER_MS,
+    // A player is waiting for the Pearl Loader; farm reconnects can wait
+    isPriorityAccount: account => account.role === PEARL_LOADER_ROLE,
     runtimeFactory: account => {
       let lastLoggedRuntimeState = null;
       let runtime = null;
@@ -7318,6 +7320,11 @@ async function initializeMultiAccountManager() {
       if (account.role !== PEARL_LOADER_ROLE && savedKillAura.desiredEnabled && savedKillAura.selectedMobs.length) {
         runtime.setKillAuraEnabled(true);
       }
+      runtime.on('connection-slot', ({ waitedMs }) => {
+        if (waitedMs < 1000) return;
+        pearlLoaderFeature?.recordRuntimeEvent(account.id, 'info',
+          `${account.displayName}: waited ${(waitedMs / 1000).toFixed(1)} s for a connection slot.`, { waitedMs });
+      });
       runtime.on('status', status => {
         refreshObserver();
         persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message));

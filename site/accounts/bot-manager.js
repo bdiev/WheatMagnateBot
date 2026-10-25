@@ -1,7 +1,7 @@
 'use strict';
 
 class BotManager {
-  constructor({ registry, runtimeFactory, maxConcurrentBots = 3, startDelayMs = 10_000, startJitterMs = 3_000, random = Math.random } = {}) {
+  constructor({ registry, runtimeFactory, maxConcurrentBots = 3, startDelayMs = 10_000, startJitterMs = 3_000, random = Math.random, isPriorityAccount = () => false } = {}) {
     this.registry = registry;
     this.runtimeFactory = runtimeFactory;
     this.maxConcurrentBots = Math.max(1, Number(maxConcurrentBots) || 3);
@@ -11,8 +11,11 @@ class BotManager {
     this.runtimes = new Map();
     this.contexts = new Map();
     this.startPromises = new Map();
+    this.isPriorityAccount = typeof isPriorityAccount === 'function' ? isPriorityAccount : () => false;
     this.lastStartAt = 0;
-    this.connectionQueue = Promise.resolve();
+    this.connectionSlots = [];
+    this.drainingConnectionSlots = false;
+    this.wakeConnectionSlots = null;
   }
 
   get(accountId) { return this.runtimes.get(accountId) || null; }
@@ -33,25 +36,57 @@ class BotManager {
   }
   statuses() { return this.registry.list().map(account => this.getContext(account.id)?.getStatus?.() || { accountId:account.id,status:'stopped',task:'idle',uptimeMs:0,lastError:null }); }
 
-  withConnectionSlot(connect) {
-    const queued = this.connectionQueue.catch(() => {}).then(async () => {
-      const jitterMs = this.startJitterMs ? Math.floor(this.random() * (this.startJitterMs + 1)) : 0;
-      // The jitter is part of the required gap and is re-measured after every
-      // wait, so a connection noted elsewhere (noteExternalConnectionStart)
-      // while this slot was sleeping still pushes this start back.
-      while (true) {
-        const waitMs = this.lastStartAt
-          ? this.startDelayMs + jitterMs - (Date.now() - this.lastStartAt)
-          : jitterMs;
-        if (waitMs <= 0) break;
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-        if (!this.lastStartAt) break;
-      }
-      this.lastStartAt = Date.now();
-      return connect();
+  // Connections go one at a time, startDelayMs (plus jitter) apart. A priority
+  // slot (someone is waiting for that bot, e.g. the Pearl Loader) goes ahead
+  // of queued reconnects and skips the jitter, but still keeps the gap.
+  withConnectionSlot(connect, { priority = false, onGranted = null } = {}) {
+    return new Promise((resolve, reject) => {
+      const slot = {
+        connect,
+        priority: Boolean(priority),
+        onGranted,
+        resolve,
+        reject,
+        queuedAt: Date.now(),
+        jitterMs: !priority && this.startJitterMs ? Math.floor(this.random() * (this.startJitterMs + 1)) : 0
+      };
+      const firstOrdinary = slot.priority ? this.connectionSlots.findIndex(queued => !queued.priority) : -1;
+      if (firstOrdinary >= 0) this.connectionSlots.splice(firstOrdinary, 0, slot);
+      else this.connectionSlots.push(slot);
+      if (slot.priority) this.wakeConnectionSlots?.();
+      void this.drainConnectionSlots();
     });
-    this.connectionQueue = queued.then(() => undefined, () => undefined);
-    return queued;
+  }
+
+  async drainConnectionSlots() {
+    if (this.drainingConnectionSlots) return;
+    this.drainingConnectionSlots = true;
+    try {
+      while (this.connectionSlots.length) {
+        // Re-measured after every wait: a connection noted elsewhere
+        // (noteExternalConnectionStart) pushes the start back, and a priority
+        // slot that arrived meanwhile takes the head.
+        const slot = this.connectionSlots[0];
+        const readyAt = this.lastStartAt
+          ? this.lastStartAt + this.startDelayMs + slot.jitterMs
+          : slot.queuedAt + slot.jitterMs;
+        const waitMs = readyAt - Date.now();
+        if (waitMs > 0) {
+          await new Promise(resolve => {
+            const timer = setTimeout(resolve, waitMs);
+            this.wakeConnectionSlots = () => { clearTimeout(timer); resolve(); };
+          });
+          this.wakeConnectionSlots = null;
+          continue;
+        }
+        this.connectionSlots.shift();
+        this.lastStartAt = Date.now();
+        try { slot.onGranted?.(this.lastStartAt - slot.queuedAt); } catch {}
+        await Promise.resolve().then(slot.connect).then(slot.resolve, slot.reject);
+      }
+    } finally {
+      this.drainingConnectionSlots = false;
+    }
   }
 
   noteExternalConnectionStart(startedAt = Date.now()) {
@@ -67,7 +102,10 @@ class BotManager {
     let runtime = this.runtimes.get(accountId);
     if (!runtime) {
       runtime = this.runtimeFactory(account);
-      runtime.connectionGate = connect => this.withConnectionSlot(connect);
+      runtime.connectionGate = connect => this.withConnectionSlot(connect, {
+        priority: Boolean(this.isPriorityAccount(account)),
+        onGranted: waitedMs => runtime.emit?.('connection-slot', { waitedMs })
+      });
       this.runtimes.set(accountId, runtime);
       this.registerContext(runtime);
     }

@@ -133,6 +133,29 @@ async function main(){
   externalGapManager.noteExternalConnectionStart(externalStartedAt);
   assert.ok(await slotStartedAt-externalStartedAt>=75,'a queued slot keeps the full interval plus jitter after an external primary start');
 
+  // A priority slot (the Pearl Loader) goes ahead of queued reconnects and
+  // skips their jitter, but still keeps the interval after the last start.
+  const priorityManager=new BotManager({registry,startDelayMs:40,startJitterMs:200,random:()=>1,runtimeFactory:()=>null});
+  const priorityOrder=[];
+  const firstSlot=priorityManager.withConnectionSlot(async()=>priorityOrder.push('first'));
+  const ordinarySlot=priorityManager.withConnectionSlot(async()=>priorityOrder.push('ordinary'));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  let priorityWaitedMs=null;
+  const priorityQueuedAt=Date.now();
+  const prioritySlot=priorityManager.withConnectionSlot(async()=>{priorityOrder.push('priority');return Date.now();},{priority:true,onGranted:waitedMs=>{priorityWaitedMs=waitedMs;}});
+  await firstSlot;
+  const priorityStartedAt=await prioritySlot;
+  await ordinarySlot;
+  assert.deepEqual(priorityOrder,['priority','first','ordinary'],'the Pearl Loader is not left behind queued reconnects');
+  assert.ok(priorityStartedAt-priorityQueuedAt<150,'the priority slot skips the start jitter');
+  // Once something has started, the priority slot still keeps the interval
+  const gapManager=new BotManager({registry,startDelayMs:60,startJitterMs:200,random:()=>1,runtimeFactory:()=>null});
+  const gapStartedAt=Date.now();
+  gapManager.noteExternalConnectionStart(gapStartedAt);
+  const gapSlotAt=await gapManager.withConnectionSlot(async()=>Date.now(),{priority:true});
+  assert.ok(gapSlotAt-gapStartedAt>=55&&gapSlotAt-gapStartedAt<200,'the priority slot keeps the interval but not the jitter');
+  assert.ok(Number.isFinite(priorityWaitedMs)&&priorityWaitedMs>=0,'the granted slot reports how long it waited');
+
   // The primary account queues through the same slot once the manager exists.
   const primarySource=fs.readFileSync(path.join(__dirname,'..','bot.js'),'utf8');
   assert.match(primarySource,/function createBot\(\) \{[\s\S]*?if \(multiBotManager && !primaryConnectionSlotGranted\) \{[\s\S]*?multiBotManager\.withConnectionSlot\(/,'primary reconnects wait for the shared connection slot');
