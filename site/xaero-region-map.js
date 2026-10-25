@@ -22,11 +22,11 @@ const MAX_DISTANCE = 100_000;
 const MAX_LEVEL = 9;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 // A tile is rebuilt once it has been dirty this long, so a burst of uploads under it costs one rebuild.
-// Zoomed-out levels wait longer: each rebuild rewrites a whole tile in the database (and its WAL), and
-// a region redrawn every few seconds in flight would otherwise rewrite all nine above it each time.
+// Zoomed-out levels batch more uploads, but their deadlines are measured from the original
+// change, not from each child's rebuild: the whole map must keep up with the flight.
 const DIRTY_SETTLE_MS = 2_000;
 // Levels 1 to MAX_LEVEL, in order
-const LEVEL_SETTLE_MS = Object.freeze([2_000, 10_000, 30_000, 60_000, 300_000, 300_000, 300_000, 300_000, 300_000]);
+const LEVEL_SETTLE_MS = Object.freeze([2_000, 5_000, 10_000, 15_000, 20_000, 25_000, 30_000, 30_000, 30_000]);
 const WORKER_BATCH = 16;
 const WORKER_IDLE_MS = 2_000;
 // Open dashboards hear of new tiles this soon: the live map keeps up with the flight
@@ -244,12 +244,14 @@ function createXaeroRegionMapService({
     pendingPublish.clear();
   }
 
-  async function markDirty(scope, level, x, z) {
+  async function markDirty(scope, level, x, z, dirtyAt = null) {
     if (level > MAX_LEVEL) return;
     await pool.query(
-      `INSERT INTO area_explorer_region_dirty (server, dimension, level, x, z) VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT DO NOTHING`,
-      [scope.server, scope.dimension, level, x, z]
+      `INSERT INTO area_explorer_region_dirty (server, dimension, level, x, z, dirty_at)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()))
+       ON CONFLICT (server, dimension, level, x, z)
+       DO UPDATE SET dirty_at = LEAST(area_explorer_region_dirty.dirty_at, EXCLUDED.dirty_at)`,
+      [scope.server, scope.dimension, level, x, z, dirtyAt]
     );
   }
 
@@ -303,7 +305,7 @@ function createXaeroRegionMapService({
   }
 
   /** Rebuilds one dirty tile from the four under it, and marks the one above it. */
-  async function rebuildTile(scope, level, x, z) {
+  async function rebuildTile(scope, level, x, z, dirtyAt) {
     const children = (await pool.query(
       `SELECT x, z, data FROM area_explorer_region_tiles
        WHERE server = $1 AND dimension = $2 AND level = $3 AND x BETWEEN $4 AND $5 AND z BETWEEN $6 AND $7`,
@@ -327,7 +329,7 @@ function createXaeroRegionMapService({
       await pool.query('DELETE FROM area_explorer_region_tiles WHERE server = $1 AND dimension = $2 AND level = $3 AND x = $4 AND z = $5', [scope.server, scope.dimension, level, x, z]);
     }
     const parent = parentOf(level, x, z);
-    await markDirty(scope, parent.level, parent.x, parent.z);
+    await markDirty(scope, parent.level, parent.x, parent.z, dirtyAt);
     queuePublish(scope, level, x, z);
   }
 
@@ -346,12 +348,12 @@ function createXaeroRegionMapService({
          SELECT server, dimension, level, x, z FROM area_explorer_region_dirty
          WHERE dirty_at <= NOW() - make_interval(secs => COALESCE(($1::int[])[level], $3) / 1000.0)
          ORDER BY dirty_at, level LIMIT $2
-       ) RETURNING server, dimension, level, x, z`,
+       ) RETURNING server, dimension, level, x, z, dirty_at`,
       [settle, WORKER_BATCH, settleMs === null ? DIRTY_SETTLE_MS : settleMs]
     )).rows;
     for (const row of rows) {
       try {
-        await rebuildTile({ server: row.server, dimension: row.dimension }, row.level, row.x, row.z);
+        await rebuildTile({ server: row.server, dimension: row.dimension }, row.level, row.x, row.z, row.dirty_at);
       } catch (error) {
         // Back on the list for the next round
         await markDirty({ server: row.server, dimension: row.dimension }, row.level, row.x, row.z).catch(() => {});

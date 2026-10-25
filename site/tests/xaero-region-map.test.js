@@ -262,6 +262,38 @@ async function testNoStorageLimit() {
   }
 }
 
+async function testMapPropagationDeadline() {
+  const db = new PGlite();
+  let service;
+  try {
+    await db.exec(migrationSql);
+    service = createXaeroRegionMapService({ pool: poolFor(db) });
+    service.stop();
+    const scope = { server: 'live', dimension: 'overworld' };
+    const png = await regionPng();
+    await service.putRegion(scope, 0, 0, DRAWN, png);
+    await db.query("UPDATE area_explorer_region_dirty SET dirty_at = NOW() - INTERVAL '31 seconds'");
+    const original = (await db.query('SELECT dirty_at FROM area_explorer_region_dirty')).rows[0].dirty_at;
+    await service.putRegion(scope, 1, 0, DRAWN, png);
+    assert.deepEqual((await db.query('SELECT dirty_at FROM area_explorer_region_dirty')).rows[0].dirty_at, original,
+      'continuous uploads must not postpone the oldest pending change');
+    // Another child has already queued the parent with a newer deadline.
+    await db.query("INSERT INTO area_explorer_region_dirty (server, dimension, level, x, z) VALUES ('live', 'overworld', 2, 0, 0)");
+    await service.processDirty();
+    const parent = (await db.query('SELECT level, dirty_at FROM area_explorer_region_dirty')).rows;
+    assert.deepEqual(parent, [{ level: 2, dirty_at: original }],
+      'the parent inherits the earliest original change instead of restarting its wait');
+    for (let i = 0; i < MAX_LEVEL; i++) await service.processDirty();
+    assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM area_explorer_region_dirty')).rows[0].count, 0,
+      'a change older than 30 seconds is eligible at every zoom level without further settling delays');
+    assert.equal((await db.query('SELECT COUNT(DISTINCT level)::int AS count FROM area_explorer_region_tiles')).rows[0].count, MAX_LEVEL + 1,
+      'the fresh terrain reaches the whole-map overview');
+  } finally {
+    service?.stop();
+    await db.close();
+  }
+}
+
 function testWiring() {
   assert.match(serverSource, /url\.pathname\.startsWith\('\/api\/area-explorer\/mod\/'\)/, 'the mod routes skip the browser checks, like ingest');
   assert.ok(
@@ -288,6 +320,7 @@ function testWiring() {
   await testParentShrinks();
   await testService();
   await testNoStorageLimit();
+  await testMapPropagationDeadline();
   testWiring();
   console.log('xaero-region-map tests passed');
 })().catch(error => {
