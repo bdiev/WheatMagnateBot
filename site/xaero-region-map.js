@@ -21,8 +21,6 @@ const MAX_DISTANCE = 100_000;
 // Level 9: a tile is 512 regions, 262,144 blocks a side - the whole map in four tiles
 const MAX_LEVEL = 9;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
-const DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
-const SIZE_CHECK_INTERVAL_MS = 10 * 60_000;
 // A tile is rebuilt once it has been dirty this long, so a burst of uploads under it costs one rebuild.
 // Zoomed-out levels wait longer: each rebuild rewrites a whole tile in the database (and its WAL), and
 // a region redrawn every few seconds in flight would otherwise rewrite all nine above it each time.
@@ -213,11 +211,8 @@ async function parentTileFromChildren(children) {
 function createXaeroRegionMapService({
   pool, authenticate, enforceRateLimit, sendJson, sendError,
   publish = () => {}, recordSystemLog = async () => {},
-  maxBytes = Number(process.env.XAERO_MAP_MAX_BYTES) || DEFAULT_MAX_BYTES,
   now = () => Date.now()
 }) {
-  let storedBytes = null;
-  let storedBytesCheckedAt = 0;
   let workerTimer = null;
   let workerRunning = false;
   let stopped = false;
@@ -225,15 +220,6 @@ function createXaeroRegionMapService({
   let publishTimer = null;
   // Explored chunk counts by scope: { at, value }
   const exploredCache = new Map();
-
-  async function storageBytes() {
-    if (storedBytes === null || now() - storedBytesCheckedAt > SIZE_CHECK_INTERVAL_MS) {
-      const row = (await pool.query(`SELECT COALESCE(SUM(octet_length(data)), 0)::bigint AS bytes FROM area_explorer_region_tiles`)).rows[0];
-      storedBytes = Number(row.bytes);
-      storedBytesCheckedAt = now();
-    }
-    return storedBytes;
-  }
 
   /** Tells open dashboards which tiles changed, a few seconds' worth at a time. */
   function queuePublish(scope, level, x, z) {
@@ -285,9 +271,6 @@ function createXaeroRegionMapService({
       [scope.server, scope.dimension, x, z]
     )).rows[0];
     if (existing && Number(existing.modified) >= modifiedMs) return { stored: false, reason: 'up to date' };
-    if (!existing && await storageBytes() >= maxBytes) {
-      throw httpError(507, 'The map storage limit (XAERO_MAP_MAX_BYTES) is reached; new regions are refused.');
-    }
     const drawn = await regionTileFromPng(png);
     const tile = drawn?.tile;
     // Saved again by Xaero with nothing new drawn: only its date moves on (the tile's data isn't
@@ -311,7 +294,6 @@ function createXaeroRegionMapService({
          DO UPDATE SET data = EXCLUDED.data, chunk_mask = EXCLUDED.chunk_mask, source_modified_at = EXCLUDED.source_modified_at, updated_at = NOW()`,
         [scope.server, scope.dimension, x, z, tile, drawn.mask, modifiedMs]
       );
-      if (storedBytes !== null) storedBytes += tile.length;
     }
     const parent = parentOf(0, x, z);
     await markDirty(scope, parent.level, parent.x, parent.z);

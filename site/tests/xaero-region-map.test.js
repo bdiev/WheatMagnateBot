@@ -95,8 +95,7 @@ async function testService() {
       enforceRateLimit: () => !limited,
       sendJson,
       sendError: (res, statusCode, message) => sendJson(res, statusCode, { error: message }),
-      publish: (type, payload) => published.push({ type, payload }),
-      maxBytes: 10 * 1024 * 1024
+      publish: (type, payload) => published.push({ type, payload })
     });
     const modUrl = (x, z, modified = DRAWN) => new URL(`http://localhost/api/area-explorer/mod/map/regions/${x}/${z}?server=Oldfrog.org&dimension=overworld&modified=${modified}`);
     const auth = { authorization: 'Bearer good' };
@@ -219,15 +218,46 @@ async function testService() {
     while (await service.processDirty({ settleMs: 0 }) || (await db.query('SELECT 1 FROM area_explorer_region_dirty')).rows.length) { /* keep going */ }
     assert.equal((await db.query(`SELECT COUNT(*)::int AS count FROM area_explorer_region_tiles WHERE dimension = 'overworld'`)).rows[0].count, 0);
 
-    // Full storage refuses new regions
-    const tight = createXaeroRegionMapService({
-      pool: poolFor(db), authenticate: async () => ({ id: 1 }), enforceRateLimit: () => true, sendJson, sendError() {}, maxBytes: 1
-    });
-    await tight.putRegion({ server: 'a', dimension: 'overworld' }, 0, 0, DRAWN, png);
-    await assert.rejects(tight.putRegion({ server: 'a', dimension: 'overworld' }, 1, 0, DRAWN, png), error => error.statusCode === 507);
     service.stop();
-    tight.stop();
   } finally {
+    await db.close();
+  }
+}
+
+async function testNoStorageLimit() {
+  const db = new PGlite();
+  const previousLimit = process.env.XAERO_MAP_MAX_BYTES;
+  let service;
+  try {
+    await db.exec(migrationSql);
+    // A legacy deployment setting must no longer restrict map growth.
+    process.env.XAERO_MAP_MAX_BYTES = '1';
+    const pool = poolFor(db);
+    service = createXaeroRegionMapService({
+      pool: {
+        query(sql, params) {
+          assert.doesNotMatch(sql, /SUM\s*\(octet_length/i, 'uploads must not scan total map storage');
+          return pool.query(sql, params);
+        }
+      }
+    });
+    service.stop(); // Rebuild explicitly instead of using the background timer.
+    const scope = { server: 'unlimited', dimension: 'overworld' };
+    const png = await regionPng();
+    for (let x = 0; x < 6; x++) {
+      assert.equal((await service.putRegion(scope, x, 0, DRAWN, png)).stored, true,
+        'new regions are accepted regardless of accumulated map size');
+    }
+    while ((await db.query('SELECT 1 FROM area_explorer_region_dirty LIMIT 1')).rows.length) {
+      await service.processDirty({ settleMs: 0 });
+    }
+    assert.equal((await service.putRegion(scope, 6, 0, DRAWN, png)).stored, true,
+      'the rebuilt pyramid does not block new regions either');
+    assert.equal((await service.regionIndex(scope)).regions.length, 7);
+  } finally {
+    if (previousLimit === undefined) delete process.env.XAERO_MAP_MAX_BYTES;
+    else process.env.XAERO_MAP_MAX_BYTES = previousLimit;
+    service?.stop();
     await db.close();
   }
 }
@@ -257,6 +287,7 @@ function testWiring() {
   testExploredCounts();
   await testParentShrinks();
   await testService();
+  await testNoStorageLimit();
   testWiring();
   console.log('xaero-region-map tests passed');
 })().catch(error => {

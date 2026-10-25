@@ -286,10 +286,6 @@ public final class MapSync {
                 return FULL_MS;
             }
             if (code == 429) return retryAfter(response);
-            if (code == 507) {
-                report(current, "the site's map storage is full (XAERO_MAP_MAX_BYTES) - new regions wait");
-                return FULL_MS;
-            }
             report(current, "the site answered " + code + " to a map region, trying again in a bit");
             return RETRY_MS;
         } catch (IllegalArgumentException e) {
