@@ -978,8 +978,11 @@ async function testModFavorites() {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     await db.exec(`INSERT INTO site_users (id, role) VALUES (1, 'admin'), (2, 'user')`);
+    let answer;
     const service = createAreaExplorerService({
-      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}),
+      sendJson: (res, statusCode, payload) => { answer = { statusCode, payload }; },
+      sendError: (res, statusCode, message) => { answer = { statusCode, message }; },
       enforceRateLimit: () => true, publish() {}, recordSystemLog: async () => {}
     });
     const admin = { id: 1, username: 'admin', role: 'admin' };
@@ -987,18 +990,23 @@ async function testModFavorites() {
     const created = await service.createToken(admin, { name: 'VDS' });
     const token = await service.authenticate({ headers: { authorization: `Bearer ${created.token}` } });
     const scope = { server: 'oldfrog.org', dimension: 'overworld' };
-    const status = { player: 'Steve', phase: 'IDLE', x: 0, z: 0 };
     const find = (kind, name, x, extra = {}) => ({ kind, name, x, y: 64, z: x, foundAt: NOW, count: kind === 'ITEM' ? 1 : 0, ...extra });
     await service.ingest(token, { ...scope, finds: [find('BASE', 'Base', 100, { details: 'score 40: beds' }), find('ITEM', 'Elytra', 2000, { count: 3 }),
       find('MARKER', 'End Portal', 900)] }, NOW);
     await service.ingest(token, { server: 'other.org', dimension: 'the_nether', finds: [find('MARKER', 'Nether Fortress', 50)] }, NOW);
     const idOf = async name => String((await db.query('SELECT id FROM area_explorer_finds WHERE name = $1', [name])).rows[0].id);
-    const check = async version => (await service.ingest(token, { ...scope, status, favoritesVersion: version }, NOW)).favorites;
+    const ask = async (query, authorization = `Bearer ${created.token}`, method = 'GET') => {
+      await service.handleFavorites({ method, headers: { authorization } }, {}, new URL(`http://x/api/area-explorer/mod/favorites?${query}`));
+      return answer;
+    };
+    const check = async (version, server = 'oldfrog.org') => (await ask(`server=${server}&version=${version}`)).payload;
 
-    assert.equal((await service.ingest(token, { ...scope, status }, NOW)).favorites, undefined, 'a mod build that does not say gets none');
+    assert.equal((await ask('server=oldfrog.org', 'Bearer aex_wrong')).statusCode, 401, 'only with a token');
+    assert.equal((await ask('version=x')).statusCode, 400, 'the server is needed');
+    assert.equal((await ask('server=oldfrog.org', undefined, 'POST')).statusCode, 405);
     const empty = await check('');
     assert.deepEqual(empty.markers, [], 'nothing starred: an empty list, so leftovers go');
-    assert.equal(await check(empty.version), undefined, 'the same list is not sent again');
+    assert.deepEqual(await check(empty.version), { version: empty.version, unchanged: true }, 'the same list is not sent again');
 
     await service.setFavorite(admin, await idOf('Base'), true);
     await service.setFavorite(admin, await idOf('Elytra'), true);
@@ -1010,7 +1018,7 @@ async function testModFavorites() {
       { dimension: 'overworld', name: 'Elytra ×3', x: 2000, y: 64, z: 2000 }
     ], "administrators' stars of this server only");
     assert.notEqual(starred.version, empty.version);
-    assert.equal((await service.ingest(token, { ...scope, favoritesVersion: '' }, NOW)).favorites, undefined, 'only with a status upload');
+    assert.deepEqual((await check('', 'OldFrog.org:25565')).markers, starred.markers, 'the server as any PC names it');
 
     await service.setFavorite(admin, await idOf('Base'), false);
     await service.removeFind(admin, await idOf('Elytra'));

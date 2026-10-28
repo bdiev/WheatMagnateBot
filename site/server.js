@@ -6682,6 +6682,17 @@ async function requestHandler(req, res) {
     }
     return;
   }
+  // The mod asking for its favorites: the same API token, no browser either
+  if (url.pathname === '/api/area-explorer/mod/favorites') {
+    try {
+      if (!pool) { sendError(res, 503, 'Area Explorer needs the database.'); return; }
+      await getAreaExplorerService().handleFavorites(req, res, url);
+    } catch (err) {
+      const safe = publicError(err);
+      if (!res.headersSent) sendError(res, safe.statusCode, safe.message);
+    }
+    return;
+  }
   // The mod's map regions: the same API token, no browser either
   if (url.pathname.startsWith('/api/area-explorer/mod/')) {
     try {

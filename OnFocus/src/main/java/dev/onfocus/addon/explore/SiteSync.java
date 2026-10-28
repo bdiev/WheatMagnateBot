@@ -72,6 +72,48 @@ public final class SiteSync {
     /** Markers taken out per request; the site takes up to 500. */
     public static final int REMOVED_BATCH = 500;
     private final AtomicReference<LiveUpload> latestLive = new AtomicReference<>();
+    private final AtomicBoolean favoritesInFlight = new AtomicBoolean();
+    private volatile String lastFavoritesProblem;
+
+    /**
+     * Asks the site for the finds administrators starred on a server
+     * ({@code GET <site>/api/area-explorer/mod/favorites?server=&version=}, with the token): only reads,
+     * so it needs no site-sync. {@code favorites} gets {version, markers} when the site has others than
+     * {@code version}, on the HTTP thread; one request at a time, a new one while it's out is skipped.
+     */
+    public void fetchFavorites(String site, String token, String server, String version, Consumer<String> problem, Consumer<JsonObject> favorites) {
+        if (!favoritesInFlight.compareAndSet(false, true)) return;
+        try {
+            String query = "?server=" + java.net.URLEncoder.encode(server, StandardCharsets.UTF_8)
+                + "&version=" + java.net.URLEncoder.encode(version, StandardCharsets.UTF_8);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(site.replaceAll("/+$", "") + "/api/area-explorer/mod/favorites" + query))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Bearer " + token)
+                .GET()
+                .build();
+            http.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete((response, error) -> {
+                try {
+                    String message = error != null ? "favorites request failed, retrying"
+                        : response.statusCode() == 401 ? "the site didn't take the token (wrong or revoked) - check site-token"
+                        : response.statusCode() / 100 == 2 ? null : "favorites request returned " + response.statusCode();
+                    if (message != null && !message.equals(lastFavoritesProblem)) problem.accept(message);
+                    lastFavoritesProblem = message;
+                    if (message != null) return;
+                    JsonObject answer = JsonParser.parseString(response.body()).getAsJsonObject();
+                    if (answer.has("markers") && answer.get("markers").isJsonArray()) favorites.accept(answer);
+                } catch (RuntimeException ignored) {
+                    // Not an answer to read: asked again next time
+                } finally {
+                    favoritesInFlight.set(false);
+                }
+            });
+        } catch (IllegalArgumentException e) {
+            favoritesInFlight.set(false);
+            String message = "site-url isn't a valid address";
+            if (!message.equals(lastFavoritesProblem)) problem.accept(message);
+            lastFavoritesProblem = message;
+        }
+    }
 
     /**
      * Independent of archive uploads: at most one live request, never a queue of old positions.

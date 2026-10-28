@@ -464,8 +464,6 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const confirms = Number(body.commandProtocol) >= 2;
     const protocol = Number(body.commandProtocol) || 0;
     const removedMarkers = normalizeRemovedMarkers(body.removedMarkers);
-    // The version of the favorites the mod has ("" for none); a build that doesn't say gets none
-    const favoritesVersion = typeof body.favoritesVersion === 'string' ? body.favoritesVersion.slice(0, 64) : null;
 
     let added = 0;
     let liveStatus = null;
@@ -531,21 +529,19 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const commandAcks = commandUpdates.length ? await applyCommandUpdates(token, commandUpdates) : [];
     // A status upload is the mod checking in: it gets the commands waiting for it
     const commands = status ? await takeCommands(token, confirms, protocol) : [];
-    const favorites = status && favoritesVersion !== null ? await modFavorites(server, favoritesVersion) : null;
     return {
       received: rawFinds.length, accepted: finds.length, added, duplicates: finds.length - added,
       ...(body.removedMarkers !== undefined ? { removedFinds: removedIds.length } : {}),
       ...(rawEvents.length ? { events: newEvents.length } : {}),
       ...(commandUpdates.length ? { commandAcks } : {}),
-      ...(commands.length ? { commands } : {}),
-      ...(favorites ? { favorites } : {})
+      ...(commands.length ? { commands } : {})
     };
   }
 
   /**
-   * The finds of a server administrators starred, for the mods' Favorites set in Xaero: all of them,
-   * with a version - only when it isn't the one the mod has. Unstarred or taken off the site, a find
-   * leaves the list, and so the set.
+   * The finds of a server administrators starred, for a mod's Favorites set in Xaero: all of them, with
+   * a version - just the version when it's the one the mod has. Unstarred or taken off the site, a find
+   * leaves the list, and so the set. The server as any PC names it: case and the default port aside.
    */
   async function modFavorites(server, version) {
     const rows = (await pool.query(
@@ -553,7 +549,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
        FROM area_explorer_favorites fav
        JOIN site_users u ON u.id = fav.user_id AND u.role = 'admin'
        JOIN area_explorer_finds f ON f.id = fav.find_id
-       WHERE f.server = $1 AND f.removed_at IS NULL
+       WHERE regexp_replace(lower(f.server), ':25565$', '') = regexp_replace(lower($1), ':25565$', '') AND f.removed_at IS NULL
        ORDER BY f.id LIMIT $2`, [server, MAX_MOD_FAVORITES]
     )).rows;
     const markers = rows.map(row => ({
@@ -562,7 +558,27 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       x: row.x, y: row.y, z: row.z
     }));
     const current = crypto.createHash('sha256').update(JSON.stringify(markers)).digest('hex').slice(0, 16);
-    return current === version ? null : { version: current, markers };
+    return current === version ? { version: current, unchanged: true } : { version: current, markers };
+  }
+
+  /** {@code GET /api/area-explorer/mod/favorites?server=&version=}: a mod's favorites, with its token; only reads. */
+  async function handleFavorites(req, res, url) {
+    if (req.method !== 'GET') {
+      sendError(res, 405, 'Use GET.');
+      return;
+    }
+    const token = await authenticate(req);
+    if (!token) {
+      sendError(res, 401, 'A valid Area Explorer token is required.');
+      return;
+    }
+    if (!enforceRateLimit(req, res, 'area_explorer_favorites', `token:${token.id}`, { limit: 60, windowMs: 60_000 })) return;
+    const server = normalizeScopeName(url.searchParams.get('server'), 128);
+    if (!server) {
+      sendError(res, 400, 'server is required.');
+      return;
+    }
+    sendJson(res, 200, await modFavorites(server, String(url.searchParams.get('version') || '').slice(0, 64)));
   }
 
   /** Command rows with their mod's token name, for the page. */
@@ -1285,7 +1301,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, createWaypoint, listCommands, getFinds, getMapPoints, getFind, setFavorite, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleFavorites, modFavorites, handleApi, getSummary, getEvents, getCoverage, createCommand, createWaypoint, listCommands, getFinds, getMapPoints, getFind, setFavorite, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {
