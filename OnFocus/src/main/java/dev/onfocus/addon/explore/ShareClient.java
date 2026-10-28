@@ -52,8 +52,7 @@ import java.util.regex.Pattern;
  * taken out on the other PC ({@code POST /markers/removed}), and so on the site; one taken out
  * there (on the site too) is taken out here. Which waypoint here each marker of the other PC's went
  * to is kept for that ({@code markers-local.tsv}), by its block: renamed or moved to another set
- * here, it's the same one. The site's favorites the other PC has come too: this PC's Favorites set is
- * made the same ({@link Config#favorites}), apart from all that.
+ * here, it's the same one.
  * <p>
  * Runs on a thread of its own; {@link #update} and {@link #stop} may be called from any thread.
  */
@@ -96,16 +95,14 @@ public final class ShareClient {
      * Xaero and says which waypoint here each is (one already here: that one) - null if it couldn't;
      * {@code findMarkers} only says which waypoint here each is; {@code localMarkers} is every
      * waypoint of the server here by dimension (null: none to tell); {@code removeMarkers} takes
-     * waypoints of a dimension out - false if it couldn't; {@code favorites} makes the Favorites set the
-     * site's favorites, every dimension - false if it couldn't. {@code info} is said to the player,
+     * waypoints of a dimension out - false if it couldn't. {@code info} is said to the player,
      * {@code log} only written down: what comes every few minutes.
      */
     public record Config(String address, String secret, String server, MapWorld map, Set<String> markerDimensions,
                          Function<String, Function<List<Shared>, Map<Shared, Local>>> addMarkers,
                          Function<String, Function<List<Shared>, Map<Shared, Local>>> findMarkers,
                          Supplier<Map<String, List<Local>>> localMarkers,
-                         Function<String, Function<List<Local>, Boolean>> removeMarkers,
-                         Function<List<ShareServer.Favorite>, Boolean> favorites, Executor onGameThread,
+                         Function<String, Function<List<Local>, Boolean>> removeMarkers, Executor onGameThread,
                          Consumer<String> problem, Consumer<String> info, Consumer<String> log) {}
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
@@ -251,8 +248,6 @@ public final class ShareClient {
 
         long pause = removeTakenOut(current, answer, here, localFile);
         if (pause != IDLE_MS) return pause;
-        pause = takeFavorites(current, answer);
-        if (pause != IDLE_MS) return pause;
         pause = tellTakenOut(current, here, localFile);
         if (pause != IDLE_MS) return pause;
 
@@ -294,19 +289,6 @@ public final class ShareClient {
             writeLocal(localFile, here);
         }
         return IDLE_MS;
-    }
-
-    /** The site's favorites the other PC has, into the Favorites set here; none said (no site there, a build before): left be. */
-    private long takeFavorites(Config current, JsonObject answer) throws InterruptedException {
-        if (!answer.has("favorites") || !answer.get("favorites").isJsonArray()) return IDLE_MS;
-        List<ShareServer.Favorite> favorites = new ArrayList<>();
-        for (JsonElement element : answer.getAsJsonArray("favorites")) {
-            JsonArray f = element.getAsJsonArray();
-            favorites.add(new ShareServer.Favorite(f.get(0).getAsString(), f.get(1).getAsString(), f.get(2).getAsInt(), f.get(3).getAsInt(), f.get(4).getAsInt()));
-        }
-        if (stale(current)) return 0;
-        Boolean done = onGame(current, () -> current.favorites().apply(favorites));
-        return Boolean.TRUE.equals(done) ? IDLE_MS : RETRY_MS;
     }
 
     /** The other PC's markers taken out there (or on the site): their waypoints here go too. */
