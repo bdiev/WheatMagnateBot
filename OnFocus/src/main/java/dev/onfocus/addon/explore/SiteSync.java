@@ -61,8 +61,8 @@ public final class SiteSync {
     private String lastProblem;
     private final AtomicBoolean liveInFlight = new AtomicBoolean();
     private volatile String lastLiveProblem;
-    private record LiveUpload(String site, String token, Scope scope, JsonObject status, JsonArray commandUpdates,
-                              Consumer<String> problem, Consumer<JsonArray> commands, Consumer<JsonArray> acks) {}
+    private record LiveUpload(String site, String token, Scope scope, JsonObject status, JsonArray commandUpdates, String favoritesVersion,
+                              Consumer<String> problem, Consumer<JsonArray> commands, Consumer<JsonArray> acks, Consumer<JsonObject> favorites) {}
     /**
      * Tells the site this mod confirms the commands it gets, by id: it sends each until confirmed, never
      * runs one twice (2); takes markers made on the site's map, WAYPOINT commands (3); and takes the
@@ -77,11 +77,13 @@ public final class SiteSync {
      * Independent of archive uploads: at most one live request, never a queue of old positions.
      * {@code commandUpdates}: what became of the site's commands, not confirmed yet ({@link SiteCommands#pending});
      * {@code acks} gets the ids of those the site took. {@code commands} gets what the site's map sent
-     * this mod (explore / rescan an area). Both on the HTTP thread, when the answer has any.
+     * this mod (explore / rescan an area). {@code favoritesVersion}: the version of the site's favorites
+     * this mod has ("" for none); {@code favorites} gets them, {version, markers}, when the site has others.
+     * All on the HTTP thread, when the answer has any.
      */
-    public void sendLiveStatus(String site, String token, Scope scope, JsonObject live, JsonArray commandUpdates,
-                               Consumer<String> problem, Consumer<JsonArray> commands, Consumer<JsonArray> acks) {
-        latestLive.set(new LiveUpload(site, token, scope, live, commandUpdates, problem, commands, acks));
+    public void sendLiveStatus(String site, String token, Scope scope, JsonObject live, JsonArray commandUpdates, String favoritesVersion,
+                               Consumer<String> problem, Consumer<JsonArray> commands, Consumer<JsonArray> acks, Consumer<JsonObject> favorites) {
+        latestLive.set(new LiveUpload(site, token, scope, live, commandUpdates, favoritesVersion, problem, commands, acks, favorites));
         flushLiveStatus();
     }
 
@@ -98,7 +100,7 @@ public final class SiteSync {
                 .timeout(Duration.ofSeconds(5))
                 .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(liveBody(scope, live, next.commandUpdates()).toString(), StandardCharsets.UTF_8))
+                .POST(HttpRequest.BodyPublishers.ofString(liveBody(scope, live, next.commandUpdates(), next.favoritesVersion()).toString(), StandardCharsets.UTF_8))
                 .build();
             http.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete((response, error) -> {
                 try {
@@ -106,7 +108,7 @@ public final class SiteSync {
                         : response.statusCode() / 100 == 2 ? null : "live position upload returned " + response.statusCode();
                     if (message != null && !message.equals(lastLiveProblem)) problem.accept(message);
                     lastLiveProblem = message;
-                    if (message == null) readAnswer(response.body(), next.commands(), next.acks());
+                    if (message == null) readAnswer(response.body(), next.commands(), next.acks(), next.favorites());
                 } finally {
                     liveInFlight.set(false);
                     flushLiveStatus();
@@ -121,20 +123,22 @@ public final class SiteSync {
         }
     }
 
-    private static JsonObject liveBody(Scope scope, JsonObject live, JsonArray commandUpdates) {
+    private static JsonObject liveBody(Scope scope, JsonObject live, JsonArray commandUpdates, String favoritesVersion) {
         JsonObject body = body(scope, new JsonArray(), live);
         body.addProperty("commandProtocol", COMMAND_PROTOCOL);
+        if (favoritesVersion != null) body.addProperty("favoritesVersion", favoritesVersion);
         if (commandUpdates != null && !commandUpdates.isEmpty()) body.add("commandUpdates", commandUpdates);
         return body;
     }
 
-    /** The commands, and the command reports the site took, in a status upload's answer, if any. */
-    private static void readAnswer(String body, Consumer<JsonArray> commands, Consumer<JsonArray> acks) {
-        if (body == null || !body.contains("\"command")) return;
+    /** The commands, the command reports the site took and the favorites in a status upload's answer, if any. */
+    private static void readAnswer(String body, Consumer<JsonArray> commands, Consumer<JsonArray> acks, Consumer<JsonObject> favorites) {
+        if (body == null || !body.contains("\"command") && !body.contains("\"favorites")) return;
         try {
             JsonObject answer = JsonParser.parseString(body).getAsJsonObject();
             if (acks != null && answer.has("commandAcks") && answer.get("commandAcks").isJsonArray()) acks.accept(answer.getAsJsonArray("commandAcks"));
             if (commands != null && answer.has("commands") && answer.get("commands").isJsonArray()) commands.accept(answer.getAsJsonArray("commands"));
+            if (favorites != null && answer.has("favorites") && answer.get("favorites").isJsonObject()) favorites.accept(answer.getAsJsonObject("favorites"));
         } catch (RuntimeException ignored) {
             // Not an answer to read: nothing sent
         }

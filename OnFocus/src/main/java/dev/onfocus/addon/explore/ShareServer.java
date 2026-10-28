@@ -42,7 +42,8 @@ import java.util.regex.Pattern;
  * each with {@code Authorization: Bearer <secret>}. A region file Xaero wrote less than a minute ago
  * isn't listed: it may be written again any moment. The markers come with the ones taken out here
  * ({@link MarkerDeletions}), for the other PC to take out too; {@code POST /markers/removed?server=}
- * is the other PC's markers taken out there, to go here too.
+ * is the other PC's markers taken out there, to go here too. The site's favorites go with them: the
+ * other PC's Favorites set is made the same.
  * <p>
  * Its own threads; {@link #update} and {@link #stop} may be called from any thread.
  */
@@ -59,9 +60,14 @@ public final class ShareServer {
     /** One of Area Explorer's markers: the dimension as the game names it ("overworld"); its colour here as 0xRRGGBB. */
     public record Marker(String dimension, String group, String name, String initials, int x, int y, int z, int rgb) {}
 
+    /** A find starred on the site, for the Favorites set: its dimension, its name there and its block. */
+    public record Favorite(String dimension, String name, int x, int y, int z) {}
+
     private final Path root;
     private final MarkerDeletions deletions;
     private final Map<String, List<Marker>> markers = new ConcurrentHashMap<>();
+    /** The site's favorites by server, once the site has said them. */
+    private final Map<String, List<Favorite>> favorites = new ConcurrentHashMap<>();
     private volatile String secret = "";
     private ServerSocket socket;
     private int port;
@@ -75,13 +81,15 @@ public final class ShareServer {
 
     /**
      * Serves on the port (started, or moved to it), with the secret; with {@code server} the game is
-     * on, its markers and where Xaero keeps its map are taken as they are now.
+     * on, its markers, the site's favorites (null: the site hasn't said them) and where Xaero keeps its
+     * map are taken as they are now.
      */
-    public synchronized void update(int port, String secret, String server, List<Marker> serverMarkers, MapWorld map,
-                                    Consumer<String> problem, Consumer<String> info) {
+    public synchronized void update(int port, String secret, String server, List<Marker> serverMarkers, List<Favorite> serverFavorites,
+                                    MapWorld map, Consumer<String> problem, Consumer<String> info) {
         this.secret = secret;
         if (server != null) {
             markers.put(server, List.copyOf(serverMarkers));
+            if (serverFavorites != null) favorites.put(server, List.copyOf(serverFavorites));
             if (map != null) ShareFiles.rememberMap(root, server, map);
         }
         if (socket != null && this.port == port && !socket.isClosed()) return;
@@ -232,8 +240,9 @@ public final class ShareServer {
 
     /**
      * {"markers": [[dimension, group, name, initials, x, y, z, rgb], ...], "removed": [[dimension, x, y, z, at], ...],
-     * "known": whether the game's been on the server}. The colour and the removed ones came later: a
-     * build before takes the first seven and leaves "removed" be.
+     * "favorites": [[dimension, name, x, y, z], ...] once the site has said them, "known": whether the
+     * game's been on the server}. The colour, the removed ones and the favorites came later: a build
+     * before takes the first seven and leaves the rest be.
      */
     private String markersOf(String server) {
         List<Marker> list = markers.get(server);
@@ -265,6 +274,20 @@ public final class ShareServer {
         JsonObject answer = new JsonObject();
         answer.add("markers", array);
         answer.add("removed", removed);
+        List<Favorite> starred = favorites.get(server);
+        if (starred != null) {
+            JsonArray stars = new JsonArray();
+            for (Favorite favorite : starred) {
+                JsonArray f = new JsonArray();
+                f.add(favorite.dimension());
+                f.add(favorite.name());
+                f.add(favorite.x());
+                f.add(favorite.y());
+                f.add(favorite.z());
+                stars.add(f);
+            }
+            answer.add("favorites", stars);
+        }
         answer.addProperty("known", list != null);
         return answer.toString();
     }

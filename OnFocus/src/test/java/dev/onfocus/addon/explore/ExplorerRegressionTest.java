@@ -216,7 +216,8 @@ public final class ExplorerRegressionTest {
             }
             List<String> problems = new java.util.ArrayList<>();
             server.update(port, "s3cret", "oldfrog.org",
-                List.of(new ShareServer.Marker("overworld", "Bases", "Base #1", "B1", 100, 70, -5, 0xFFAA00)), map, problems::add, message -> {});
+                List.of(new ShareServer.Marker("overworld", "Bases", "Base #1", "B1", 100, 70, -5, 0xFFAA00)),
+                List.of(new ShareServer.Favorite("overworld", "Elytra ×3", 2000, 64, 2000)), map, problems::add, message -> {});
             require(problems.isEmpty(), "The server starts: " + problems);
 
             java.net.http.HttpClient http = java.net.http.HttpClient.newHttpClient();
@@ -232,6 +233,8 @@ public final class ExplorerRegressionTest {
             JsonObject markers = JsonParser.parseString(new String(get.apply("/markers?server=Oldfrog.org", "s3cret").body())).getAsJsonObject();
             require(markers.get("known").getAsBoolean() && markers.getAsJsonArray("markers").toString().equals("[[\"overworld\",\"Bases\",\"Base #1\",\"B1\",100,70,-5," + 0xFFAA00 + "]]"),
                 "The markers come with their groups and colours: " + markers);
+            require(markers.getAsJsonArray("favorites").toString().equals("[[\"overworld\",\"Elytra ×3\",2000,64,2000]]"),
+                "The site's favorites come too: " + markers);
             JsonObject list = JsonParser.parseString(new String(get.apply("/regions?server=oldfrog.org", "s3cret").body())).getAsJsonObject();
             require(list.getAsJsonArray("regions").size() == 1 && list.getAsJsonArray("regions").get(0).getAsJsonArray().get(1).getAsInt() == -3,
                 "Only the region Xaero has left alone is listed: " + list);

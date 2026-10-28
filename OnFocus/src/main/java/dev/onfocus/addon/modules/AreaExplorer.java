@@ -626,6 +626,13 @@ public class AreaExplorer extends Module {
     private static final String BASES_GROUP = "Bases", ITEMS_GROUP = "Items on the ground", PETS_GROUP = "Named Pets", PEARLS_GROUP = "Thrown Pearls", CUSTOM_GROUP = "Custom Blocks";
     /** Markers an administrator put on the site's map: a Xaero set of their own whatever group-sets says, coloured as made there, always shown. */
     private static final String SITE_GROUP = "Site Markers";
+    /**
+     * Finds an administrator starred on the site: a Xaero set kept the same as the site's favorites, on
+     * this PC and the one taking its markers. Apart from Area Explorer's markers: one taken out of it
+     * takes nothing off the site. Only its "★ " waypoints are its own - one put in it by hand stays.
+     */
+    private static final String FAVORITES_GROUP = "Favorites", FAVORITE_PREFIX = "★ ";
+    private static final int FAVORITE_COLOR = 0xFFAA00;
 
     private final Setting<Boolean> autoMarkers = sgMarkers.add(new BoolSetting.Builder()
         .name("auto-markers")
@@ -1055,6 +1062,8 @@ public class AreaExplorer extends Module {
     private static final SiteMarkerColors SITE_COLORS = new SiteMarkerColors(SHARED);
     /** Gives the markers and the map to the player's other PC (share-mode Serve), on threads of its own. */
     private static final ShareServer SHARE_SERVER = new ShareServer(SHARED, DELETIONS);
+    /** The site's favorites by server (as the game names it), once the site has said them: what the other PC gets. */
+    private static final Map<String, List<ShareServer.Favorite>> SITE_FAVORITES = new ConcurrentHashMap<>();
     /** Takes them from the other PC (share-mode Take), on a thread of its own. */
     private static final ShareClient SHARE_CLIENT = new ShareClient(SHARED);
     /** How often what's shared is looked at again: the markers and the map folder handed over. */
@@ -4215,7 +4224,8 @@ public class AreaExplorer extends Module {
             }
         });
         if (mode == ShareMode.Serve) {
-            SHARE_SERVER.update(sharePort.get(), secret, server, waypoints ? servedMarkers(server) : List.of(), map, problem, info);
+            SHARE_SERVER.update(sharePort.get(), secret, server, waypoints ? servedMarkers(server) : List.of(),
+                server != null ? SITE_FAVORITES.get(server) : null, map, problem, info);
         } else {
             SHARE_CLIENT.update(new ShareClient.Config(takeFrom.get().trim(), secret, server, map,
                 waypoints ? XaeroWaypoints.dimensions() : Set.of(),
@@ -4223,6 +4233,7 @@ public class AreaExplorer extends Module {
                 dimension -> markers -> takeSharedMarkers(dimension, markers, false),
                 this::localWaypoints,
                 dimension -> locals -> removeSharedMarkers(dimension, locals),
+                favorites -> !minimapInstalled() || mirrorFavorites(favorites, "the other PC") != null,
                 mc::execute, problem, info, message -> FILE_LOG.info("Sharing: " + message)));
         }
     }
@@ -4328,12 +4339,16 @@ public class AreaExplorer extends Module {
         return markedAt(marker.name(), pos, spots);
     }
 
-    /** Every waypoint of the server here, by dimension - each dimension Xaero keeps waypoints for, empty or not; null with no world. */
+    /**
+     * Every waypoint of the server here, by dimension - each dimension Xaero keeps waypoints for, empty
+     * or not; null with no world. The favorites aren't: one at a marker's block mustn't keep it there.
+     */
     private Map<String, List<ShareClient.Local>> localWaypoints() {
         if (!XaeroWaypoints.isReady()) return null;
         Map<String, List<ShareClient.Local>> byDimension = new HashMap<>();
         for (String dimension : XaeroWaypoints.dimensions()) byDimension.put(dimension, new ArrayList<>());
         for (XaeroWaypoints.Saved w : XaeroWaypoints.allOnServer()) {
+            if (isFavorite(w)) continue;
             byDimension.computeIfAbsent(w.dimension(), d -> new ArrayList<>()).add(new ShareClient.Local(w.name(), w.x(), w.y(), w.z()));
         }
         return byDimension;
@@ -5179,17 +5194,108 @@ public class AreaExplorer extends Module {
         sendLiveStatus(site, scope, siteStatus());
     }
 
-    /** The status, with what became of the site's commands; the commands in the answer are handled on the game thread. */
+    /**
+     * The status, with what became of the site's commands and the version of its favorites had here;
+     * the commands and the favorites in the answer are handled on the game thread.
+     */
     private void sendLiveStatus(String site, SiteSync.Scope scope, JsonObject status) {
         JsonArray updates = COMMANDS.pending(site);
-        SITE.sendLiveStatus(site, siteToken.get().trim(), scope, status, updates, problem -> {
+        String had = site + " " + scope.server() + " ";
+        String favorites = favoritesHad.startsWith(had) ? favoritesHad.substring(had.length()) : "";
+        SITE.sendLiveStatus(site, siteToken.get().trim(), scope, status, updates, favorites, problem -> {
             FILE_LOG.warn("Site: " + problem);
             mc.execute(() -> warning("Site: %s", problem));
         }, commands -> mc.execute(() -> {
             for (JsonElement command : commands) {
                 if (command.isJsonObject()) siteCommand(site, command.getAsJsonObject());
             }
-        }), acks -> COMMANDS.acknowledged(site, updates, acks));
+        }), acks -> COMMANDS.acknowledged(site, updates, acks), list -> mc.execute(() -> siteFavorites(site, scope.server(), list)));
+    }
+
+    /** "site server version" of the site's favorites last made Xaero's Favorites set here: the site sends them again only when they change. */
+    private volatile String favoritesHad = "";
+
+    /**
+     * The site's favorites for this server: what the other PC gets (share-mode Serve), and Xaero's
+     * Favorites set here made the same. Kept as had once every dimension of them has its waypoints;
+     * till then the site sends them again, and the ones of a dimension never been in go in once it is.
+     */
+    private void siteFavorites(String site, String server, JsonObject answer) {
+        var entry = mc.getCurrentServerEntry();
+        if (mc.world == null || entry == null || !archiveSpot().scope().server().equalsIgnoreCase(server)) return;
+        String version;
+        List<ShareServer.Favorite> favorites = new ArrayList<>();
+        try {
+            version = answer.get("version").getAsString();
+            for (JsonElement element : answer.getAsJsonArray("markers")) {
+                JsonObject m = element.getAsJsonObject();
+                favorites.add(new ShareServer.Favorite(m.get("dimension").getAsString(), m.get("name").getAsString(),
+                    m.get("x").getAsInt(), m.get("y").getAsInt(), m.get("z").getAsInt()));
+            }
+        } catch (RuntimeException e) {
+            return; // not a list to read: the site sends it again
+        }
+        SITE_FAVORITES.put(entry.address.toLowerCase(Locale.ROOT), List.copyOf(favorites));
+        Boolean complete = minimapInstalled() ? mirrorFavorites(favorites, "the site") : Boolean.TRUE;
+        if (Boolean.TRUE.equals(complete)) favoritesHad = site + " " + server + " " + version;
+    }
+
+    /** One of the Favorites set's own waypoints. */
+    private static boolean isFavorite(XaeroWaypoints.Saved w) {
+        return FAVORITES_GROUP.equals(w.set()) && w.name().startsWith(FAVORITE_PREFIX);
+    }
+
+    private static String favoriteKey(String dimension, String name, int x, int y, int z) {
+        return dimension + " " + x + " " + y + " " + z + " " + name;
+    }
+
+    /**
+     * Makes Xaero's Favorites set, every dimension of this server, the favorites: the ones not there
+     * put in, shown; its own waypoints not among them (unstarred, taken off the site) taken out. Whether
+     * every one is in - false if a dimension of them has no waypoints here yet; null with no world.
+     */
+    private Boolean mirrorFavorites(List<ShareServer.Favorite> favorites, String from) {
+        if (!XaeroWaypoints.isReady()) return null;
+        Set<String> dimensions = XaeroWaypoints.dimensions();
+        if (dimensions.isEmpty()) return null;
+        Set<String> wanted = new HashSet<>();
+        for (ShareServer.Favorite f : favorites) wanted.add(favoriteKey(f.dimension(), FAVORITE_PREFIX + f.name(), f.x(), f.y(), f.z()));
+        Set<String> there = new HashSet<>();
+        Set<String> stale = new HashSet<>();
+        for (XaeroWaypoints.Saved w : XaeroWaypoints.allOnServer()) {
+            if (!isFavorite(w)) continue;
+            String key = favoriteKey(w.dimension(), w.name(), w.x(), w.y(), w.z());
+            if (wanted.contains(key)) there.add(key);
+            else stale.add(w.dimension());
+        }
+        int removed = 0;
+        for (String dimension : stale) {
+            removed += Math.max(0, XaeroWaypoints.remove(dimension,
+                w -> isFavorite(w) && !wanted.contains(favoriteKey(dimension, w.name(), w.x(), w.y(), w.z()))));
+        }
+        boolean complete = true;
+        Map<String, List<XaeroWaypoints.NewWaypoint>> missing = new LinkedHashMap<>();
+        for (ShareServer.Favorite f : favorites) {
+            String name = FAVORITE_PREFIX + f.name();
+            String key = favoriteKey(f.dimension(), name, f.x(), f.y(), f.z());
+            if (there.contains(key)) continue;
+            if (!dimensions.contains(f.dimension())) {
+                complete = false; // never in that dimension here: Xaero has nowhere to put it yet
+                continue;
+            }
+            there.add(key);
+            missing.computeIfAbsent(f.dimension(), d -> new ArrayList<>())
+                .add(new XaeroWaypoints.NewWaypoint(name, initials(f.name()), f.x(), f.y(), f.z(), FAVORITE_COLOR));
+        }
+        int added = 0;
+        for (var entry : missing.entrySet()) {
+            if (XaeroWaypoints.addAllIn(entry.getKey(), Map.of(FAVORITES_GROUP, entry.getValue()), false)) added += entry.getValue().size();
+            else complete = false;
+        }
+        if (added > 0 || removed > 0) {
+            info("Favorites from %s: (highlight)%d(default) put in Xaero's set %s, (highlight)%d(default) taken out.", from, added, FAVORITES_GROUP, removed);
+        }
+        return complete;
     }
 
     /**

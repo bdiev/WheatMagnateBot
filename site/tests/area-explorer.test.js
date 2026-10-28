@@ -968,6 +968,58 @@ async function testFavorites() {
   }
 }
 
+async function testModFavorites() {
+  const db = new PGlite();
+  try {
+    await db.exec(`CREATE TABLE site_users (id BIGINT PRIMARY KEY, role TEXT NOT NULL)`);
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
+      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
+      '083_area_explorer_command_states.sql', '084_area_explorer_favorites.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql', '089_area_explorer_marker_color.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    await db.exec(`INSERT INTO site_users (id, role) VALUES (1, 'admin'), (2, 'user')`);
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
+      enforceRateLimit: () => true, publish() {}, recordSystemLog: async () => {}
+    });
+    const admin = { id: 1, username: 'admin', role: 'admin' };
+    const player = { id: 2, username: 'steve', role: 'user' };
+    const created = await service.createToken(admin, { name: 'VDS' });
+    const token = await service.authenticate({ headers: { authorization: `Bearer ${created.token}` } });
+    const scope = { server: 'oldfrog.org', dimension: 'overworld' };
+    const status = { player: 'Steve', phase: 'IDLE', x: 0, z: 0 };
+    const find = (kind, name, x, extra = {}) => ({ kind, name, x, y: 64, z: x, foundAt: NOW, count: kind === 'ITEM' ? 1 : 0, ...extra });
+    await service.ingest(token, { ...scope, finds: [find('BASE', 'Base', 100, { details: 'score 40: beds' }), find('ITEM', 'Elytra', 2000, { count: 3 }),
+      find('MARKER', 'End Portal', 900)] }, NOW);
+    await service.ingest(token, { server: 'other.org', dimension: 'the_nether', finds: [find('MARKER', 'Nether Fortress', 50)] }, NOW);
+    const idOf = async name => String((await db.query('SELECT id FROM area_explorer_finds WHERE name = $1', [name])).rows[0].id);
+    const check = async version => (await service.ingest(token, { ...scope, status, favoritesVersion: version }, NOW)).favorites;
+
+    assert.equal((await service.ingest(token, { ...scope, status }, NOW)).favorites, undefined, 'a mod build that does not say gets none');
+    const empty = await check('');
+    assert.deepEqual(empty.markers, [], 'nothing starred: an empty list, so leftovers go');
+    assert.equal(await check(empty.version), undefined, 'the same list is not sent again');
+
+    await service.setFavorite(admin, await idOf('Base'), true);
+    await service.setFavorite(admin, await idOf('Elytra'), true);
+    await service.setFavorite(player, await idOf('End Portal'), true);
+    await service.setFavorite(admin, await idOf('Nether Fortress'), true);
+    const starred = await check(empty.version);
+    assert.deepEqual(starred.markers, [
+      { dimension: 'overworld', name: 'Base', x: 100, y: 64, z: 100 },
+      { dimension: 'overworld', name: 'Elytra ×3', x: 2000, y: 64, z: 2000 }
+    ], "administrators' stars of this server only");
+    assert.notEqual(starred.version, empty.version);
+    assert.equal((await service.ingest(token, { ...scope, favoritesVersion: '' }, NOW)).favorites, undefined, 'only with a status upload');
+
+    await service.setFavorite(admin, await idOf('Base'), false);
+    await service.removeFind(admin, await idOf('Elytra'));
+    assert.deepEqual((await check(starred.version)).markers, [], 'unstarred or taken off the site: out of the list');
+  } finally {
+    await db.close();
+  }
+}
+
 (async () => {
   testNormalization();
   testEventNormalization();
@@ -984,6 +1036,7 @@ async function testFavorites() {
   await testMapCrowds();
   await testPlayerSigns();
   await testFavorites();
+  await testModFavorites();
   testWiring();
   testRunLogWiring();
   testNightWiring();

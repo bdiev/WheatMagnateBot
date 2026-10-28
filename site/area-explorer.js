@@ -39,6 +39,8 @@ const MARKER_COMMANDS = Object.freeze(['WAYPOINT', 'UNMARK']);
 const MAX_REMOVED_MARKERS = 500;
 const LOOT_MARKER_REACH = 32;
 const MAX_WAYPOINT_NAME = 32;
+// Administrators' stars of a server go to its mods' Xaero waypoints (a Favorites set): this many at most
+const MAX_MOD_FAVORITES = 2000;
 // Xaero's waypoints come in Minecraft's 16 chat colours only
 const WAYPOINT_COLORS = Object.freeze([0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA,
   0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF]);
@@ -462,6 +464,8 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const confirms = Number(body.commandProtocol) >= 2;
     const protocol = Number(body.commandProtocol) || 0;
     const removedMarkers = normalizeRemovedMarkers(body.removedMarkers);
+    // The version of the favorites the mod has ("" for none); a build that doesn't say gets none
+    const favoritesVersion = typeof body.favoritesVersion === 'string' ? body.favoritesVersion.slice(0, 64) : null;
 
     let added = 0;
     let liveStatus = null;
@@ -527,13 +531,38 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const commandAcks = commandUpdates.length ? await applyCommandUpdates(token, commandUpdates) : [];
     // A status upload is the mod checking in: it gets the commands waiting for it
     const commands = status ? await takeCommands(token, confirms, protocol) : [];
+    const favorites = status && favoritesVersion !== null ? await modFavorites(server, favoritesVersion) : null;
     return {
       received: rawFinds.length, accepted: finds.length, added, duplicates: finds.length - added,
       ...(body.removedMarkers !== undefined ? { removedFinds: removedIds.length } : {}),
       ...(rawEvents.length ? { events: newEvents.length } : {}),
       ...(commandUpdates.length ? { commandAcks } : {}),
-      ...(commands.length ? { commands } : {})
+      ...(commands.length ? { commands } : {}),
+      ...(favorites ? { favorites } : {})
     };
+  }
+
+  /**
+   * The finds of a server administrators starred, for the mods' Favorites set in Xaero: all of them,
+   * with a version - only when it isn't the one the mod has. Unstarred or taken off the site, a find
+   * leaves the list, and so the set.
+   */
+  async function modFavorites(server, version) {
+    const rows = (await pool.query(
+      `SELECT DISTINCT f.id, f.dimension, f.kind, f.name, f.item_count, f.x, f.y, f.z
+       FROM area_explorer_favorites fav
+       JOIN site_users u ON u.id = fav.user_id AND u.role = 'admin'
+       JOIN area_explorer_finds f ON f.id = fav.find_id
+       WHERE f.server = $1 AND f.removed_at IS NULL
+       ORDER BY f.id LIMIT $2`, [server, MAX_MOD_FAVORITES]
+    )).rows;
+    const markers = rows.map(row => ({
+      dimension: row.dimension,
+      name: normalizeText(cleanFindName(row.name) + (row.kind === 'ITEM' && row.item_count > 1 ? ` ×${row.item_count}` : ''), MAX_WAYPOINT_NAME),
+      x: row.x, y: row.y, z: row.z
+    }));
+    const current = crypto.createHash('sha256').update(JSON.stringify(markers)).digest('hex').slice(0, 16);
+    return current === version ? null : { version: current, markers };
   }
 
   /** Command rows with their mod's token name, for the page. */
