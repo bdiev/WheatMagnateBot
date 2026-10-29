@@ -372,7 +372,8 @@ function testWiring() {
   }
   // The most valuable loot in the highlights; loot picked up in game taken off by an administrator
   assert.match(appSource, /Most valuable<\/span>/);
-  assert.match(appSource, /scope\.valuableItems\.map\(/);
+  assert.match(appSource, /ae\.valuableExpanded \? scope\.valuableItems : scope\.valuableItems\.slice\(0, AREA_EXPLORER_TOP_VALUABLE\)/, 'the first few, and all of them on Show all');
+  assert.match(appSource, /data-area-valuable-toggle/);
   assert.match(appSource, /const removable = find\.kind === 'ITEM' \|\| find\.kind === 'BASE' \|\| \(find\.kind === 'MARKER' && !AREA_EXPLORER_PERMANENT_MARKERS\.includes\(find\.name\)\);/, 'loot, bases and markers, not signs or lasting structures');
   const { PERMANENT_MARKERS } = require('../area-explorer');
   assert.ok(appSource.includes(`const AREA_EXPLORER_PERMANENT_MARKERS = Object.freeze(${JSON.stringify(PERMANENT_MARKERS).replace(/"/g, "'").replace(/,/g, ', ')});`), 'the page and the site agree on them');

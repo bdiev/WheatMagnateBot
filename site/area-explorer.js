@@ -26,7 +26,6 @@ const TOKEN_PREFIX = 'aex_';
 const MAX_PAGE_SIZE = 200;
 // A Java name, or a Bedrock one through Geyser/Floodgate (".Name", "*Name")
 const PLAYER_NAME_PATTERN = /^[.*]?[A-Za-z0-9_]{1,32}$/;
-const TOP_LOOT_NAMES = 8;
 // Commands from the site's map to a mod: what they can be, how big an area, how long they wait to be picked up
 const COMMAND_KINDS = Object.freeze(['EXPLORE', 'RESCAN']);
 // A marker made on the site's map waits far longer for its mod than an area: it goes into Xaero once the game is on its server
@@ -1005,15 +1004,14 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       scopes.get(`${row.server}\u0000${row.dimension}`)?.markerNames.push({ name: row.name, count: row.count });
     }
     // The most valuable loot: Elytra, netherite gear, shulker boxes, maps, written books... the
-    // dearest first, then the one found most; anything not on the list doesn't make it
+    // dearest first, then the one found most; anything not on the list doesn't make it. All of them
+    // go out: the site shows the first few and the rest on Show all
     for (const row of itemNames.rows) {
       const value = lootValue(row.name);
       if (value > 0) scopes.get(`${row.server}\u0000${row.dimension}`)?.valuableItems.push({ name: row.name, count: row.count, items: row.items, value });
     }
     for (const scope of scopes.values()) {
-      scope.valuableItems = scope.valuableItems
-        .sort((a, b) => b.value - a.value || b.count - a.count || a.name.localeCompare(b.name))
-        .slice(0, TOP_LOOT_NAMES);
+      scope.valuableItems.sort((a, b) => b.value - a.value || b.count - a.count || a.name.localeCompare(b.name));
     }
     for (const row of latest.rows) {
       const scope = scopes.get(`${row.server}\u0000${row.dimension}`);

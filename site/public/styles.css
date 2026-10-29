@@ -14231,3 +14231,16 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   .area-explorer-map-skeleton::after,
   .area-explorer-map-skeleton-label img { animation: none; }
 }
+.area-explorer-highlight-more {
+  min-height: 34px;
+  padding: 3px 10px;
+  border: 2px dashed var(--line);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-pixel);
+  font-size: 13px;
+  cursor: pointer;
+  transform: none;
+}
+.area-explorer-highlight-more:hover { border-color: var(--accent); color: var(--text); transform: none; }

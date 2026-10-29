@@ -6859,6 +6859,8 @@ function renderAreaExplorerScopes() {
  * What stands out in this scope: how much is mapped, the latest find, what the markers mark and
  * the loot found most. Each one lists its finds (and the latest shows on the map) when tapped.
  */
+const AREA_EXPLORER_TOP_VALUABLE = 8;
+
 function renderAreaExplorerHighlights(scope) {
   const ae = areaExplorerState();
   const container = $('#areaExplorerHighlights');
@@ -6896,10 +6898,15 @@ function renderAreaExplorerHighlights(scope) {
         : `data-area-filter-kind="MARKER" data-area-filter-name="${escapeHtml(item.name)}"`, item.count)).join('')}
     </div></div>`);
   }
-  // The dearest loot first: Elytra, netherite, shulker boxes, maps, written books...
+  // The dearest loot first: Elytra, netherite, shulker boxes, maps, written books... the first few,
+  // and the rest on Show all
   if (scope?.valuableItems?.length) {
+    const items = ae.valuableExpanded ? scope.valuableItems : scope.valuableItems.slice(0, AREA_EXPLORER_TOP_VALUABLE);
+    const more = scope.valuableItems.length > AREA_EXPLORER_TOP_VALUABLE
+      ? `<button class="area-explorer-highlight-more" type="button" data-area-valuable-toggle>${ae.valuableExpanded ? 'Show less' : `Show all (${formatNumber(scope.valuableItems.length)})`}</button>`
+      : '';
     sections.push(`<div class="area-explorer-highlight-group"><span class="area-explorer-highlight-label">Most valuable</span><div class="area-explorer-highlight-chips">
-      ${scope.valuableItems.map(item => chip({ kind: 'ITEM', name: item.name }, `data-area-filter-kind="ITEM" data-area-filter-q="${escapeHtml(item.name)}"`, item.count)).join('')}
+      ${items.map(item => chip({ kind: 'ITEM', name: item.name }, `data-area-filter-kind="ITEM" data-area-filter-q="${escapeHtml(item.name)}"`, item.count)).join('')}${more}
     </div></div>`);
   }
   container.innerHTML = sections.length ? sections.join('') : '<p class="area-explorer-empty">Nothing found here yet.</p>';
@@ -8799,6 +8806,11 @@ function setupAreaExplorer() {
   };
   // A highlight lists its finds: a kind of marker, or a loot item by name
   $('#areaExplorerHighlights').addEventListener('click', event => {
+    if (event.target.closest('[data-area-valuable-toggle]')) {
+      ae.valuableExpanded = !ae.valuableExpanded;
+      renderAreaExplorerScopes();
+      return;
+    }
     const chip = event.target.closest('[data-area-filter-kind]');
     if (!chip) return;
     setKind(chip.dataset.areaFilterKind);
