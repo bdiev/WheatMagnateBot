@@ -18,6 +18,7 @@ import dev.onfocus.addon.modules.JoinLeaveMessages;
 import dev.onfocus.addon.modules.MapArtBulkCopier;
 import dev.onfocus.addon.modules.MapArtCopier;
 import dev.onfocus.addon.modules.MapArtSorter;
+import dev.onfocus.addon.modules.MapPainter;
 import dev.onfocus.addon.modules.MapPreview;
 import dev.onfocus.addon.modules.RandomPath;
 import dev.onfocus.addon.modules.StayFocused;
@@ -59,6 +60,7 @@ public class OnFocusAddon extends MeteorAddon {
         Modules.get().add(new MapArtSorter());
         Modules.get().add(new MapPreview());
         Modules.get().add(new EzBundles());
+        Modules.get().add(new MapPainter());
 
         Commands.add(new RegroupMarkersCommand());
         Commands.add(new LootMarkersCommand());
