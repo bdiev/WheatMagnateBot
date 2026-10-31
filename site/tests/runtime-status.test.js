@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { cleanAccountInput, freshStoredRuntimePayload } = require('../server');
+const { cleanAccountInput, freshStoredRuntimePayload, playerProfileRuntimePresence } = require('../server');
 
 const now = Date.parse('2026-07-21T12:00:00.000Z');
 const connected = { connected:true,status:'connected',health:20,food:18,ping:42,nearbyPlayers:[{username:'Player'}] };
@@ -17,6 +17,19 @@ assert.equal(stale.connected,false,'an expired runtime heartbeat is offline');
 assert.equal(stale.status,'stopped');
 assert.equal(stale.health,null);
 assert.deepEqual(stale.nearbyPlayers,[]);
+
+// The site's clock running 20 s ahead of the database must not expire a fresh row.
+const skewedRuntime = { status:'connected', status_payload:connected, updated_at:new Date(now-3_000), db_now:new Date(now) };
+assert.equal(
+  playerProfileRuntimePresence(skewedRuntime).isOnline,
+  true,
+  'runtime age is measured against the database clock that stamped it'
+);
+assert.equal(
+  playerProfileRuntimePresence({ ...skewedRuntime, db_now:new Date(now+20_000) }).isOnline,
+  false,
+  'a row older than the timeout by the database clock is offline'
+);
 
 const alreadyOffline = {connected:false,status:'stopped',lastOfflineReason:'Stopped by user'};
 assert.equal(freshStoredRuntimePayload(alreadyOffline, new Date(0), now),alreadyOffline,'offline state is preserved');

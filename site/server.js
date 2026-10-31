@@ -3459,11 +3459,11 @@ function cleanAccountInput(body, { partial = false } = {}) {
 
 async function accountPayloads() {
   const registry = await getAccountRegistry();
-  const states = await pool.query('SELECT account_id,status,current_task,last_error,started_at,updated_at,status_payload FROM bot_account_runtime_state');
+  const states = await pool.query('SELECT account_id,status,current_task,last_error,started_at,updated_at,status_payload,NOW() AS db_now FROM bot_account_runtime_state');
   const byId = new Map(states.rows.map(row => [row.account_id, row]));
   return registry.list().map(account => {
     const runtime = byId.get(account.id) || {};
-    const statusPayload = freshStoredRuntimePayload(runtime.status_payload, runtime.updated_at);
+    const statusPayload = freshStoredRuntimePayload(runtime.status_payload, runtime.updated_at, runtimeClockNow(runtime));
     const confirmedConnected = runtime.status === 'connected' && statusPayload?.connected === true;
     const unconfirmedConnectedState = runtime.status === 'connected' && !confirmedConnected;
     return {
@@ -3479,6 +3479,14 @@ async function accountPayloads() {
 }
 
 const MANAGED_RUNTIME_HEARTBEAT_TIMEOUT_MS = 15_000;
+
+// updated_at is stamped by the database clock, so its age is measured against that
+// clock too: the site's own clock may run seconds apart from it, which made a bot
+// writing every 5 s look expired on some reads and live on others.
+function runtimeClockNow(row) {
+  const dbNow = row?.db_now == null ? NaN : new Date(row.db_now).getTime();
+  return Number.isFinite(dbNow) ? dbNow : Date.now();
+}
 
 function freshStoredRuntimePayload(payload, updatedAt, now = Date.now()) {
   if (!payload || typeof payload !== 'object') return payload || null;
@@ -3518,9 +3526,9 @@ async function scopedAccountRuntime(url, currentUser) {
   if (!account) throw Object.assign(new Error('Minecraft account not found.'), { statusCode:404 });
   if (account.isDefault) return null;
   assertAdminUser(currentUser);
-  const stateResult = await pool.query('SELECT status_payload,updated_at FROM bot_account_runtime_state WHERE account_id=$1::uuid',[accountId]);
+  const stateResult = await pool.query('SELECT status_payload,updated_at,NOW() AS db_now FROM bot_account_runtime_state WHERE account_id=$1::uuid',[accountId]);
   const storedState = stateResult.rows[0];
-  const botStatus = freshStoredRuntimePayload(storedState?.status_payload, storedState?.updated_at)
+  const botStatus = freshStoredRuntimePayload(storedState?.status_payload, storedState?.updated_at, runtimeClockNow(storedState))
     || {accountId,username:account.username,server:`${account.host}:${account.port}`,connected:false,status:account.enabled?'stopped':'disabled',task:'idle'};
   return { account, bot:botStatus, observedAt:storedState?.updated_at || account.updatedAt };
 }
@@ -3997,7 +4005,7 @@ async function searchSeenPlayers(url) {
 
   const runtimeResult = await pool.query(`
     SELECT account.username,runtime.status,runtime.started_at,
-           runtime.updated_at,runtime.status_payload
+           runtime.updated_at,runtime.status_payload,NOW() AS db_now
     FROM bot_accounts account
     LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=account.id
     WHERE account.deleted_at IS NULL
@@ -4193,7 +4201,7 @@ function buildPlayerGameSessions(events = [], { isOnline = false, currentStarted
     .slice(0, limit);
 }
 
-function playerProfileRuntimePresence(runtime = null, now = Date.now()) {
+function playerProfileRuntimePresence(runtime = null, now = runtimeClockNow(runtime)) {
   if (!runtime) return { isOnline: false, currentStartedAt: null };
   const statusPayload = freshStoredRuntimePayload(runtime.status_payload, runtime.updated_at, now);
   const isOnline = runtime.status === 'connected' && statusPayload?.connected === true;
@@ -4310,7 +4318,8 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
         bot.status AS bot_status,
         bot.started_at AS bot_started_at,
         bot.updated_at AS bot_updated_at,
-        bot.status_payload AS bot_status_payload
+        bot.status_payload AS bot_status_payload,
+        bot.db_now AS bot_db_now
       FROM (SELECT 1) seed
       LEFT JOIN activity pa ON TRUE
       LEFT JOIN LATERAL (
@@ -4385,7 +4394,8 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
                runtime.status,
                runtime.started_at,
                runtime.updated_at,
-               runtime.status_payload
+               runtime.status_payload,
+               NOW() AS db_now
         FROM bot_accounts account
         LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=account.id
         WHERE account.deleted_at IS NULL
@@ -4513,7 +4523,8 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
         status: profile.bot_status,
         started_at: profile.bot_started_at,
         updated_at: profile.bot_updated_at,
-        status_payload: profile.bot_status_payload
+        status_payload: profile.bot_status_payload,
+        db_now: profile.bot_db_now
       };
   const runtimePresence = playerProfileRuntimePresence(botAccount);
   const isOnline = Boolean(profile.is_online) || runtimePresence.isOnline;
