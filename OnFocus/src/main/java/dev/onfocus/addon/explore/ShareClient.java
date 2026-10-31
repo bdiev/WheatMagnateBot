@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -72,6 +73,8 @@ public final class ShareClient {
     private static final int DOWNLOAD_BATCH = 300;
     /** More is waiting to be downloaded: the next round comes right after. */
     private static final long MORE_MS = 1_000;
+    /** A region of the other PC's this much (and a quarter) bigger than this PC's has more of the map than this one. */
+    private static final long MUCH_BIGGER_BYTES = 8192;
     /** Merging this many regions or more is said in chat as it goes. */
     private static final int PROGRESS_EVERY = 2000;
 
@@ -452,12 +455,29 @@ public final class ShareClient {
         Path folder = ShareFiles.serverFolder(root, server);
         Path takenFile = folder.resolve("regions-taken.tsv");
         Map<String, Long> taken = ShareFiles.readNumbers(takenFile);
+        retakeOldFormat(server, folder, taken, takenFile);
+        MapWorld map = ShareFiles.readMap(root, server);
+        Path comparedFile = folder.resolve("regions-compared.tsv");
+        Map<String, Long> compared = ShareFiles.readNumbers(comparedFile);
+        boolean comparedMore = false;
         List<JsonArray> due = new ArrayList<>();
         for (JsonElement element : JsonParser.parseString(response.body()).getAsJsonObject().getAsJsonArray("regions")) {
             JsonArray r = element.getAsJsonArray();
             if (!ShareFiles.DIMENSIONS.contains(r.get(0).getAsString())) continue;
-            if (r.get(3).getAsLong() > taken.getOrDefault(regionKey(r), 0L)) due.add(r);
+            String key = regionKey(r);
+            long modified = r.get(3).getAsLong();
+            if (modified > taken.getOrDefault(key, 0L)) {
+                due.add(r);
+            } else if (map != null && r.size() > 4 && compared.getOrDefault(key, 0L) != modified) {
+                // Taken already, yet this PC's map of it is much smaller than the other PC's: it didn't go
+                // in (a format it couldn't be merged in, then), so it's taken again - once for each drawing
+                compared.put(key, modified);
+                comparedMore = true;
+                File local = map.regionFolder(r.get(0).getAsString()).resolve(r.get(1).getAsInt() + "_" + r.get(2).getAsInt() + ".zip").toFile();
+                if (local.isFile() && r.get(4).getAsLong() > local.length() * 5 / 4 + MUCH_BIGGER_BYTES) due.add(r);
+            }
         }
+        if (comparedMore) ShareFiles.writeNumbers(comparedFile, compared);
         due.sort(Comparator.comparingLong((JsonArray r) -> r.get(3).getAsLong()).reversed());
         int got = 0;
         for (JsonArray r : due) {
@@ -479,6 +499,8 @@ public final class ShareClient {
                 Files.createDirectories(inbox);
                 Path temp = inbox.resolve(x + "_" + z + ".part");
                 Files.write(temp, file.body());
+                // Dated when the other PC drew it: newer than this PC's map of it, its chunks go over this one's
+                Files.setLastModifiedTime(temp, FileTime.fromMillis(r.get(3).getAsLong()));
                 Files.move(temp, inbox.resolve(x + "_" + z + ".zip"), StandardCopyOption.REPLACE_EXISTING);
                 taken.put(regionKey(r), r.get(3).getAsLong());
                 if (++got % 50 == 0) ShareFiles.writeNumbers(takenFile, taken);
@@ -502,6 +524,33 @@ public final class ShareClient {
         }
         if (got < due.size()) return stale(current) ? RETRY_MS : MORE_MS;
         return IDLE_MS;
+    }
+
+    /**
+     * Regions taken before while this PC's map of them was in an older format were passed over, and
+     * remembered as taken: once, they're forgotten, so they come again and replace it ({@link #applyRegions}).
+     */
+    private void retakeOldFormat(String server, Path folder, Map<String, Long> taken, Path takenFile) {
+        Path done = folder.resolve("old-format-retaken");
+        if (Files.exists(done)) return;
+        MapWorld map = ShareFiles.readMap(root, server);
+        if (map == null) return;
+        int forgotten = 0;
+        for (var it = taken.keySet().iterator(); it.hasNext(); ) {
+            String[] key = it.next().split(" ");
+            if (key.length != 3 || !ShareFiles.DIMENSIONS.contains(key[0])) continue;
+            File local = map.regionFolder(key[0]).resolve(key[1] + "_" + key[2] + ".zip").toFile();
+            try {
+                if (local.isFile() && XaeroRegionMerge.version(local) != XaeroRegionMerge.FORMAT) {
+                    it.remove();
+                    forgotten++;
+                }
+            } catch (IOException ignored) {
+                // Unreadable: left as it is
+            }
+        }
+        if (forgotten > 0) ShareFiles.writeNumbers(takenFile, taken);
+        ShareFiles.writeText(done, forgotten + "\n");
     }
 
     private static String regionKey(JsonArray r) {
@@ -528,7 +577,7 @@ public final class ShareClient {
         if (waiting == 0) return;
         boolean backlog = waiting >= PROGRESS_EVERY;
         if (backlog) say(current, "Merging (highlight)%d(default) regions from the other PC into Xaero's map of %s - stay off the server till it's done.".formatted(waiting, server));
-        int regions = 0, chunks = 0, skipped = 0, done = 0;
+        int regions = 0, chunks = 0, skipped = 0, replaced = 0, done = 0;
         for (var entry : inbox.entrySet()) {
             String dimension = entry.getKey();
             File[] caches = map.regionFolder(dimension).toFile().listFiles(file -> file.isDirectory() && file.getName().startsWith("cache_"));
@@ -554,9 +603,30 @@ public final class ShareClient {
                         Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
                         added = XaeroRegionMerge.version(target.toFile()) == XaeroRegionMerge.FORMAT ? XaeroRegionMerge.chunks(target.toFile()) : 1;
                     } else if (XaeroRegionMerge.version(target.toFile()) != XaeroRegionMerge.FORMAT || XaeroRegionMerge.version(file) != XaeroRegionMerge.FORMAT) {
-                        // A map format this doesn't merge (an old World Map's): this PC's own stays
-                        added = 0;
-                        skipped++;
+                        // One of them is in an older format (an old World Map's), which isn't merged chunk by chunk:
+                        // the other PC's replaces this one's if it's in the current one or has more of the map,
+                        // and this one's is kept aside in old-format/
+                        int theirs = XaeroRegionMerge.chunks(file);
+                        if (XaeroRegionMerge.version(file) == XaeroRegionMerge.FORMAT || theirs > XaeroRegionMerge.chunks(target.toFile())) {
+                            Path aside = folder.resolve("old-format").resolve(dimension).resolve(x + "_" + z + ".zip");
+                            Files.createDirectories(aside.getParent());
+                            Files.copy(target, aside, StandardCopyOption.REPLACE_EXISTING);
+                            Files.copy(file.toPath(), temp, StandardCopyOption.REPLACE_EXISTING);
+                            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+                            added = theirs;
+                            replaced++;
+                        } else {
+                            added = 0;
+                            skipped++;
+                        }
+                    } else if (file.lastModified() > target.toFile().lastModified()) {
+                        // Drawn on the other PC since this one's was saved - ground drawn again, maybe: its
+                        // chunks go over this one's, which only fills in what it lacks
+                        Files.deleteIfExists(temp);
+                        XaeroRegionMerge.Result merged = XaeroRegionMerge.merge(file, target.toFile(), temp.toFile());
+                        if (merged.added() == 0) Files.copy(file.toPath(), temp, StandardCopyOption.REPLACE_EXISTING);
+                        Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+                        added = merged.total() - merged.added();
                     } else {
                         Files.deleteIfExists(temp);
                         added = XaeroRegionMerge.merge(target.toFile(), file, temp.toFile()).added();
@@ -585,7 +655,9 @@ public final class ShareClient {
         }
         if (regions > 0) {
             say(current, "Merged (highlight)%d(default) chunks in (highlight)%d(default) regions from the other PC into Xaero's map of %s%s.".formatted(
-                chunks, regions, server, skipped > 0 ? " (%d regions in an older map format left as they were)".formatted(skipped) : ""));
+                chunks, regions, server,
+                (replaced > 0 ? " (%d regions in an older map format replaced, the old ones kept in onfocus/shared)".formatted(replaced) : "")
+                    + (skipped > 0 ? " (%d regions in an older map format with less of the map left out)".formatted(skipped) : "")));
         }
     }
 

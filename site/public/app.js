@@ -9639,6 +9639,18 @@ async function loadMoreNewPlayers() {
   }
 }
 
+// A player event refreshes the first New Players page through its own cheap
+// query, so a newcomer shows up without waiting for the full Player Stats build.
+async function refreshNewPlayersFirstPage() {
+  if (state.activeTab !== 'players' || !state.newPlayersInitialized) return;
+  const accountId = state.activeAccountId || 'primary';
+  if (state.newPlayersAccountId !== accountId) return;
+  const params = new URLSearchParams({ limit: String(NEW_PLAYERS_PAGE_SIZE), offset: '0' });
+  const payload = await fetchJson(`/api/new-players?${params}`);
+  if ((state.activeAccountId || 'primary') !== accountId) return;
+  syncNewPlayers(Array.isArray(payload.players) ? payload.players : [], payload);
+}
+
 function maybeLoadMoreNewPlayers() {
   const list = $('#newPlayersList');
   if (!list || state.newPlayersLoading || !state.newPlayersHasMore) return;
@@ -13348,7 +13360,10 @@ async function refreshPlayersFromEvent({ forcePlayerStats = false } = {}) {
   const playerRequest = state.activeTab === 'players'
     ? loadPlayerStats({ force: forcePlayerStats })
     : Promise.resolve();
-  await Promise.all([serverRequest, playerRequest]);
+  const newPlayersRequest = forcePlayerStats
+    ? refreshNewPlayersFirstPage().catch(() => {})
+    : Promise.resolve();
+  await Promise.all([serverRequest, playerRequest, newPlayersRequest]);
 }
 
 function scheduleRealtimeChartRefresh() {

@@ -41,6 +41,7 @@ import dev.onfocus.addon.explore.WaypointFollower;
 import dev.onfocus.addon.explore.WaypointFollower.Point;
 import dev.onfocus.addon.settings.OrderedItemListSetting;
 import dev.onfocus.addon.xaero.XaeroMapFolders;
+import dev.onfocus.addon.xaero.StaleRegions;
 import dev.onfocus.addon.xaero.XaeroMappedChunkScan;
 import dev.onfocus.addon.xaero.XaeroWaypoints;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
@@ -429,6 +430,17 @@ public class AreaExplorer extends Module {
         .description("Before starting, treats chunks already drawn on Xaero's World Map as explored, so only the blank parts are flown.")
         .defaultValue(true)
         .visible(() -> mode.get() != Mode.Spiral)
+        .build()
+    );
+
+    private final Setting<Integer> redrawAfterDays = sgGeneral.add(new IntSetting.Builder()
+        .name("redraw-after-days")
+        .description("Ground whose World Map region was last drawn longer ago than this counts as blank and is flown again, so it's drawn anew - here, on the site and on the other PC. Kept per chunk till drawn. 0 = drawn ground always counts.")
+        .defaultValue(182)
+        .range(0, 3650)
+        .sliderRange(0, 730)
+        .visible(() -> mode.get() != Mode.Spiral && useXaeroMap.get())
+        .onChanged(StaleRegions::setMaxAgeDays)
         .build()
     );
 
@@ -2032,6 +2044,7 @@ public class AreaExplorer extends Module {
         }
         paused = false;
         stopLogged = false;
+        StaleRegions.setMaxAgeDays(useXaeroMap.get() ? redrawAfterDays.get() : 0);
         stopSiteRetry(); // the run sends every half minute itself
         // Turned on in game while joining for a site command: that run, not the command's
         if (joinCommand != null) failJoin(joinCommand, "A run was started in game instead");
@@ -2087,6 +2100,7 @@ public class AreaExplorer extends Module {
                 : "Stopped in game at %d%% - turning the module on carries on".formatted(percent()), false);
         }
         stopLogged = true;
+        StaleRegions.saveAll();
         // Stopped before done: turning it on again carries on, even after a restart. Done runs forget it right after.
         saveSession();
         if (phase != Phase.IDLE && activeTicks >= MIN_FLIGHT_SECONDS * 20) lastFlightSpeed = flightDistance * 20 / activeTicks;
@@ -6178,6 +6192,7 @@ public class AreaExplorer extends Module {
 
         if (rescan) markRescanned();
         else checkMapAroundPlayer();
+        StaleRegions.saveAllIfDue();
         if (diagnosticLogging.get()) {
             diagnosticTicks++;
             if (diagnosticTicks % 20 == 0) diagnostic("flight-position", "periodic");

@@ -2385,6 +2385,10 @@ let playerStatsCacheValue = null;
 let playerStatsCacheExpiresAt = 0;
 let playerStatsCachePromise = null;
 let playerStatsCacheGeneration = 0;
+// Generations the stored snapshot and the in-flight build started from; -1
+// marks a snapshot restored from storage, which never counts as current.
+let playerStatsCacheValueGeneration = -1;
+let playerStatsCachePromiseGeneration = -1;
 
 function invalidatePlayerStatsCache() {
   playerStatsCacheGeneration += 1;
@@ -2447,6 +2451,7 @@ async function getNewPlayersPage(url = null, database = pool) {
   assertDatabase();
   const limit = Math.min(48, Math.max(8, Number.parseInt(url?.searchParams?.get('limit'), 10) || NEW_PLAYERS_PAGE_LIMIT));
   const offset = Math.min(100_000, Math.max(0, Number.parseInt(url?.searchParams?.get('offset'), 10) || 0));
+  // The whitelist match is checked only for the page, not for every identity.
   const result = await database.query(`
     WITH identities AS (
       SELECT
@@ -2458,15 +2463,19 @@ async function getNewPlayersPage(url = null, database = pool) {
       FROM player_activity pa
       WHERE pa.registration_at IS NOT NULL
       GROUP BY COALESCE(pa.player_uuid::text, LOWER(pa.username))
+    ), page AS (
+      SELECT identities.username, identities.player_uuid, identities.registration_at, identities.is_online
+      FROM identities
+      ORDER BY identities.registration_at DESC, LOWER(identities.username)
+      LIMIT $1 OFFSET $2
     )
-    SELECT identities.username, identities.player_uuid, identities.registration_at, identities.is_online,
+    SELECT page.username, page.player_uuid, page.registration_at, page.is_online,
            EXISTS (
              SELECT 1 FROM whitelist w
-             WHERE ${whitelistMatchSql('w', 'identities.username', 'identities.player_uuid')}
+             WHERE ${whitelistMatchSql('w', 'page.username', 'page.player_uuid')}
            ) AS is_whitelisted
-    FROM identities
-    ORDER BY identities.registration_at DESC, LOWER(identities.username)
-    LIMIT $1 OFFSET $2
+    FROM page
+    ORDER BY page.registration_at DESC, LOWER(page.username)
   `, [limit + 1, offset]);
   const hasMore = result.rows.length > limit;
   const rows = result.rows.slice(0, limit);
@@ -2954,11 +2963,18 @@ function refreshPlayerStatsCache() {
   if (playerStatsCachePromise) return playerStatsCachePromise;
 
   const generation = playerStatsCacheGeneration;
+  playerStatsCachePromiseGeneration = generation;
   playerStatsCachePromise = getPlayerStats()
     .then(value => {
-      if (generation !== playerStatsCacheGeneration) return value;
+      // Only one build runs at a time, so a finished one is always the newest
+      // snapshot. Discarding it when players changed mid-build kept the cache
+      // (and New Players) stale for as long as presence events kept arriving;
+      // store it and only leave it expired so the next read rebuilds.
       playerStatsCacheValue = value;
-      playerStatsCacheExpiresAt = Date.now() + PLAYER_STATS_CACHE_TTL_MS;
+      playerStatsCacheValueGeneration = generation;
+      playerStatsCacheExpiresAt = generation === playerStatsCacheGeneration
+        ? Date.now() + PLAYER_STATS_CACHE_TTL_MS
+        : 0;
       persistPlayerStatsCache(value).catch(error => {
         console.error('[Site] Could not persist Player Stats cache:', error.message);
       });
@@ -2972,7 +2988,17 @@ function refreshPlayerStatsCache() {
 
 async function getCachedPlayerStats({ force = false } = {}) {
   if (force) {
-    if (playerStatsCachePromise) await playerStatsCachePromise.catch(() => {});
+    // Every open tab forces a refresh on the same player event. Share one
+    // build of the current data instead of queueing a full rebuild per tab.
+    const isCurrent = () => playerStatsCacheValue
+      && playerStatsCacheValueGeneration === playerStatsCacheGeneration
+      && Date.now() < playerStatsCacheExpiresAt;
+    if (isCurrent()) return playerStatsCacheValue;
+    if (playerStatsCachePromise) {
+      if (playerStatsCachePromiseGeneration === playerStatsCacheGeneration) return playerStatsCachePromise;
+      await playerStatsCachePromise.catch(() => {});
+      if (isCurrent()) return playerStatsCacheValue;
+    }
     return refreshPlayerStatsCache();
   }
 

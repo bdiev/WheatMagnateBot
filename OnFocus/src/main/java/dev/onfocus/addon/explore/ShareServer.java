@@ -269,7 +269,7 @@ public final class ShareServer {
         return answer.toString();
     }
 
-    /** {"regions": [[dimension, x, z, modifiedMs], ...]}: the settled region files of the server's map. */
+    /** {"regions": [[dimension, x, z, modifiedMs, bytes], ...]}: the settled region files of the server's map. */
     private String regionsOf(String server) {
         JsonArray array = new JsonArray();
         MapWorld map = ShareFiles.readMap(root, server);
@@ -288,6 +288,7 @@ public final class ShareServer {
                     r.add(Integer.parseInt(match.group(1)));
                     r.add(Integer.parseInt(match.group(2)));
                     r.add(modified);
+                    r.add(file.length());
                     array.add(r);
                 }
             }

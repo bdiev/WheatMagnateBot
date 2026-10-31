@@ -118,7 +118,33 @@ public class XaeroMappedChunkScan {
         MapTileChunk tileChunk = region.getChunk((chunkX >> 2) & 7, (chunkZ >> 2) & 7);
         if (tileChunk == null) return NOT_MAPPED;
         MapTile tile = tileChunk.getTile(chunkX & 3, chunkZ & 3);
-        return tile != null && tile.isLoaded() ? MAPPED : NOT_MAPPED;
+        if (tile == null || !tile.isLoaded()) return NOT_MAPPED;
+        return drawnRecently(staleRegions(processor), tile, chunkX, chunkZ) ? MAPPED : NOT_MAPPED;
+    }
+
+    /**
+     * Whether a drawn chunk counts: in a region to be drawn again ({@link StaleRegions}), only once
+     * the World Map has drawn it this session (a tile read from the file isn't), which is kept.
+     */
+    private static boolean drawnRecently(StaleRegions stale, MapTile tile, int chunkX, int chunkZ) {
+        if (stale == null || !stale.outdated(chunkX, chunkZ)) return true;
+        if (!tile.wasWrittenOnce()) return false;
+        stale.redrawn(chunkX, chunkZ);
+        return true;
+    }
+
+    private static Path staleFolder;
+    private static StaleRegions staleOfFolder;
+
+    /** The regions to be drawn again of the map the player is on, null for one without files of its own. */
+    private static StaleRegions staleRegions(MapProcessor processor) {
+        Path folder = mapFolder(processor);
+        if (folder == null) return null;
+        if (!folder.equals(staleFolder)) {
+            staleOfFolder = StaleRegions.of(folder);
+            staleFolder = folder;
+        }
+        return staleOfFolder;
     }
 
     /** Queues the region holding this chunk to be (re)read. */
@@ -212,6 +238,7 @@ public class XaeroMappedChunkScan {
         int caveLayer = SURFACE_LAYER;
         Path mapFolder = mapFolder(processor);
         listFolder(mapFolder);
+        StaleRegions stale = staleRegions(processor);
 
         // Nearest the focus first, a few at a time: what's read later can still be put behind
         // regions that came closer as the player moved
@@ -237,7 +264,7 @@ public class XaeroMappedChunkScan {
                 // map keeps hardly any tiles (that once read a whole area as 2% explored), so the file
                 // gets read as well and the two add up
                 LongArrayList found = new LongArrayList();
-                readLoadedRegion(region, rx, rz, found);
+                readLoadedRegion(region, rx, rz, found, stale);
                 listener.onRegion(key, found);
                 inMemory++;
                 chunksInMemory += found.size();
@@ -280,7 +307,9 @@ public class XaeroMappedChunkScan {
                 LongArrayList found = new LongArrayList();
                 try {
                     XaeroRegionFile.read(regionFile, rx, rz, (cx, cz) -> {
-                        if (cx >= minCX && cx <= maxCX && cz >= minCZ && cz <= maxCZ) found.add(ChunkPos.toLong(cx, cz));
+                        if (cx < minCX || cx > maxCX || cz < minCZ || cz > maxCZ) return;
+                        // Drawn long ago and not since: to be flown again
+                        if (stale == null || !stale.outdated(cx, cz)) found.add(ChunkPos.toLong(cx, cz));
                     }, () -> cancelled);
                     results.add(new Result(key, found));
                 } catch (Exception e) {
@@ -322,7 +351,7 @@ public class XaeroMappedChunkScan {
         }
     }
 
-    private void readLoadedRegion(MapRegion region, int rx, int rz, LongArrayList out) {
+    private void readLoadedRegion(MapRegion region, int rx, int rz, LongArrayList out, StaleRegions stale) {
         int fromX = Math.max(minCX, rx << 5), toX = Math.min(maxCX, (rx << 5) + 31);
         int fromZ = Math.max(minCZ, rz << 5), toZ = Math.min(maxCZ, (rz << 5) + 31);
         for (int cx = fromX; cx <= toX; cx++) {
@@ -330,7 +359,7 @@ public class XaeroMappedChunkScan {
                 MapTileChunk tileChunk = region.getChunk((cx >> 2) & 7, (cz >> 2) & 7);
                 if (tileChunk == null) continue;
                 MapTile tile = tileChunk.getTile(cx & 3, cz & 3);
-                if (tile != null && tile.isLoaded()) out.add(ChunkPos.toLong(cx, cz));
+                if (tile != null && tile.isLoaded() && drawnRecently(stale, tile, cx, cz)) out.add(ChunkPos.toLong(cx, cz));
             }
         }
     }

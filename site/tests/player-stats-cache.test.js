@@ -46,6 +46,37 @@ assert.match(
   /if \(force\) \{[\s\S]*await playerStatsCachePromise\.catch[\s\S]*return refreshPlayerStatsCache\(\);/,
   'a forced refresh must wait out an older in-flight cache build before reading current player data'
 );
+assert.doesNotMatch(
+  serverSource.match(/function refreshPlayerStatsCache\(\) \{[\s\S]*?\n\}/)?.[0] || '',
+  /if \(generation !== playerStatsCacheGeneration\) return value;/,
+  'a finished build must be stored even when players changed while it ran'
+);
+assert.match(
+  serverSource,
+  /playerStatsCacheValueGeneration = generation;[\s\S]*playerStatsCacheExpiresAt = generation === playerStatsCacheGeneration[\s\S]*: 0;/,
+  'a build overtaken by newer player data must stay expired so the next read rebuilds'
+);
+assert.match(
+  serverSource,
+  /if \(force\) \{[\s\S]*if \(isCurrent\(\)\) return playerStatsCacheValue;[\s\S]*playerStatsCachePromiseGeneration === playerStatsCacheGeneration\) return playerStatsCachePromise;/,
+  'forced refreshes from many tabs must share one build of the current data'
+);
+assert.match(
+  serverSource,
+  /function getNewPlayersPage[\s\S]*\), page AS \([\s\S]*LIMIT \$1 OFFSET \$2[\s\S]*EXISTS \([\s\S]*FROM page/,
+  'New Players must match the whitelist only for the requested page'
+);
+const appSource = fs.readFileSync(path.join(siteDir, 'public', 'app.js'), 'utf8');
+assert.match(
+  appSource,
+  /async function refreshNewPlayersFirstPage\(\)[\s\S]*\/api\/new-players\?\$\{params\}[\s\S]*syncNewPlayers\(/,
+  'player events must refresh the first New Players page through its own query'
+);
+assert.match(
+  appSource,
+  /function refreshPlayersFromEvent[\s\S]*refreshNewPlayersFirstPage\(\)/,
+  'player events must not wait for the full Player Stats build to show newcomers'
+);
 assert.match(
   serverSource,
   /await loadPersistedPlayerStatsCache\(\);[\s\S]*getCachedPlayerStats\(\)\.catch/,
