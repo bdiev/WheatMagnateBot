@@ -18,10 +18,12 @@ import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.KeybindSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
@@ -55,6 +57,10 @@ import java.util.List;
  * all of it (or, with "give-up-after", until it stops changing while you stand near the centre),
  * then it goes back where the hand's item came from and into a bundle with room, if there is one.
  * <p>
+ * The area is picked by its corners: pos 1 where you are, then fly to the opposite corner and set
+ * pos 2 (keys, the settings' switches or {@code .map-painter pos1|pos2}); it's widened to the whole
+ * map cells that cover both. Between the two the area follows you and no maps are made.
+ * <p>
  * Flying is up to you: the HUD shows the area's cells (drawn, started, left) with you and the next
  * cell to fly to, and in the world the cells around you are coloured on a plane under you, with a
  * beam and a tracer to the next one. Drawn cells are kept on disk per server and dimension
@@ -74,40 +80,42 @@ public class MapPainter extends Module {
     private final SettingGroup sgHud = settings.createGroup("HUD");
     private final SettingGroup sgWorld = settings.createGroup("World");
 
-    private final Setting<Integer> centerX = sgArea.add(new IntSetting.Builder()
-        .name("center-x")
-        .description("X (in blocks) of the area's centre.")
-        .defaultValue(0)
-        .range(-30_000_000, 30_000_000)
-        .noSlider()
+    private final Setting<Keybind> pos1Key = sgArea.add(new KeybindSetting.Builder()
+        .name("pos1-key")
+        .description("Key that sets the area's first corner where you are. Until the second one is set no maps are made, and the area follows you.")
+        .defaultValue(Keybind.none())
+        .action(this::setPos1)
         .build()
     );
 
-    private final Setting<Integer> centerZ = sgArea.add(new IntSetting.Builder()
-        .name("center-z")
-        .description("Z (in blocks) of the area's centre.")
-        .defaultValue(0)
-        .range(-30_000_000, 30_000_000)
-        .noSlider()
+    private final Setting<Keybind> pos2Key = sgArea.add(new KeybindSetting.Builder()
+        .name("pos2-key")
+        .description("Key that sets the area's second corner where you are.")
+        .defaultValue(Keybind.none())
+        .action(this::setPos2)
         .build()
     );
 
-    private final Setting<Integer> sizeChunks = sgArea.add(new IntSetting.Builder()
-        .name("size-chunks")
-        .description("Side of the square area in chunks. A map covers 8x8 chunks, so 128 is 16x16 = 256 maps. Rounded down to a multiple of 8.")
-        .defaultValue(128)
-        .range(8, 2048)
-        .sliderRange(8, 512)
-        .build()
-    );
-
-    private final Setting<Boolean> centerHere = sgArea.add(new BoolSetting.Builder()
-        .name("center-here")
-        .description("Turn on to move the area's centre to the map cell you are in.")
+    private final Setting<Boolean> pos1Here = sgArea.add(new BoolSetting.Builder()
+        .name("set-pos1")
+        .description("Turn on to set the first corner where you are (the same as pos1-key or .map-painter pos1).")
         .defaultValue(false)
-        .onChanged(v -> { if (v) centerOnPlayer(); })
+        .onChanged(v -> { if (v) setPos1(); })
         .build()
     );
+
+    private final Setting<Boolean> pos2Here = sgArea.add(new BoolSetting.Builder()
+        .name("set-pos2")
+        .description("Turn on to set the second corner where you are (the same as pos2-key or .map-painter pos2).")
+        .defaultValue(false)
+        .onChanged(v -> { if (v) setPos2(); })
+        .build()
+    );
+
+    private final Setting<Integer> pos1X = sgArea.add(corner("pos1-x", "X of the first corner, in blocks.", -1024));
+    private final Setting<Integer> pos1Z = sgArea.add(corner("pos1-z", "Z of the first corner, in blocks.", -1024));
+    private final Setting<Integer> pos2X = sgArea.add(corner("pos2-x", "X of the second corner, in blocks.", 1023));
+    private final Setting<Integer> pos2Z = sgArea.add(corner("pos2-z", "Z of the second corner, in blocks.", 1023));
 
     private final Setting<Order> order = sgArea.add(new EnumSetting.Builder<Order>()
         .name("order")
@@ -253,6 +261,16 @@ public class MapPainter extends Module {
         .build()
     );
 
+    private static IntSetting corner(String name, String description, int value) {
+        return new IntSetting.Builder()
+            .name(name)
+            .description(description + " The area is widened to whole maps (8x8 chunks) that cover both corners.")
+            .defaultValue(value)
+            .range(-30_000_000, 30_000_000)
+            .noSlider()
+            .build();
+    }
+
     /** Side of a scale-0 map in blocks; cells are aligned like the game aligns maps, centred on multiples of 128. */
     private static final int CELL = 128;
     private static final int PIXELS = 128 * 128;
@@ -288,7 +306,9 @@ public class MapPainter extends Module {
     private int swapSlot = -1, swapButton;
 
     // Worked out once a tick, read by the renderers
-    private int minCellX, minCellZ, cells;
+    private int minCellX, minCellZ, cellsX, cellsZ;
+    /** The first corner is set and the second not yet: the area runs from it to you, and no maps are made. */
+    private boolean selecting;
     private long nextCell;
     private boolean hasNext;
 
@@ -307,7 +327,9 @@ public class MapPainter extends Module {
         file = null;
         if (mc.player != null) {
             updateArea();
-            info("Area %dx%d chunks = (highlight)%d maps(default) around X %d Z %d, %d drawn.", cells * 8, cells * 8, cells * cells, centerX.get(), centerZ.get(), doneInArea());
+            info("%s. Set the corners with pos1-key / pos2-key or .map-painter pos1 / pos2.", describeArea());
+            loadFor(storageFile());
+            hintDrawn();
         }
     }
 
@@ -344,7 +366,7 @@ public class MapPainter extends Module {
         if (Modules.get().isActive(MapArtCopier.class) || Modules.get().isActive(MapArtSorter.class)) return;
 
         long cell = cellAt(mc.player.getX(), mc.player.getZ());
-        boolean inArea = inArea(cell);
+        boolean inArea = inArea(cell) && !selecting;
 
         switch (phase) {
             case IDLE -> {
@@ -477,9 +499,9 @@ public class MapPainter extends Module {
         done.add(cell);
         forgetMap(jobMap);
         save();
-        long left = cells * (long) cells - doneInArea();
-        if (blank == 0) info("Map drawn (highlight)%d/%d(default), %d left.", doneInArea(), cells * cells, left);
-        else warning("Map counted as drawn at %d%% - it stopped changing. %d/%d, %d left.", progress, doneInArea(), cells * cells, left);
+        long left = total() - doneInArea();
+        if (blank == 0) info("Map drawn (highlight)%d/%d(default), %d left.", doneInArea(), total(), left);
+        else warning("Map counted as drawn at %d%% - it stopped changing. %d/%d, %d left.", progress, doneInArea(), total(), left);
 
         restoreSwap();
         int map = jobMap;
@@ -596,9 +618,28 @@ public class MapPainter extends Module {
     // ---- the area ----
 
     private void updateArea() {
-        cells = Math.max(1, sizeChunks.get() / 8);
-        minCellX = cellIndex(centerX.get()) - cells / 2;
-        minCellZ = cellIndex(centerZ.get()) - cells / 2;
+        double x2 = pos2X.get(), z2 = pos2Z.get();
+        if (selecting && mc.player != null) {
+            x2 = mc.player.getX();
+            z2 = mc.player.getZ();
+        }
+        int ax = cellIndex(pos1X.get()), az = cellIndex(pos1Z.get()), bx = cellIndex(x2), bz = cellIndex(z2);
+        minCellX = Math.min(ax, bx);
+        minCellZ = Math.min(az, bz);
+        cellsX = Math.abs(ax - bx) + 1;
+        cellsZ = Math.abs(az - bz) + 1;
+    }
+
+    private int total() {
+        return cellsX * cellsZ;
+    }
+
+    /** "Area 16x16 maps (128x128 chunks, 256 maps) from X -1088 Z -1088 to X 1087 Z 1087". */
+    public String describeArea() {
+        return "Area %dx%d maps (%dx%d chunks, (highlight)%d maps(default)) from X %d Z %d to X %d Z %d".formatted(
+            cellsX, cellsZ, cellsX * 8, cellsZ * 8, total(),
+            (int) centerOf(minCellX) - 64, (int) centerOf(minCellZ) - 64,
+            (int) centerOf(minCellX + cellsX) - 65, (int) centerOf(minCellZ + cellsZ) - 65);
     }
 
     /** The map cell a block coordinate falls in, as the game picks a map's centre. */
@@ -612,7 +653,7 @@ public class MapPainter extends Module {
 
     private boolean inArea(long cell) {
         int x = ChunkPos.getPackedX(cell) - minCellX, z = ChunkPos.getPackedZ(cell) - minCellZ;
-        return x >= 0 && z >= 0 && x < cells && z < cells;
+        return x >= 0 && z >= 0 && x < cellsX && z < cellsZ;
     }
 
     private static double centerOf(int index) {
@@ -634,12 +675,13 @@ public class MapPainter extends Module {
     /** Picks the cell to show as next: not drawn, not the one being drawn now. */
     private void updateNext() {
         hasNext = false;
+        if (selecting) return;
         long here = cellAt(mc.player.getX(), mc.player.getZ());
         long current = phase == Phase.HOLDING || phase == Phase.CREATING ? jobCell : (inArea(here) && !done.contains(here) ? here : Long.MIN_VALUE);
         double best = Double.MAX_VALUE;
-        for (int row = 0; row < cells; row++) {
-            for (int i = 0; i < cells; i++) {
-                int col = order.get() == Order.Rows && (row & 1) == 1 ? cells - 1 - i : i;
+        for (int row = 0; row < cellsZ; row++) {
+            for (int i = 0; i < cellsX; i++) {
+                int col = order.get() == Order.Rows && (row & 1) == 1 ? cellsX - 1 - i : i;
                 long cell = ChunkPos.toLong(minCellX + col, minCellZ + row);
                 if (cell == current || done.contains(cell)) continue;
                 if (order.get() == Order.Rows) {
@@ -657,25 +699,61 @@ public class MapPainter extends Module {
         }
     }
 
-    private void centerOnPlayer() {
-        centerHere.set(false);
+    /** Sets the first corner where you are; the area then follows you until the second one is set. */
+    public void setPos1() {
+        pos1Here.set(false);
         if (mc.player == null) return;
-        long cell = cellAt(mc.player.getX(), mc.player.getZ());
-        centerX.set((int) centerOf(ChunkPos.getPackedX(cell)));
-        centerZ.set((int) centerOf(ChunkPos.getPackedZ(cell)));
-        info("Area centred on X %d Z %d.", centerX.get(), centerZ.get());
+        pos1X.set(mc.player.getBlockX());
+        pos1Z.set(mc.player.getBlockZ());
+        selecting = true;
+        if (phase != Phase.IDLE) {
+            restoreSwap();
+            phase = Phase.IDLE;
+        }
+        info("Pos 1 set at X %d Z %d - fly to the opposite corner and set pos 2.", pos1X.get(), pos1Z.get());
     }
 
-    private void resetArea() {
-        resetArea.set(false);
+    /** Sets the second corner where you are and ends the selection. */
+    public void setPos2() {
+        pos2Here.set(false);
         if (mc.player == null) return;
+        pos2X.set(mc.player.getBlockX());
+        pos2Z.set(mc.player.getBlockZ());
+        selecting = false;
+        updateArea();
+        info("Pos 2 set at X %d Z %d. %s.", pos2X.get(), pos2Z.get(), describeArea());
+        if (mc.world != null) loadFor(storageFile());
+        hintDrawn();
+    }
+
+    /** Forgets the area's drawn cells and half-drawn maps, so all of it is drawn again. */
+    public void resetArea() {
+        resetArea.set(false);
+        if (mc.player == null || mc.world == null) return;
+        // With the module off nothing's been read yet: read it first, or the next read would undo the reset
+        loadFor(storageFile());
         updateArea();
         int before = done.size();
         for (LongIterator it = done.iterator(); it.hasNext(); ) {
             if (inArea(it.nextLong())) it.remove();
         }
+        for (int map : mapCell.keySet().toIntArray()) {
+            if (inArea(mapCell.get(map))) forgetMap(map);
+        }
+        if (phase != Phase.IDLE) {
+            restoreSwap();
+            phase = Phase.IDLE;
+        }
         save();
-        info("Forgot %d drawn cell(s) of the area.", before - done.size());
+        info("Forgot %d drawn map(s) of the area - it is drawn again from scratch.", before - done.size());
+    }
+
+    /** After the area changes: says if some of it is drawn already and how to draw it again. */
+    private void hintDrawn() {
+        int drawn = doneInArea();
+        if (drawn == 0) return;
+        if (drawn == total()) info("This area is already drawn. To draw it again: .map-painter reset (or the reset-area switch).");
+        else info("%d of %d maps here are already drawn and are skipped. To start over: .map-painter reset.", drawn, total());
     }
 
     // ---- storage: onfocus/map-painter/<server>/<dimension>.txt ----
@@ -747,7 +825,7 @@ public class MapPainter extends Module {
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (mc.player == null || cells == 0) return;
+        if (mc.player == null || mc.world == null || total() == 0) return;
         double y = mc.player.getY() - gridBelow.get();
 
         if (worldGrid.get()) {
@@ -766,6 +844,17 @@ public class MapPainter extends Module {
             }
         }
 
+        // The area's edge, and while selecting a beam at the first corner
+        color.set(selecting ? nextColor.get() : doneColor.get());
+        color.a = 255;
+        double ax1 = centerOf(minCellX) - 64, az1 = centerOf(minCellZ) - 64;
+        double ax2 = ax1 + cellsX * CELL, az2 = az1 + cellsZ * CELL;
+        event.renderer.boxLines(ax1, y, az1, ax2, y + (selecting ? 2 : 0), az2, color, 0);
+        if (selecting) {
+            double bx = pos1X.get() + 0.5, bz = pos1Z.get() + 0.5;
+            event.renderer.line(bx, mc.world.getBottomY(), bz, bx, mc.world.getBottomY() + mc.world.getHeight() + 64, bz, color);
+        }
+
         if (beam.get() && hasNext) {
             double x = centerOf(ChunkPos.getPackedX(nextCell)), z = centerOf(ChunkPos.getPackedZ(nextCell));
             color.set(nextColor.get());
@@ -776,21 +865,21 @@ public class MapPainter extends Module {
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
-        if (!hud.get() || mc.player == null || mc.options.hudHidden || cells == 0) return;
+        if (!hud.get() || mc.player == null || mc.options.hudHidden || total() == 0) return;
         DrawContext context = event.drawContext;
 
-        int px = Math.max(1, hudSize.get() / cells);
-        int size = px * cells;
+        int px = Math.max(1, hudSize.get() / Math.max(cellsX, cellsZ));
+        int size = px * cellsX, height = px * cellsZ;
         int textHeight = 2 * (mc.textRenderer.fontHeight + 1) + 3;
         boolean right = hudCorner.get() == Corner.TopRight || hudCorner.get() == Corner.BottomRight;
         boolean top = hudCorner.get() == Corner.TopLeft || hudCorner.get() == Corner.TopRight;
         int x0 = right ? event.screenWidth - size - 4 : 4;
-        int y0 = top ? hudOffsetY.get() : event.screenHeight - size - textHeight - hudOffsetY.get();
+        int y0 = top ? hudOffsetY.get() : event.screenHeight - height - textHeight - hudOffsetY.get();
 
-        context.fill(x0 - 1, y0 - 1, x0 + size + 1, y0 + size + 1, 0xA0000000);
+        context.fill(x0 - 1, y0 - 1, x0 + size + 1, y0 + height + 1, selecting ? 0xA0204050 : 0xA0000000);
         boolean blink = (ticks / 10) % 2 == 0;
-        for (int row = 0; row < cells; row++) {
-            for (int col = 0; col < cells; col++) {
+        for (int row = 0; row < cellsZ; row++) {
+            for (int col = 0; col < cellsX; col++) {
                 long cell = ChunkPos.toLong(minCellX + col, minCellZ + row);
                 SettingColor c = colorOf(cell);
                 int alpha = hasNext && cell == nextCell ? (blink ? 255 : 120) : Math.min(255, c.a * 3);
@@ -804,16 +893,23 @@ public class MapPainter extends Module {
 
         // You, where you are in the area (clamped to its edge when outside)
         double fx = (mc.player.getX() + 64) / CELL - minCellX, fz = (mc.player.getZ() + 64) / CELL - minCellZ;
-        int dx = x0 + (int) MathHelper.clamp(fx * px, 0, size - 1), dz = y0 + (int) MathHelper.clamp(fz * px, 0, size - 1);
+        int dx = x0 + (int) MathHelper.clamp(fx * px, 0, size - 1), dz = y0 + (int) MathHelper.clamp(fz * px, 0, height - 1);
         context.fill(dx - 1, dz - 1, dx + 2, dz + 2, 0xFFFFFFFF);
 
-        int ty = y0 + size + 3;
-        String status = "Drawn " + doneInArea() + "/" + cells * cells;
+        int ty = y0 + height + 3;
+        if (selecting) {
+            String sel = "Selecting " + cellsX + "x" + cellsZ + " maps (" + cellsX * 8 + "x" + cellsZ * 8 + " chunks)";
+            context.drawTextWithShadow(mc.textRenderer, sel, textX(sel, x0, size, right), ty, 0xFFFFFF);
+            String hint = "Fly to the opposite corner, set pos 2";
+            context.drawTextWithShadow(mc.textRenderer, hint, textX(hint, x0, size, right), ty + mc.textRenderer.fontHeight + 1, 0x60C8FF);
+            return;
+        }
+        String status = "Drawn " + doneInArea() + "/" + total();
         if (phase == Phase.HOLDING) status += " | map " + progress + "%";
         else if (phase == Phase.CREATING) status += " | making a map";
         context.drawTextWithShadow(mc.textRenderer, status, textX(status, x0, size, right), ty, 0xFFFFFF);
         String next;
-        if (!hasNext) next = phase == Phase.HOLDING ? "Last map" : "All drawn";
+        if (!hasNext) next = phase == Phase.HOLDING ? "Last map" : "All drawn - .map-painter reset to redo";
         else {
             int nx = (int) centerOf(ChunkPos.getPackedX(nextCell)), nz = (int) centerOf(ChunkPos.getPackedZ(nextCell));
             next = "Next X " + nx + " Z " + nz + " | " + Math.round(centerDistance(nextCell)) + " m";
@@ -828,7 +924,7 @@ public class MapPainter extends Module {
 
     @Override
     public String getInfoString() {
-        if (cells == 0) return null;
-        return doneInArea() + "/" + cells * cells;
+        if (selecting) return "selecting";
+        return doneInArea() + "/" + total();
     }
 }

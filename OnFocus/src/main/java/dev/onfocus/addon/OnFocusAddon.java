@@ -2,6 +2,7 @@ package dev.onfocus.addon;
 
 import com.mojang.logging.LogUtils;
 import dev.onfocus.addon.commands.LootMarkersCommand;
+import dev.onfocus.addon.commands.MapPainterCommand;
 import dev.onfocus.addon.commands.MicrosoftLoginCommand;
 import dev.onfocus.addon.commands.RegroupMarkersCommand;
 import dev.onfocus.addon.modules.AreaExplorer;
@@ -65,6 +66,7 @@ public class OnFocusAddon extends MeteorAddon {
         Commands.add(new RegroupMarkersCommand());
         Commands.add(new LootMarkersCommand());
         Commands.add(new MicrosoftLoginCommand());
+        Commands.add(new MapPainterCommand());
     }
 
     @Override
