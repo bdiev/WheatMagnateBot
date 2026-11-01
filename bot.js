@@ -1443,6 +1443,7 @@ const OUTBOUND_WHISPER_TTL_MS = 5000; // suppression window for our own /msg ech
 const SITE_WHISPER_TTL_MS = 10 * 60 * 1000; // site dialogs stay site-only while active
 const DEFAULT_SITE_WHISPER_USERNAME = process.env.DEFAULT_SITE_WHISPER_USERNAME || 'bdiev_';
 const WHISPER_CHANNELS_FILE = 'whisper_channels.json';
+const WHISPER_OUTBOX_FILE = 'whisper_outbox.json';
 
 // Debug logging (disabled by default). Enable by setting DEBUG_LOGS=true
 const DEBUG_LOGS = String(process.env.DEBUG_LOGS || '').toLowerCase() === 'true';
@@ -1592,6 +1593,11 @@ const {
   postIncomingDialogMessage,
   postOutgoingDialogMessage,
   setDialogTtl,
+  refreshPlayerDialogs,
+  loadQueuedWhispers,
+  queueOfflineWhisper,
+  deliverQueuedWhispersSoon,
+  cancelQueuedWhisper,
   keepDialog,
   resolveDialogOwnerId,
   restoreDialogTimers,
@@ -1630,10 +1636,23 @@ const {
     online: isMinecraftPlayerOnline(username),
     replyFrom: whisperSenderFor(username)?.username || null
   }),
+  outboxFile: WHISPER_OUTBOX_FILE,
+  sendWhisper: async (username, texts) => {
+    const sender = whisperSenderFor(username);
+    if (!sender || !isMinecraftPlayerOnline(username)) return null;
+    const whispers = buildPlayerWhisperCommands(username, texts.join('\n'));
+    for (const [index, whisper] of whispers.entries()) {
+      if (!sendMinecraftChat(whisper.command, { bot: sender })) return index === 0 ? null : sender.username;
+      markOutboundWhisper(username, whisper.text);
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+    return sender.username;
+  },
   debugLog
 });
 
 loadWhisperChannels();
+loadQueuedWhispers();
 
 // Ensure we reuse a single persistent Server Status message.
 async function ensureStatusMessage() {
@@ -9003,6 +9022,14 @@ async function recordNearbyPlayerSighting(username, distance) {
   }
 }
 
+// Dialog headers in Discord show whether the player is online and which bot
+// replies, so they follow joins and leaves
+function refreshDialogsOnPresenceChange(username) {
+  if (whisperChannels.size === 0) return;
+  refreshPlayerDialogs(isOwnBotUsername(username) ? null : username)
+    .catch(err => debugLog('[Whisper] Dialog header refresh failed:', err.message));
+}
+
 function isOwnBotUsername(username) {
   const nameKey = String(username || '').trim().toLowerCase();
   if (!nameKey) return false;
@@ -10828,6 +10855,10 @@ function attachObserverListeners(target) {
 
   // Track player joins and leaves
   on('playerJoined', async (player) => {
+    if (player.username && observerBot === target) {
+      refreshDialogsOnPresenceChange(player.username);
+      deliverQueuedWhispersSoon(player.username);
+    }
     if (player.username && player.username.toLowerCase() !== primaryUsernameKey()) {
       if (!lastObservedOnlinePlayerKeys) lastObservedOnlinePlayerKeys = new Map();
       lastObservedOnlinePlayerKeys.set(player.username.toLowerCase(), player.username);
@@ -10853,6 +10884,7 @@ function attachObserverListeners(target) {
   });
 
   on('playerLeft', async (player) => {
+    if (player.username && observerBot === target) refreshDialogsOnPresenceChange(player.username);
     if (player.username && player.username.toLowerCase() !== primaryUsernameKey()) {
       lastObservedOnlinePlayerKeys?.delete(player.username.toLowerCase());
       await updatePlayerActivity(player.username, false, { uuid: player.uuid });
@@ -11866,7 +11898,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
     if (interaction.channelId !== DISCORD_CHANNEL_ID) {
       // Allow dialog buttons and select menus in their own channels
-      if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('keep_dialog_') || interaction.customId?.startsWith('set_ttl_') || interaction.customId?.startsWith('claim_whisper_'))) && 
+      if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('keep_dialog_') || interaction.customId?.startsWith('cancel_queued_whisper_') || interaction.customId?.startsWith('set_ttl_') || interaction.customId?.startsWith('claim_whisper_'))) && 
           !(interaction.isButton() && isAdminPanelCustomId(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
           !(interaction.isStringSelectMenu() && isAdminPanelSelectCustomId(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
           !(interaction.isStringSelectMenu() && (interaction.customId?.startsWith('add_whitelist_select') || interaction.customId?.startsWith('delete_whitelist_select')) && interaction.user.id === DISCORD_OWNER_ID) &&
@@ -12108,6 +12140,17 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
           return;
         }
+      if (interaction.customId.startsWith('cancel_queued_whisper_')) {
+        await interaction.deferUpdate();
+        const result = await cancelQueuedWhisper(interaction.customId.replace('cancel_queued_whisper_', ''), interaction.user.id);
+        if (result !== 'cancelled') {
+          await interaction.followUp({
+            content: result === 'forbidden' ? 'Only the author can cancel this reply.' : 'This reply was already sent or cancelled.',
+            flags: MessageFlags.Ephemeral
+          }).catch(() => {});
+        }
+        return;
+      }
       if (interaction.customId.startsWith('keep_dialog_')) {
         const channelId = interaction.customId.replace('keep_dialog_', '');
         const ownerId = await resolveDialogOwnerId(channelId);
@@ -12788,12 +12831,28 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const selectedUsername = b64decode(encodedUsername);
       const whispers = buildPlayerWhisperCommands(selectedUsername, interaction.fields.getTextInputValue('message_text'));
       const messageSender = whisperSenderFor(selectedUsername);
-      if (!messageSender || whispers.length === 0) {
-        await interaction.reply({
-          content: messageSender ? 'Message is empty.' : 'Bot is offline, message not sent.',
-          flags: MessageFlags.Ephemeral
-        });
+      if (whispers.length === 0) {
+        await interaction.reply({ content: 'Message is empty.', flags: MessageFlags.Ephemeral });
         setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
+      } else if (!messageSender || !isMinecraftPlayerOnline(selectedUsername)) {
+        // The player (or every bot) is offline: the message waits in the dialog
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const whisperChannel = await getOrCreateWhisperChannel(interaction.user.id, interaction.user.tag, selectedUsername);
+        if (!whisperChannel) {
+          await interaction.editReply({ content: 'Message not sent: the player is offline and your dialog channel could not be created. Check DISCORD_DM_CATEGORY_ID.' });
+          return;
+        }
+        await queueOfflineWhisper(whisperChannel, {
+          username: selectedUsername,
+          ownerId: interaction.user.id,
+          sender: discordWhisperSender(interaction.member, interaction.user),
+          texts: whispers.map(whisper => whisper.text),
+          reason: messageSender ? 'offline' : 'no_bot'
+        });
+        await interaction.editReply({
+          content: `${selectedUsername} is offline. The message waits in ${whisperChannel} and is sent when they join.`
+        });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 8000);
       } else {
         for (const whisper of whispers) {
           sendMinecraftChat(whisper.command, { bot: messageSender });
@@ -13167,39 +13226,49 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const whispers = buildPlayerWhisperCommands(mcUsername, message.content);
         if (whispers.length === 0) return;
 
+        // Lines go out now only while the player is seen online; the rest waits
+        // in the dialog, greyed out, and is sent when they join
         const relaySender = whisperSenderFor(mcUsername);
-        if (!relaySender) {
-          await message.reply({ content: 'Bot is offline, message not sent.' }).catch(() => {});
-          return;
-        }
-        // Only lines that really went out are mirrored; the original message is
-        // kept when nothing was sent, so the text is not lost
+        const playerOnline = isMinecraftPlayerOnline(mcUsername);
         const sentWhispers = [];
-        for (const whisper of whispers) {
-          try {
-            if (!sendMinecraftChat(whisper.command, { bot: relaySender })) throw new Error('No bot is in game.');
+        if (relaySender && playerOnline) {
+          for (const whisper of whispers) {
+            if (!sendMinecraftChat(whisper.command, { bot: relaySender })) {
+              console.error('[Whisper Relay] Failed to send message: no bot is in game.');
+              break;
+            }
             console.log(`[Whisper Relay] Sent to ${mcUsername}: ${whisper.text} (by ${message.author.tag})`);
             sentWhispers.push(whisper);
             // Mark outbound whisper to suppress any unexpected public echo
             markOutboundWhisper(mcUsername, whisper.text);
-          } catch (e) {
-            console.error('[Whisper Relay] Failed to send message:', e.message);
           }
         }
-        if (sentWhispers.length === 0) {
-          await message.reply({ content: 'Bot is offline, message not sent.' }).catch(() => {});
-          return;
-        }
+        const unsentWhispers = whispers.slice(sentWhispers.length);
+        const sender = discordWhisperSender(message.member, message.author);
 
         try {
-          await postOutgoingDialogMessage(message.channel, {
-            username: mcUsername,
-            sender: discordWhisperSender(message.member, message.author),
-            text: sentWhispers.map(whisper => whisper.text).join('\n'),
-            via: relaySender.username
-          });
+          if (sentWhispers.length > 0) {
+            await postOutgoingDialogMessage(message.channel, {
+              username: mcUsername,
+              sender,
+              text: sentWhispers.map(whisper => whisper.text).join('\n'),
+              via: relaySender.username
+            });
+          }
+          if (unsentWhispers.length > 0) {
+            await queueOfflineWhisper(message.channel, {
+              username: mcUsername,
+              ownerId,
+              sender,
+              texts: unsentWhispers.map(whisper => whisper.text),
+              reason: relaySender ? 'offline' : 'no_bot'
+            });
+            console.log(`[Whisper Relay] Queued ${unsentWhispers.length} line(s) for ${mcUsername} until they are online.`);
+          }
         } catch (e) {
           console.error('[Whisper] Failed to mirror outbound message:', e.message);
+          await message.reply({ content: 'Failed to show this message in the dialog; it was kept here.' }).catch(() => {});
+          return;
         }
 
         // Always delete the original Discord message to keep channel clean

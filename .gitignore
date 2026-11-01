@@ -9,3 +9,7 @@ data/*.sqlite-shm
 data/*.sqlite-wal
 site/data/config.local.json
 site/data/minecraft-icons/
+
+# Discord whisper dialogs: channel mappings and replies waiting for offline players
+whisper_channels.json
+whisper_outbox.json

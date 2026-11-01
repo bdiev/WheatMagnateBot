@@ -50,10 +50,18 @@ function createWhisperFeature({
   describeDialog = () => ({}),
   // How long the owner has to answer "Delete this dialog?" before it goes
   confirmGraceMs = 5 * 60_000,
+  // Replies written while the player is offline wait here for them to join
+  outboxFile = null,
+  // (username, texts) -> name of the bot that sent them, or null when it can't
+  sendWhisper = async () => null,
+  deliverDelayMs = 5_000,
   debugLog = () => {}
 }) {
   const dialogHeaders = state.whisperDialogHeaders || new Map();
   const deletePrompts = state.whisperDeletePrompts || new Map();
+  const queuedWhispers = new Map(); // id -> queued reply, see queueOfflineWhisper
+  const deliveryTimers = new Map(); // player key -> timer of a delivery after a join
+  const deliveringPlayers = new Set();
   const channelQueues = new Map();
 
   // Messages of one dialog go out one after another, so the header is made
@@ -203,7 +211,14 @@ function createWhisperFeature({
       color: await playerColor(username),
       ...(avatar.thumbnail?.url ? { thumbnail: { url: avatar.thumbnail.url } } : {}),
       fields: [
-        { name: 'Player', value: details.online ? '🟢 Online' : '⚫ Offline', inline: true },
+        {
+          name: 'Player',
+          value: [
+            details.online ? '🟢 Online' : '⚫ Offline',
+            queuedCount(channel.id) ? `⏳ ${queuedCount(channel.id)} waiting to be sent` : null
+          ].filter(Boolean).join('\n'),
+          inline: true
+        },
         { name: 'Replies from', value: details.replyFrom || 'No bot in game', inline: true },
         {
           name: 'Auto-delete',
@@ -251,6 +266,26 @@ function createWhisperFeature({
       .catch(e => debugLog('[Whisper] Failed to refresh dialog header:', e.message));
   }
 
+  // A player came or went: the headers of their dialogs show it at once.
+  // Without a username every dialog is refreshed (one of the bots came or
+  // went, so "Replies from" may change)
+  async function refreshPlayerDialogs(username = null) {
+    const playerKey = username ? String(username).toLowerCase() : null;
+    const channelIds = new Set();
+    for (const [key, channelId] of state.whisperChannels.entries()) {
+      if (!playerKey || key.split(':')[1] === playerKey) channelIds.add(channelId);
+    }
+    for (const channelId of channelIds) {
+      try {
+        const channel = await discordClient.channels.fetch(channelId);
+        if (channel?.isTextBased?.()) await refreshDialogHeader(channel, username);
+      } catch (e) {
+        if (e?.code === 10003) removeWhisperChannelMappings(channelId);
+        else debugLog('[Whisper] Failed to refresh dialog after a join or leave:', e.message);
+      }
+    }
+  }
+
   function touchDialog(channel) {
     const ttlMs = state.customDialogTTL.get(channel.id) || defaultTtlMs;
     state.whisperDeleteTimestamps.set(channel.id, Date.now() + ttlMs);
@@ -295,6 +330,162 @@ function createWhisperFeature({
       ...(via ? { footer: { text: `via ${via}` } } : {}),
       timestamp: new Date()
     }));
+  }
+
+  function saveQueuedWhispers() {
+    if (!outboxFile) return;
+    try {
+      fs.writeFileSync(outboxFile, JSON.stringify([...queuedWhispers.values()], null, 2));
+    } catch (e) {
+      console.error('[Whisper] Failed to save queued replies:', e.message);
+    }
+  }
+
+  function loadQueuedWhispers() {
+    if (!outboxFile) return;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(outboxFile, 'utf8').trim() || '[]');
+      queuedWhispers.clear();
+      for (const item of Array.isArray(parsed) ? parsed : []) {
+        if (item?.id && item.username && Array.isArray(item.texts)) queuedWhispers.set(item.id, item);
+      }
+    } catch (e) {
+      if (e.code !== 'ENOENT') console.error('[Whisper] Failed to load queued replies:', e.message);
+    }
+  }
+
+  function queuedCount(channelId) {
+    let count = 0;
+    for (const item of queuedWhispers.values()) if (item.channelId === channelId) count += 1;
+    return count;
+  }
+
+  // The bubble of a queued reply, in each of its states
+  function buildQueuedBubble(item, status, via = null) {
+    const text = formatMessage(item.texts.join('\n'));
+    const footers = {
+      waiting: item.reason === 'no_bot'
+        ? '⏳ Not sent yet: no bot is in game. It goes out when one sees the player online.'
+        : `⏳ Not sent yet: ${item.username} is offline. It goes out when they join.`,
+      sent: `✅ Sent when ${item.username} came online${via ? ` · via ${via}` : ''}`,
+      cancelled: '✖ Cancelled, not sent'
+    };
+    return {
+      author: {
+        name: `${item.senderName || 'You'} → ${item.username}`,
+        ...(item.senderIconUrl ? { icon_url: item.senderIconUrl } : {})
+      },
+      description: status === 'cancelled' ? `~~${text}~~` : text,
+      color: status === 'sent' ? OUTGOING_COLOR : 0x95A5A6,
+      footer: { text: footers[status] },
+      timestamp: new Date(status === 'waiting' ? item.createdAt : Date.now())
+    };
+  }
+
+  function buildQueuedComponents(item) {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`cancel_queued_whisper_${item.id}`)
+          .setLabel('Cancel')
+          .setStyle(ButtonStyle.Secondary)
+      )
+    ];
+  }
+
+  async function editQueuedBubble(item, status, via = null) {
+    try {
+      const channel = await discordClient.channels.fetch(item.channelId);
+      const message = await channel.messages.fetch(item.messageId);
+      await message.edit({ embeds: [buildQueuedBubble(item, status, via)], components: [] });
+      await refreshDialogHeader(channel);
+    } catch (e) {
+      debugLog('[Whisper] Failed to update a queued reply:', e.message);
+    }
+  }
+
+  // A reply that could not go out now: it is shown greyed out in the dialog
+  // and sent by deliverQueuedWhispers once the player is seen online
+  function queueOfflineWhisper(channel, { username, ownerId, sender, texts, reason = 'offline' }) {
+    return inChannelQueue(channel.id, async () => {
+      const item = {
+        id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        channelId: channel.id, messageId: null, ownerId, username,
+        texts: texts.filter(Boolean), reason,
+        senderName: sender?.name || null, senderIconUrl: sender?.iconUrl || null,
+        createdAt: Date.now()
+      };
+      queuedWhispers.set(item.id, item);
+      touchDialog(channel);
+      await upsertDialogHeader(channel, username).catch(() => {});
+      try {
+        const message = await channel.send({ embeds: [buildQueuedBubble(item, 'waiting')], components: buildQueuedComponents(item) });
+        item.messageId = message.id;
+      } finally {
+        saveQueuedWhispers();
+      }
+      return item;
+    });
+  }
+
+  // Sends what waited for this player, oldest first. A reply leaves the queue
+  // only once a bot has sent it; otherwise it waits for the next join
+  async function deliverQueuedWhispers(username) {
+    const playerKey = String(username || '').toLowerCase();
+    if (!playerKey || deliveringPlayers.has(playerKey)) return 0;
+    deliveringPlayers.add(playerKey);
+    let delivered = 0;
+    try {
+      const items = [...queuedWhispers.values()]
+        .filter(item => item.username.toLowerCase() === playerKey)
+        .sort((a, b) => a.createdAt - b.createdAt);
+      for (const item of items) {
+        if (!queuedWhispers.has(item.id)) continue;
+        const via = await sendWhisper(item.username, item.texts);
+        if (!via) break;
+        queuedWhispers.delete(item.id);
+        saveQueuedWhispers();
+        delivered += 1;
+        console.log(`[Whisper] Delivered a queued reply to ${item.username} via ${via}.`);
+        await editQueuedBubble(item, 'sent', via);
+      }
+    } finally {
+      deliveringPlayers.delete(playerKey);
+    }
+    return delivered;
+  }
+
+  // A join is followed by a short wait, so the player is fully in the game
+  function deliverQueuedWhispersSoon(username) {
+    const playerKey = String(username || '').toLowerCase();
+    if (![...queuedWhispers.values()].some(item => item.username.toLowerCase() === playerKey)) return;
+    clearTimeout(deliveryTimers.get(playerKey));
+    deliveryTimers.set(playerKey, setTimeout(() => {
+      deliveryTimers.delete(playerKey);
+      deliverQueuedWhispers(username).catch(e => console.error('[Whisper] Failed to deliver queued replies:', e.message));
+    }, deliverDelayMs));
+  }
+
+  // 'cancelled', 'forbidden' (not the author) or 'missing' (already sent or gone)
+  async function cancelQueuedWhisper(id, userId) {
+    const item = queuedWhispers.get(id);
+    if (!item) return 'missing';
+    if (item.ownerId && item.ownerId !== userId) return 'forbidden';
+    queuedWhispers.delete(id);
+    saveQueuedWhispers();
+    await editQueuedBubble(item, 'cancelled');
+    return 'cancelled';
+  }
+
+  function dropQueuedWhispersForChannel(channelId) {
+    let changed = false;
+    for (const [id, item] of queuedWhispers) {
+      if (item.channelId === channelId) {
+        queuedWhispers.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) saveQueuedWhispers();
   }
 
   function setDialogTtl(channel, ttlMs) {
@@ -394,6 +585,7 @@ function createWhisperFeature({
     }
 
     const ttlMs = state.customDialogTTL.get(channelId) || defaultTtlMs;
+    const waiting = queuedCount(channelId);
     const deleteAt = Date.now() + confirmGraceMs;
     state.whisperDeleteTimestamps.set(channelId, deleteAt);
     scheduleFinalDelete(channelId, confirmGraceMs);
@@ -402,7 +594,7 @@ function createWhisperFeature({
         content: `<@${ownerId}>`,
         embeds: [{
           title: 'Delete this dialog?',
-          description: `No messages for ${formatTtlMinutes(ttlMs)}. The channel will be deleted <t:${Math.floor(deleteAt / 1000)}:R> unless you keep it.`,
+          description: `No messages for ${formatTtlMinutes(ttlMs)}. The channel will be deleted <t:${Math.floor(deleteAt / 1000)}:R> unless you keep it.${waiting ? `\n⏳ ${waiting === 1 ? '1 reply is' : `${waiting} replies are`} still waiting for the player and will be cancelled with it.` : ''}`,
           color: 0xF1C40F
         }],
         components: buildDeletePromptComponents(channelId),
@@ -430,6 +622,7 @@ function createWhisperFeature({
     if (changed) saveWhisperChannels();
     dialogHeaders.delete(channelId);
     deletePrompts.delete(channelId);
+    dropQueuedWhispersForChannel(channelId);
     state.whisperDeleteTimestamps.delete(channelId);
     state.customDialogTTL.delete(channelId);
   }
@@ -712,6 +905,12 @@ function createWhisperFeature({
     postOutgoingDialogMessage,
     refreshDialogHeader,
     setDialogTtl,
+    refreshPlayerDialogs,
+    loadQueuedWhispers,
+    queueOfflineWhisper,
+    deliverQueuedWhispers,
+    deliverQueuedWhispersSoon,
+    cancelQueuedWhisper,
     keepDialog,
     resolveDialogOwnerId,
     restoreDialogTimers,

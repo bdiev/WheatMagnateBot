@@ -168,6 +168,86 @@ async function testIdleDialogAsksOwnerFirst() {
   assert.equal(state.whisperChannels.has('owner-1:steve'), false);
 }
 
+async function testHeaderFollowsJoinsAndLeaves() {
+  const dialog = fakeChannel('dialog-4');
+  const other = fakeChannel('dialog-5');
+  const state = emptyState();
+  state.whisperChannels.set('owner:bdiev_', 'dialog-4');
+  state.whisperChannels.set('owner:alex', 'dialog-5');
+  const online = new Set(['bdiev_', 'alex']);
+  const feature = dialogFeature(state, new Map([['dialog-4', dialog], ['dialog-5', other]]), {
+    describeDialog: username => ({ online: online.has(username.toLowerCase()), replyFrom: 'WheatMagnate' })
+  });
+  try {
+    await feature.postIncomingDialogMessage(dialog, { username: 'bdiev_', text: 'hi' });
+    await feature.postIncomingDialogMessage(other, { username: 'Alex', text: 'hey' });
+    const playerField = channel => channel.sent[0].embeds[0].fields[0].value;
+    assert.equal(playerField(dialog), '🟢 Online');
+
+    online.delete('bdiev_');
+    await feature.refreshPlayerDialogs('bdiev_');
+    assert.equal(playerField(dialog), '⚫ Offline', 'the header shows that the player left');
+    assert.equal(playerField(other), '🟢 Online', 'other dialogs are left alone');
+    assert.equal(dialog.sent[0].embeds[0].title, 'Dialog with bdiev_');
+  } finally {
+    feature.cancelWhisperCleanup('dialog-4');
+    feature.cancelWhisperCleanup('dialog-5');
+  }
+}
+
+async function testRepliesWaitForOfflinePlayer() {
+  const fs = require('node:fs');
+  const outboxFile = path.join(os.tmpdir(), `whisper-outbox-test-${process.pid}.json`);
+  fs.rmSync(outboxFile, { force: true });
+  const dialog = fakeChannel('dialog-6');
+  const state = emptyState();
+  state.whisperChannels.set('owner-1:steve', 'dialog-6');
+  const sent = [];
+  let botOnline = false;
+  const options = {
+    outboxFile,
+    deliverDelayMs: 10,
+    sendWhisper: async (username, texts) => {
+      if (!botOnline) return null;
+      sent.push(...texts.map(text => `${username}: ${text}`));
+      return 'WheatMagnate';
+    }
+  };
+  const feature = dialogFeature(state, new Map([['dialog-6', dialog]]), options);
+  try {
+    const first = await feature.queueOfflineWhisper(dialog, {
+      username: 'Steve', ownerId: 'owner-1', sender: { name: 'bdiev' }, texts: ['are you there?', 'need obsidian']
+    });
+    const second = await feature.queueOfflineWhisper(dialog, {
+      username: 'Steve', ownerId: 'owner-1', sender: { name: 'bdiev' }, texts: ['never mind']
+    });
+    const bubble = id => dialog.sent.find(message => message.id === id);
+    assert.match(bubble(first.messageId).embeds[0].footer.text, /^⏳ Not sent yet: Steve is offline/, 'a waiting reply says why it was not sent');
+    assert.equal(bubble(first.messageId).components[0].components[0].data.custom_id, `cancel_queued_whisper_${first.id}`);
+    assert.match(dialog.sent[0].embeds[0].fields[0].value, /⏳ 2 waiting to be sent/, 'the header counts waiting replies');
+    assert.equal(JSON.parse(fs.readFileSync(outboxFile, 'utf8')).length, 2, 'waiting replies survive a restart');
+
+    assert.equal(await feature.cancelQueuedWhisper(second.id, 'someone-else'), 'forbidden');
+    assert.equal(await feature.cancelQueuedWhisper(second.id, 'owner-1'), 'cancelled');
+    assert.equal(bubble(second.messageId).embeds[0].description, '~~never mind~~');
+
+    assert.equal(await feature.deliverQueuedWhispers('steve'), 0, 'nothing leaves while no bot can send it');
+    botOnline = true;
+    const restarted = dialogFeature(state, new Map([['dialog-6', dialog]]), options);
+    restarted.loadQueuedWhispers();
+    restarted.deliverQueuedWhispersSoon('Steve');
+    await wait(100);
+    assert.deepEqual(sent, ['Steve: are you there?', 'Steve: need obsidian'], 'the reply goes out when the player joins');
+    assert.match(bubble(first.messageId).embeds[0].footer.text, /^✅ Sent when Steve came online · via WheatMagnate/);
+    assert.deepEqual(bubble(first.messageId).components, []);
+    assert.deepEqual(JSON.parse(fs.readFileSync(outboxFile, 'utf8')), []);
+    restarted.cancelWhisperCleanup('dialog-6');
+  } finally {
+    feature.cancelWhisperCleanup('dialog-6');
+    fs.rmSync(outboxFile, { force: true });
+  }
+}
+
 async function run() {
   let deleted = false;
   const state = stateWithClaim();
@@ -212,6 +292,8 @@ async function run() {
   await testDialogHeaderAndBubbles();
   await testDialogTimersComeBackFromHeader();
   await testIdleDialogAsksOwnerFirst();
+  await testHeaderFollowsJoinsAndLeaves();
+  await testRepliesWaitForOfflinePlayer();
 
   console.log('Whisper claim tests passed.');
 }
