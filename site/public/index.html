@@ -113,6 +113,7 @@
               <button class="tab-button" type="button" data-tab="bot" role="menuitem">Bot Stats</button>
               <button class="tab-button" type="button" data-tab="kill-aura" role="menuitem">Kill Aura</button>
               <button class="tab-button" type="button" data-tab="obsidian" role="menuitem">Obsidian Farm</button>
+              <button class="tab-button" type="button" data-tab="stone-miner" role="menuitem">Stone Miner</button>
               <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
               <button class="tab-button" type="button" data-tab="players" role="menuitem">Player Stats</button>
               <button class="tab-button" type="button" data-tab="area-explorer" role="menuitem">Area Explorer</button>
@@ -696,6 +697,89 @@
               </div>
             </div>
           </section>
+        </section>
+      </section>
+
+      <section id="tab-stone-miner" class="tab-panel" data-panel="stone-miner">
+        <section id="stoneMinerStatsCarousel" class="stats-grid five obsidian-stats-grid stone-miner-stats-grid" data-loop-carousel>
+          <article class="stat">
+            <span class="stat-label">Total Mined</span>
+            <strong id="stoneMinerTotal">-</strong>
+            <small>all-time blocks</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Miner State</span>
+            <strong id="stoneMinerState">-</strong>
+            <small id="stoneMinerUpdated">last update: -</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Today</span>
+            <strong id="stoneMinerToday">-</strong>
+            <small id="stoneMinerTodayTimezone">calendar day</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Rate</span>
+            <strong id="stoneMinerRate">-/h</strong>
+            <small id="stoneMinerSession">current session average</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Pickaxe Average</span>
+            <strong id="stoneMinerPickaxeAverage">-</strong>
+            <small id="stoneMinerRetiredPickaxes">retired pickaxes: -</small>
+          </article>
+        </section>
+
+        <section id="stoneMinerAdminCarousel" class="farm-admin-grid admin-only" data-loop-carousel hidden>
+          <section class="panel admin-command-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Miner Power</h2>
+                <p id="stoneMinerStatus" aria-live="polite">Start or stop mining the generator.</p>
+              </div>
+            </div>
+            <div class="admin-command-actions">
+              <button id="stoneMinerToggleButton" type="button" data-bot-command="stone_miner_toggle">Start</button>
+            </div>
+          </section>
+
+          <section class="panel admin-command-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Learn Blocks</h2>
+                <p id="stoneMinerLearnStatus">Break the stone next to the bot.</p>
+              </div>
+            </div>
+            <div class="admin-command-actions">
+              <button id="stoneMinerLearnButton" class="ghost-button" type="button" data-bot-command="stone_miner_learn">Learn</button>
+            </div>
+          </section>
+
+          <section class="panel admin-command-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Supplies</h2>
+                <p title="Mined blocks are dropped at the bot's feet for the collector.">Pickaxes and food come from the nearest chest.</p>
+              </div>
+            </div>
+            <div class="admin-command-actions">
+              <button id="stoneMinerClearButton" class="ghost-button" type="button" data-bot-command="stone_miner_clear">Clear Blocks</button>
+            </div>
+          </section>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Mined Stone</h2>
+              <p>Blocks mined by hour, day, or month.</p>
+            </div>
+            <div class="chart-controls" data-chart-controls="stoneMinerChart" role="group" aria-label="Stone history range: hours show 7 days, days show 90 days, and months show full history">
+              <button class="chart-range-button" type="button" data-chart-range="hours">Hours</button>
+              <button class="chart-range-button active" type="button" data-chart-range="days">Days</button>
+              <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+            </div>
+          </div>
+          <div class="chart-scroll player-chart-loading" aria-busy="true"><div class="player-chart-skeleton" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><canvas id="stoneMinerChart" class="chart tall" height="300"></canvas></div>
         </section>
       </section>
 

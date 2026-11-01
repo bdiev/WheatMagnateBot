@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const { createObsidianFarm } = require('../../features/obsidianFarm');
 const { createKillAuraFeature } = require('../../features/killAura');
 const { createFollowFeature } = require('../../features/follow');
+const { createStoneMiner } = require('../../features/stoneMiner');
 const { PEARL_LOADER_ROLE } = require('../../features/pearlLoader');
 
 function pearlLoaderOnlyModules() {
@@ -14,6 +15,7 @@ function pearlLoaderOnlyModules() {
   const obsidianStatus = () => ({ enabled:false,desiredEnabled:false,running:false,configured:false });
   const killAuraStatus = () => ({ enabled:false,desiredEnabled:false,selectedMobs:[] });
   const followStatus = () => ({ enabled:false,desiredEnabled:false,targetUsername:null });
+  const stoneMinerStatus = () => ({ enabled:false,desiredEnabled:false,running:false,learning:false,blocks:[],blockCount:0 });
   return {
     obsidianFarm: {
       attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, suspend:obsidianStatus,
@@ -31,6 +33,11 @@ function pearlLoaderOnlyModules() {
     follow: {
       attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, stop:followStatus,
       start:() => restricted('Follow'), getStatus:followStatus, findPlayerEntity:() => null
+    },
+    stoneMiner: {
+      attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, stop:stoneMinerStatus,
+      start:() => restricted('Stone Miner'), setLearning:enabled => enabled ? restricted('Stone Miner') : stoneMinerStatus(),
+      clearBlocks:stoneMinerStatus, getStatus:stoneMinerStatus
     }
   };
 }
@@ -185,6 +192,8 @@ function createModulesForBot(context, {
   obsidianFarmFactory = createObsidianFarm,
   killAuraFactory = createKillAuraFeature,
   followFactory = createFollowFeature,
+  stoneMinerFactory = createStoneMiner,
+  stoneMinerHooks = {},
   notify = null,
   systemLogger = null,
   obsidianState = null,
@@ -222,7 +231,13 @@ function createModulesForBot(context, {
       obsidianState
     ),
     killAura,
-    follow: ownFollow(context, follow, path.join(accountRoot, 'follow.json'))
+    follow: ownFollow(context, follow, path.join(accountRoot, 'follow.json')),
+    stoneMiner: stoneMinerFactory({
+      stateFile: path.join(accountRoot, 'stone-miner.json'),
+      log: message => console.log(`${message} [${context.username}]`),
+      onChange: () => context.emit?.('status', context.getStatus?.()),
+      ...stoneMinerHooks
+    })
   };
 
   if (context.isPrimary) {

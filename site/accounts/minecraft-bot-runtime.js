@@ -15,7 +15,7 @@ const {
   createFarmPingMonitor
 } = require('../../features/obsidianFarm/ping-protection');
 
-const TASKS = new Set(['obsidian','observe','follow','kill_aura','pearl_loader','chat','idle','paused']);
+const TASKS = new Set(['obsidian','observe','follow','kill_aura','stone_miner','pearl_loader','chat','idle','paused']);
 const STABLE_CONNECTION_RESET_MS = 60_000;
 // Keep this list deliberately conservative. Raw meat, spider eyes and poisonous
 // potatoes are technically consumable, but are a poor choice for an unattended bot.
@@ -92,6 +92,7 @@ class MinecraftBotRuntime extends BotContext {
     this.obsidianFarm = this.modules.obsidianFarm;
     this.killAura = this.modules.killAura;
     this.follow = this.modules.follow;
+    this.stoneMiner = this.modules.stoneMiner;
   }
 
   canResumeFarmAt(dateParts) {
@@ -381,7 +382,7 @@ class MinecraftBotRuntime extends BotContext {
             ? 'obsidian'
             : this.killAura?.getStatus?.().enabled
               ? 'kill_aura'
-              : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
+              : this.follow?.getStatus?.().enabled ? 'follow' : this.stoneMiner?.getStatus?.().enabled ? 'stone_miner' : 'idle';
         }
         this.emit('status', this.getStatus());
         this.startAfkMonitors();
@@ -469,6 +470,8 @@ class MinecraftBotRuntime extends BotContext {
     this.clearRuntimeIntervals();
     this.killAura?.setEnabled?.(false);
     this.follow?.stop?.();
+    // Only the loop: an enabled Stone Miner starts again after the restart
+    this.stoneMiner?.detachBot?.();
     // Stop only the physical loop. Keep desiredEnabled intact so the
     // replacement process can reopen the protection lever and resume the farm
     // after its Minecraft connection and chunks are ready.
@@ -521,7 +524,7 @@ class MinecraftBotRuntime extends BotContext {
       ? 'kill_aura'
       : this.obsidianFarm?.getStatus?.().enabled
         ? 'obsidian'
-        : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
+        : this.follow?.getStatus?.().enabled ? 'follow' : this.stoneMiner?.getStatus?.().enabled ? 'stone_miner' : 'idle';
     const status = this.getStatus();
     this.emit('status', status);
     return status;
@@ -548,6 +551,7 @@ class MinecraftBotRuntime extends BotContext {
     if (enabled) {
       this.obsidianFarm?.suspend?.();
       this.follow?.stop?.();
+      this.stoneMiner?.stop?.();
     }
     const status = this.killAura.setEnabled(enabled, this.bot);
     this.task = status.enabled ? 'kill_aura' : 'idle';
@@ -599,6 +603,7 @@ class MinecraftBotRuntime extends BotContext {
       assertStillStarting('barrel');
       this.killAura?.setEnabled(false);
       this.follow?.stop?.();
+      this.stoneMiner?.stop?.();
       const farmStatus = this.obsidianFarm.start();
       if (!farmStatus?.enabled) throw new Error('Obsidian Farm cannot start: farm loop is not enabled.');
       this.task = 'obsidian';
@@ -627,7 +632,7 @@ class MinecraftBotRuntime extends BotContext {
     this.nextObsidianResumeAt = 0;
     this.task = this.killAura?.getStatus?.().enabled
       ? 'kill_aura'
-      : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
+      : this.follow?.getStatus?.().enabled ? 'follow' : this.stoneMiner?.getStatus?.().enabled ? 'stone_miner' : 'idle';
     this.status = this.bot?.entity ? 'connected' : 'stopped';
     this.lastError = null;
     // The farm loop and reconnect intent are already disabled. Publish that
@@ -647,6 +652,7 @@ class MinecraftBotRuntime extends BotContext {
   startFollowing(username, options) {
     this.obsidianFarm?.suspend?.();
     this.killAura?.setEnabled(false);
+    this.stoneMiner?.stop?.();
     const result = this.follow.start(username, options);
     this.task = 'follow';
     this.emit('status', this.getStatus());
@@ -657,6 +663,45 @@ class MinecraftBotRuntime extends BotContext {
     if (this.task === 'follow') this.task = 'idle';
     this.emit('status', this.getStatus());
     return this.follow.getStatus();
+  }
+  // Learning, starting and stopping the generator miner. Starting it takes
+  // the bot off the other tasks, as they would all move it
+  setStoneMinerLearning(enabled) {
+    if (!this.stoneMiner) throw new Error('Stone Miner is unavailable for this runtime.');
+    if (enabled) {
+      this.obsidianFarm?.suspend?.();
+      this.killAura?.setEnabled(false);
+      this.follow?.stop?.();
+    }
+    const status = this.stoneMiner.setLearning(enabled);
+    if (this.task === 'stone_miner') this.task = 'idle';
+    this.emit('status', this.getStatus());
+    return status;
+  }
+  startStoneMiner() {
+    if (!this.stoneMiner) throw new Error('Stone Miner is unavailable for this runtime.');
+    if (this.obsidianFarm?.getStatus?.().desiredEnabled) {
+      throw new Error('Stop the Obsidian Farm before starting the Stone Miner.');
+    }
+    this.killAura?.setEnabled(false);
+    this.follow?.stop?.();
+    const status = this.stoneMiner.start();
+    this.task = 'stone_miner';
+    this.emit('status', this.getStatus());
+    return status;
+  }
+  stopStoneMiner() {
+    if (!this.stoneMiner) throw new Error('Stone Miner is unavailable for this runtime.');
+    const status = this.stoneMiner.stop();
+    if (this.task === 'stone_miner') this.task = 'idle';
+    this.emit('status', this.getStatus());
+    return status;
+  }
+  clearStoneMinerBlocks() {
+    if (!this.stoneMiner) throw new Error('Stone Miner is unavailable for this runtime.');
+    const status = this.stoneMiner.clearBlocks();
+    this.emit('status', this.getStatus());
+    return status;
   }
   isCritical() { return Boolean(this.criticalOperation); }
   getStatus() {
@@ -686,8 +731,10 @@ class MinecraftBotRuntime extends BotContext {
       modules:{
         obsidianFarm:obsidian,
         killAura:this.killAura?.getStatus?.() || null,
-        follow:this.follow?.getStatus?.() || null
+        follow:this.follow?.getStatus?.() || null,
+        stoneMiner:this.stoneMiner?.getStatus?.() || null
       },
+      stoneMiner:this.stoneMiner?.getStatus?.() || null,
       obsidian,
       killAura:this.killAura?.getStatus?.() || null,
       followTarget:this.follow?.getStatus?.().targetUsername || null,

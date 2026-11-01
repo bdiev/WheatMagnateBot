@@ -3666,6 +3666,122 @@ async function getKillAuraStats(currentUser, url) {
   };
 }
 
+async function getStoneMinerStats(currentUser, url) {
+  assertDatabase();
+  const scoped = await scopedAccountRuntime(url, currentUser);
+  const accountId = scoped?.account?.id || DEFAULT_MINECRAFT_ACCOUNT_ID;
+  const timezone = await getAccountTimezone(currentUser.id);
+  const [totalsResult, pickaxeResult, defaultBotResult, hourlyResult, dailyResult, monthlyResult] = await Promise.all([
+    pool.query(`
+      SELECT COALESCE(SUM(blocks),0)::bigint AS total,
+             COALESCE(SUM(blocks) FILTER (
+               WHERE (bucket AT TIME ZONE $2)::date=(NOW() AT TIME ZONE $2)::date
+             ),0)::bigint AS today
+      FROM stone_miner_hourly_blocks
+      WHERE account_id=$1::uuid
+    `, [accountId, timezone]),
+    pool.query(`
+      SELECT COUNT(*)::int AS retired,
+             AVG(blocks_mined) FILTER (WHERE count_in_average) AS average,
+             COUNT(*) FILTER (WHERE count_in_average)::int AS averaged
+      FROM stone_miner_retired_pickaxes
+      WHERE account_id=$1::uuid
+    `, [accountId]),
+    scoped
+      ? Promise.resolve({ rows: [] })
+      : pool.query('SELECT status,observed_at FROM bot_status_snapshots WHERE id=1'),
+    pool.query(`
+      WITH buckets AS (
+        SELECT generate_series(
+          date_trunc('hour',NOW()-INTERVAL '167 hours'),
+          date_trunc('hour',NOW()),
+          INTERVAL '1 hour'
+        ) AS bucket
+      )
+      SELECT buckets.bucket,COALESCE(history.blocks,0)::bigint AS blocks
+      FROM buckets
+      LEFT JOIN stone_miner_hourly_blocks history
+        ON history.account_id=$1::uuid AND history.bucket=buckets.bucket
+      ORDER BY buckets.bucket
+    `, [accountId]),
+    pool.query(`
+      WITH dates AS (
+        SELECT generate_series(
+          (NOW() AT TIME ZONE $2)::date-89,
+          (NOW() AT TIME ZONE $2)::date,
+          INTERVAL '1 day'
+        )::date AS bucket
+      ), totals AS (
+        SELECT (bucket AT TIME ZONE $2)::date AS bucket,SUM(blocks)::bigint AS blocks
+        FROM stone_miner_hourly_blocks
+        WHERE account_id=$1::uuid
+          AND bucket>=NOW()-INTERVAL '91 days'
+        GROUP BY (bucket AT TIME ZONE $2)::date
+      )
+      SELECT dates.bucket::text AS bucket,COALESCE(totals.blocks,0)::bigint AS blocks
+      FROM dates LEFT JOIN totals USING(bucket)
+      ORDER BY dates.bucket
+    `, [accountId, timezone]),
+    pool.query(`
+      WITH bounds AS (
+        SELECT COALESCE(
+          MIN(date_trunc('month',bucket AT TIME ZONE $2)),
+          date_trunc('month',NOW() AT TIME ZONE $2)
+        ) AS first_month
+        FROM stone_miner_hourly_blocks
+        WHERE account_id=$1::uuid
+      ), months AS (
+        SELECT generate_series(
+          bounds.first_month,
+          date_trunc('month',NOW() AT TIME ZONE $2),
+          INTERVAL '1 month'
+        )::date AS bucket
+        FROM bounds
+      ), totals AS (
+        SELECT date_trunc('month',bucket AT TIME ZONE $2)::date AS bucket,SUM(blocks)::bigint AS blocks
+        FROM stone_miner_hourly_blocks
+        WHERE account_id=$1::uuid
+        GROUP BY date_trunc('month',bucket AT TIME ZONE $2)::date
+      )
+      SELECT months.bucket::text AS bucket,COALESCE(totals.blocks,0)::bigint AS blocks
+      FROM months LEFT JOIN totals USING(bucket)
+      ORDER BY months.bucket
+    `, [accountId, timezone])
+  ]);
+  const runtimeBot = scoped?.bot || defaultBotResult.rows[0]?.status || {};
+  const miner = runtimeBot.stoneMiner || runtimeBot.modules?.stoneMiner || {};
+  const connected = Boolean(runtimeBot.connected ?? runtimeBot.status === 'online');
+  const pickaxes = pickaxeResult.rows[0] || {};
+  return {
+    accountId,
+    timezone,
+    state: {
+      enabled: Boolean(miner.enabled),
+      running: Boolean(miner.running && connected),
+      learning: Boolean(miner.learning && connected),
+      connected,
+      phase: miner.phase || 'idle',
+      blockCount: toInt(miner.blockCount),
+      sessionMined: toInt(miner.sessionMined),
+      sessionStartedAt: miner.sessionStartedAt || null,
+      lastErrorMessage: miner.lastErrorMessage || null,
+      observedAt: scoped?.observedAt || defaultBotResult.rows[0]?.observed_at || null
+    },
+    totalMined: toInt(totalsResult.rows[0]?.total),
+    todayMined: toInt(totalsResult.rows[0]?.today),
+    pickaxes: {
+      retired: toInt(pickaxes.retired),
+      averaged: toInt(pickaxes.averaged),
+      averageBlocks: pickaxes.average == null ? null : Math.round(Number(pickaxes.average))
+    },
+    history: {
+      hourly: hourlyResult.rows.map(row => ({ bucket: row.bucket, value: toInt(row.blocks) })),
+      daily: dailyResult.rows.map(row => ({ bucket: row.bucket, label: String(row.bucket).slice(5), value: toInt(row.blocks) })),
+      monthly: monthlyResult.rows.map(row => ({ bucket: row.bucket, label: String(row.bucket).slice(0, 7), value: toInt(row.blocks) }))
+    }
+  };
+}
+
 async function handleAccountsApi(req, currentUser, url) {
   const collection = url.pathname === '/api/accounts';
   const reorder = url.pathname === '/api/accounts/reorder';
@@ -5592,6 +5708,9 @@ async function queueAdminBotCommand(currentUser, body) {
     'kill_aura_targets',
     'kill_aura_range',
     'kill_aura_criticals_toggle',
+    'stone_miner_learn',
+    'stone_miner_toggle',
+    'stone_miner_clear',
     'child_toggle',
     'child_say',
     'gemini_toggle',
@@ -5640,6 +5759,9 @@ async function queueAdminBotCommand(currentUser, body) {
     payload.targets = normalizeKillAuraTargets(payload.targets);
   }
   if (commandType === 'obsidian_toggle' && typeof payload.enabled !== 'boolean') {
+    delete payload.enabled;
+  }
+  if (['stone_miner_learn', 'stone_miner_toggle'].includes(commandType) && typeof payload.enabled !== 'boolean') {
     delete payload.enabled;
   }
 
@@ -6051,7 +6173,9 @@ async function getPushSettings(currentUser) {
   };
 }
 
-const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
+const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
+
+const NAVIGATION_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian' });
 
 function normalizeNavigationPreferences(input = {}) {
   const rawVisibility = input.visibility && typeof input.visibility === 'object' && !Array.isArray(input.visibility) ? input.visibility : {};
@@ -6061,7 +6185,13 @@ function normalizeNavigationPreferences(input = {}) {
   }
   const requestedOrder = Array.isArray(input.order) ? input.order.map(String) : [];
   const order = requestedOrder.filter((section, index) => NAVIGATION_SECTION_ORDER.includes(section) && requestedOrder.indexOf(section) === index);
-  for (const section of NAVIGATION_SECTION_ORDER) if (!order.includes(section)) order.push(section);
+  for (const section of NAVIGATION_SECTION_ORDER) {
+    if (order.includes(section)) continue;
+    // A section added later goes next to its neighbour in a saved order
+    const after = NAVIGATION_INSERT_AFTER[section];
+    if (after && order.includes(after)) order.splice(order.indexOf(after) + 1, 0, section);
+    else order.push(section);
+  }
   return { visibility, order };
 }
 
@@ -6544,6 +6674,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/kill-aura' && req.method === 'GET') {
       sendJson(res, 200, await getKillAuraStats(currentUser, url));
+      return;
+    }
+    if (url.pathname === '/api/stone-miner' && req.method === 'GET') {
+      sendJson(res, 200, await getStoneMinerStats(currentUser, url));
       return;
     }
     if (url.pathname === '/api/obsidian/live' && req.method === 'GET') {

@@ -32,6 +32,9 @@ const state = {
     killAuraDaily: [],
     killAuraHourly: [],
     killAuraMonthly: [],
+    stoneMinerHourly: [],
+    stoneMinerDaily: [],
+    stoneMinerMonthly: [],
     obsidianAccounts: [],
     obsidianAnnotations: [],
     obsidianDaily: [],
@@ -172,6 +175,7 @@ const state = {
   pushSubscriptionNeedsRepair: false,
   pushRepairDevice: null,
   killAuraData: null,
+  stoneMinerData: null,
   killAuraSelectedMobs: new Set(),
   killAuraModalSelectionSnapshot: new Set(),
   killAuraTargetsDirty: false,
@@ -216,6 +220,7 @@ const state = {
   chartRanges: {
     chatHourlyChart: 'hours',
     killAuraKillsChart: 'hours',
+    stoneMinerChart: 'days',
     obsidianDailyChart: 'days',
     tpsHourlyChart: 'hours',
     averageOnlineChart: 'hours'
@@ -247,6 +252,7 @@ const NAV_SECTION_INFO = Object.freeze({
   bot: ['Bot Stats', 'Connection, health, gear and inventory'],
   'kill-aura': ['Kill Aura', 'Mob targets and combat statistics'],
   obsidian: ['Obsidian Farm', 'Farm controls and analytics'],
+  'stone-miner': ['Stone Miner', 'Generator mining and statistics'],
   server: ['Server Stats', 'TPS and server activity'],
   players: ['Player Stats', 'Profiles and activity'],
   'area-explorer': ['Area Explorer', 'Bases, loot and signs the explorer mod found'],
@@ -255,7 +261,7 @@ const NAV_SECTION_INFO = Object.freeze({
   'child-ai': ['Child AI', 'Learning and memory administration'],
   admin: ['Admin', 'Administrative controls']
 });
-const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
+const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
 let dashboardBrandLastScrollY = Math.max(0, window.scrollY);
 let dashboardBrandScrollFrame = null;
 
@@ -1477,7 +1483,7 @@ function randomUniqueAccountColor() {
 
 function applyAccountTabScope(account) {
   const restricted = Boolean(account && !account.isDefault);
-  const allowed = new Set(['chat','bot','kill-aura','obsidian','area-explorer','admin']);
+  const allowed = new Set(['chat','bot','kill-aura','obsidian','stone-miner','area-explorer','admin']);
   $$('.tab-button[data-tab]').forEach(button => button.classList.toggle('account-tab-restricted',restricted && !allowed.has(button.dataset.tab)));
   // Role and the user's Navigation choices decide which tabs are shown.
   applyNavigationVisibility();
@@ -1562,11 +1568,13 @@ async function selectAccount(accountId) {
   state.adminControlToken = null;
   state.adminControlLoading = false;
   state.killAuraData = null;
+  state.stoneMinerData = null;
   state.killAuraSelectedMobs = new Set();
   state.killAuraTargetsDirty = false;
   resetKillAuraRangeEditor();
   state.obsidianCoordinateEditorOpen = false;
   ['killAuraKillsChart', 'obsidianDailyChart', 'tpsHourlyChart'].forEach(chartId => setChartLoading(chartId, true));
+  setChartLoading('stoneMinerChart', true);
   if (!state.chatContextMessageId && !state.chatSearchQuery) setChartLoading('chatHourlyChart', true);
   closeWhisperDialog();
   state.whisperPlayers = [];
@@ -1881,6 +1889,7 @@ function applyCurrentUser(user) {
     state.adminControlState = null;
     state.adminControlRefreshedAt = 0;
     state.killAuraData = null;
+  state.stoneMinerData = null;
     state.killAuraSelectedMobs = new Set();
     state.killAuraTargetsDirty = false;
     resetKillAuraRangeEditor();
@@ -1952,12 +1961,26 @@ function loadNavigationVisibility() {
   }
 }
 
+// A tab added later goes next to its neighbour in a saved order
+const NAV_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian' });
+
+function completeNavigationOrder(order) {
+  const complete = [...order];
+  for (const tab of NAV_DEFAULT_ORDER) {
+    if (complete.includes(tab)) continue;
+    const after = NAV_INSERT_AFTER[tab];
+    if (after && complete.includes(after)) complete.splice(complete.indexOf(after) + 1, 0, tab);
+    else complete.push(tab);
+  }
+  return complete;
+}
+
 function loadNavigationOrder() {
   if (state.navigationPreferences) return [...state.navigationPreferences.order];
   try {
     const saved = JSON.parse(localStorage.getItem(navigationOrderStorageKey()) || '[]');
     const valid = Array.isArray(saved) ? saved.filter((tab, index) => NAV_DEFAULT_ORDER.includes(tab) && saved.indexOf(tab) === index) : [];
-    return [...valid, ...NAV_DEFAULT_ORDER.filter(tab => !valid.includes(tab))];
+    return completeNavigationOrder(valid);
   } catch {
     return [...NAV_DEFAULT_ORDER];
   }
@@ -1966,8 +1989,9 @@ function loadNavigationOrder() {
 function cacheNavigationPreferences(visibility, order) {
   const safeVisibility = visibility && typeof visibility === 'object' && !Array.isArray(visibility) ? { ...visibility } : {};
   const requestedOrder = Array.isArray(order) ? order : [];
-  const safeOrder = requestedOrder.filter((tab, index) => NAV_DEFAULT_ORDER.includes(tab) && requestedOrder.indexOf(tab) === index);
-  for (const tab of NAV_DEFAULT_ORDER) if (!safeOrder.includes(tab)) safeOrder.push(tab);
+  const safeOrder = completeNavigationOrder(
+    requestedOrder.filter((tab, index) => NAV_DEFAULT_ORDER.includes(tab) && requestedOrder.indexOf(tab) === index)
+  );
   state.navigationPreferences = { visibility: safeVisibility, order: safeOrder };
   localStorage.setItem(navigationVisibilityStorageKey(), JSON.stringify(safeVisibility));
   localStorage.setItem(navigationOrderStorageKey(), JSON.stringify(safeOrder));
@@ -2291,6 +2315,7 @@ function setActiveTab(tab) {
   }
   if (tab === 'child-ai') loadChildAiAdmin();
   if (tab === 'kill-aura') loadKillAura();
+  if (tab === 'stone-miner') loadStoneMiner().catch(error => setBanner(`Could not load Stone Miner: ${error.message}`));
   if (tab === 'area-explorer') loadAreaExplorer().catch(error => setBanner(`Could not load Area Explorer: ${error.message}`));
   if (tab === 'chat') ensureInitialChatScroll();
   if (tab === 'players') {
@@ -3277,6 +3302,7 @@ function getChartZoom(id) {
 const CHART_TAB_BY_ID = Object.freeze({
   chatHourlyChart: 'chat',
   killAuraKillsChart: 'kill-aura',
+  stoneMinerChart: 'stone-miner',
   obsidianDailyChart: 'obsidian',
   tpsHourlyChart: 'server',
   averageOnlineChart: 'players'
@@ -3352,6 +3378,17 @@ function drawChartById(chartId) {
           : hourlyKills.map(localizedChartItem);
       drawBarChart($('#killAuraKillsChart'), killHistory, {
         tooltip: item => `${item.label}: ${formatNumber(item.value)} ${Number(item.value) === 1 ? 'kill' : 'kills'}`
+      });
+      break;
+    }
+    case 'stoneMinerChart': {
+      const history = range === 'months'
+        ? state.charts.stoneMinerMonthly || []
+        : range === 'days'
+          ? state.charts.stoneMinerDaily || []
+          : (state.charts.stoneMinerHourly || []).map(localizedChartItem);
+      drawBarChart($('#stoneMinerChart'), history, {
+        tooltip: item => `${item.label}: ${formatNumber(item.value)} ${Number(item.value) === 1 ? 'block' : 'blocks'}`
       });
       break;
     }
@@ -11965,6 +12002,85 @@ function handleWhitelistSuggestionClick(event) {
   updateWhitelistControl();
 }
 
+const STONE_MINER_PHASES = {
+  mining: 'Mining',
+  waiting: 'Waiting for stone to grow',
+  restocking: 'Taking a pickaxe or food',
+  dropping: 'Dropping mined blocks',
+  eating: 'Eating',
+  returning: 'Walking back to the generator',
+  retrying: 'Retrying'
+};
+
+function renderStoneMinerControl(miner) {
+  const status = $('#stoneMinerStatus');
+  const learnStatus = $('#stoneMinerLearnStatus');
+  const learnButton = $('#stoneMinerLearnButton');
+  const toggleButton = $('#stoneMinerToggleButton');
+  const clearButton = $('#stoneMinerClearButton');
+  if (!status) return;
+  const connected = Boolean(miner?.connected);
+  const blocks = Number(miner?.blockCount) || 0;
+  const blocksText = `${formatNumber(blocks)} ${blocks === 1 ? 'block' : 'blocks'}`;
+  let text;
+  if (!miner) text = 'Not available for this bot.';
+  else if (miner.enabled && !connected) text = 'On · starts when the bot is in game.';
+  else if (miner.enabled) text = `${STONE_MINER_PHASES[miner.phase] || 'Starting'}.`;
+  else text = blocks ? 'Stopped.' : 'Learn the generator blocks first.';
+  if (miner?.lastErrorMessage && miner.enabled) text = miner.lastErrorMessage;
+  status.textContent = text;
+  status.title = text;
+  if (learnStatus) {
+    learnStatus.textContent = miner?.learning
+      ? `Learning · ${blocksText}. Break the stone.`
+      : blocks ? `${blocksText} learned.` : 'Break the stone next to the bot.';
+  }
+  if (learnButton) {
+    learnButton.textContent = miner?.learning ? 'Done Learning' : 'Learn';
+    learnButton.disabled = !miner || (!miner.learning && !connected);
+  }
+  if (toggleButton) {
+    toggleButton.textContent = miner?.enabled ? 'Stop Miner' : 'Start Miner';
+    toggleButton.classList.toggle('danger-button', Boolean(miner?.enabled));
+    toggleButton.disabled = !miner || (!miner.enabled && !blocks);
+  }
+  if (clearButton) clearButton.disabled = !miner || !blocks;
+}
+
+function renderStoneMiner(payload = {}) {
+  state.stoneMinerData = payload;
+  state.charts.stoneMinerHourly = payload.history?.hourly || [];
+  state.charts.stoneMinerDaily = payload.history?.daily || [];
+  state.charts.stoneMinerMonthly = payload.history?.monthly || [];
+  setChartLoading('stoneMinerChart', false);
+  const miner = payload.state || {};
+  const label = miner.learning
+    ? 'Learning'
+    : miner.running ? 'Mining' : miner.enabled ? 'Waiting' : 'Stopped';
+  $('#stoneMinerState').textContent = label;
+  $('#stoneMinerUpdated').textContent = `last update: ${formatDate(miner.observedAt)}`;
+  setRollingNumber('#stoneMinerTotal', payload.totalMined || 0);
+  setRollingNumber('#stoneMinerToday', payload.todayMined || 0);
+  $('#stoneMinerTodayTimezone').textContent = `${payload.timezone || 'local'} calendar day`;
+  const startedAt = Date.parse(miner.sessionStartedAt || '');
+  const hours = Number.isFinite(startedAt) ? (Date.now() - startedAt) / 3_600_000 : 0;
+  const rate = miner.running && hours > 0 ? Math.round((miner.sessionMined || 0) / Math.max(hours, 1 / 60)) : 0;
+  $('#stoneMinerRate').textContent = `${formatNumber(rate)}/h`;
+  $('#stoneMinerSession').textContent = miner.running
+    ? `${formatNumber(miner.sessionMined || 0)} this session`
+    : 'current session average';
+  const pickaxes = payload.pickaxes || {};
+  $('#stoneMinerPickaxeAverage').textContent = pickaxes.averageBlocks == null ? '-' : formatNumber(pickaxes.averageBlocks);
+  $('#stoneMinerRetiredPickaxes').textContent = `retired pickaxes: ${formatNumber(pickaxes.retired || 0)}`;
+  renderStoneMinerControl(miner);
+  requestAnimationFrame(() => drawChartById('stoneMinerChart'));
+}
+
+async function loadStoneMiner() {
+  if (!state.currentUser) return;
+  renderStoneMiner(await fetchJson('/api/stone-miner'));
+}
+
 function renderAdminControlState(payload = {}) {
   state.adminControlState = payload;
   const settings = payload.settings || {};
@@ -12177,6 +12293,11 @@ async function handleAdminBotCommand(event) {
       enabled: !(farm.enabled || farm.desiredEnabled || farm.starting || state.adminControlState?.bot?.task === 'obsidian')
     };
   }
+  if (commandType === 'stone_miner_learn' || commandType === 'stone_miner_toggle') {
+    const miner = state.stoneMinerData?.state || {};
+    body.payload = { enabled: !(commandType === 'stone_miner_learn' ? miner.learning : miner.enabled) };
+  }
+  if (commandType === 'stone_miner_clear' && !confirm('Forget the Stone Miner blocks? It stops until you teach it again.')) return;
   if (commandType === 'obsidian_reset_coordinates') {
     const hasCoordinates = Boolean(state.adminControlState?.bot?.obsidian?.config);
     if (!hasCoordinates) {
@@ -12214,6 +12335,7 @@ async function handleAdminBotCommand(event) {
     loadAdminControlState({ force: true }).catch(() => {});
     Promise.all([loadAll(), loadAdminSystemLogs()]).catch(() => {});
     scheduleAdminControlRefresh();
+    if (commandType.startsWith('stone_miner_')) loadStoneMiner().catch(() => {});
     if (submitsKillAuraTargets) {
       setTimeout(() => {
         state.killAuraTargetsDirty = false;
@@ -13341,6 +13463,7 @@ async function refreshLiveDashboard() {
     renderSupplies('#inventorySupplies', payload.supplies?.inventory);
     renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);
     if (liveObsidian) renderLiveObsidian(liveObsidian);
+    if (state.activeTab === 'stone-miner') loadStoneMiner().catch(() => {});
   } catch {
     // SSE and the periodic full dashboard refresh remain as fallbacks.
   } finally {
@@ -13558,6 +13681,7 @@ async function loadAll({ force = false, switchGeneration = state.accountSwitchGe
         }),
         fetchJson('/api/bot-stats', { signal }).then(renderIfCurrent(renderBotStats)),
         fetchJson('/api/kill-aura', { signal }).then(renderIfCurrent(renderKillAura)),
+        fetchJson('/api/stone-miner', { signal }).then(renderIfCurrent(renderStoneMiner)),
         Promise.all([ensureItemIcons(), fetchJson(obsidianStatsPath(), { signal })]).then(([, payload]) => {
           if (!isCurrentSync()) return;
           if (hasActiveTextSelection()) {

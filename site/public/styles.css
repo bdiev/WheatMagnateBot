@@ -9475,7 +9475,9 @@ body.modal-open { overflow:hidden; }
 
   #tab-server .server-stats-grid,
   #tab-obsidian .obsidian-stats-grid,
-  #tab-obsidian .farm-admin-grid[data-loop-carousel] {
+  #tab-obsidian .farm-admin-grid[data-loop-carousel],
+  #tab-stone-miner .obsidian-stats-grid,
+  #tab-stone-miner .farm-admin-grid[data-loop-carousel] {
     display: flex;
   }
 
@@ -9502,32 +9504,38 @@ body.modal-open { overflow:hidden; }
       box-shadow 240ms ease;
   }
 
-  #tab-obsidian .farm-admin-grid[data-loop-carousel] .panel {
+  #tab-obsidian .farm-admin-grid[data-loop-carousel] .panel,
+  #tab-stone-miner .farm-admin-grid[data-loop-carousel] .panel {
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto;
     height: 118px;
   }
 
-  #tab-obsidian .farm-admin-grid[data-loop-carousel] .panel-head {
+  #tab-obsidian .farm-admin-grid[data-loop-carousel] .panel-head,
+  #tab-stone-miner .farm-admin-grid[data-loop-carousel] .panel-head {
     padding: 16px 18px 8px;
     border-bottom: 0;
     background: transparent;
   }
 
-  #tab-obsidian .farm-admin-grid[data-loop-carousel] .panel-head h2 {
+  #tab-obsidian .farm-admin-grid[data-loop-carousel] .panel-head h2,
+  #tab-stone-miner .farm-admin-grid[data-loop-carousel] .panel-head h2 {
     font-size: 14px;
   }
 
-  #tab-obsidian .farm-admin-grid[data-loop-carousel] .panel-head p {
+  #tab-obsidian .farm-admin-grid[data-loop-carousel] .panel-head p,
+  #tab-stone-miner .farm-admin-grid[data-loop-carousel] .panel-head p {
     margin-top: 4px;
     font-size: 12px;
   }
 
-  #tab-obsidian .farm-admin-grid[data-loop-carousel] .admin-command-actions {
+  #tab-obsidian .farm-admin-grid[data-loop-carousel] .admin-command-actions,
+  #tab-stone-miner .farm-admin-grid[data-loop-carousel] .admin-command-actions {
     padding: 0 16px 16px;
   }
 
-  #tab-obsidian .farm-admin-grid[data-loop-carousel] .admin-command-actions button {
+  #tab-obsidian .farm-admin-grid[data-loop-carousel] .admin-command-actions button,
+  #tab-stone-miner .farm-admin-grid[data-loop-carousel] .admin-command-actions button {
     min-height: 32px;
     height: 32px;
   }
