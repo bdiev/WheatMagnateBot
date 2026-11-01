@@ -1,8 +1,13 @@
 package dev.onfocus.addon.modules;
 
 import dev.onfocus.addon.OnFocusAddon;
+import dev.onfocus.addon.maps.MapMatcher;
 import it.unimi.dsi.fastutil.ints.Int2LongMap;
 import it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
@@ -36,7 +41,10 @@ import net.minecraft.component.type.MapIdComponent;
 import net.minecraft.item.BundleItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.item.map.MapDecoration;
+import net.minecraft.item.map.MapDecorationTypes;
 import net.minecraft.item.map.MapState;
+import net.minecraft.network.packet.c2s.play.BundleItemSelectedC2SPacket;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.ChunkPos;
@@ -68,9 +76,16 @@ import java.util.List;
  * drawn is picked up again when you come back.
  * <p>
  * The client is never told a map's centre, so a new map's cell is the one you stood in when it was
- * made: a map is only made within "start-distance" of a cell's centre, far from its edges.
+ * made: a map is only made within "start-distance" of a cell's centre, far from its edges. Every
+ * map's cell is kept, so with mode Update the maps you carry (loose or in bundles) are taken out
+ * one by one over their place and held there again, which brings in what was built since. A map
+ * whose cell isn't known (made before cells were kept, or elsewhere) is recognised by the player
+ * marker on it when it's loose and you're over it, or by {@link MapMatcher} comparing its picture
+ * with the loaded world around you; bundled maps the client has no picture of are taken out a few
+ * at a time for the server to send it.
  */
 public class MapPainter extends Module {
+    public enum Mode { Draw, Update }
     public enum HandMode { MainHand, Offhand }
     public enum Order { Rows, Nearest }
     public enum Corner { TopLeft, TopRight, BottomLeft, BottomRight }
@@ -79,6 +94,13 @@ public class MapPainter extends Module {
     private final SettingGroup sgMaps = settings.createGroup("Maps");
     private final SettingGroup sgHud = settings.createGroup("HUD");
     private final SettingGroup sgWorld = settings.createGroup("World");
+
+    private final Setting<Mode> mode = sgArea.add(new EnumSetting.Builder<Mode>()
+        .name("mode")
+        .description("Draw makes new maps over the area between the corners. Update takes the maps you carry (loose or in bundles), already drawn, and holds each over its place again so new buildings show up.")
+        .defaultValue(Mode.Draw)
+        .build()
+    );
 
     private final Setting<Keybind> pos1Key = sgArea.add(new KeybindSetting.Builder()
         .name("pos1-key")
@@ -154,6 +176,15 @@ public class MapPainter extends Module {
         .defaultValue(8)
         .range(0, 120)
         .sliderRange(0, 60)
+        .build()
+    );
+
+    private final Setting<Integer> updateSeconds = sgMaps.add(new IntSetting.Builder()
+        .name("update-seconds")
+        .description("Update: how long a map is held near its place's centre (and then unchanged for a second) before it counts as updated.")
+        .defaultValue(3)
+        .range(1, 30)
+        .sliderRange(1, 10)
         .build()
     );
 
@@ -278,15 +309,47 @@ public class MapPainter extends Module {
     private static final int CREATE_TIMEOUT = 60;
     /** Ticks between inventory actions, so each is seen by the server before the next. */
     private static final int ACTION_GAP = 3;
+    /** Ticks a map taken out of a bundle stays loose for the server to send its picture. */
+    private static final int FETCH_TICKS = 15;
+    /** At most this many maps are taken out of bundles at once to fetch their pictures. */
+    private static final int FETCH_BATCH = 8;
+    /** A map only counts as recognised by its player marker this far (in marker units, 2 per block) from its edge. */
+    private static final int MARKER_MARGIN = 96;
+    /** A picture is taken to show a cell when this share of it matches and no other cell comes close. */
+    private static final double MATCH_SCORE = 0.85, MATCH_MARGIN = 0.15;
+    /** Cells a picture must have been compared with before it's matched to the best one. */
+    private static final int MATCH_CELLS = 3;
 
-    private enum Phase { IDLE, CREATING, HOLDING, BUNDLING }
+    private enum Phase { IDLE, CREATING, HOLDING, BUNDLING, FETCHING }
 
     /** Cells drawn, as {@link ChunkPos#toLong} of the cell's indices. */
     private final LongSet done = new LongOpenHashSet();
     /** A half-drawn map's cell, by map id, and back. */
     private final Int2LongMap mapCell = new Int2LongOpenHashMap();
     private final Long2IntMap cellMap = new Long2IntOpenHashMap();
+    /** Every map whose cell is known, made here or recognised, by map id. Kept for good, for Update. */
+    private final Int2LongMap known = new Int2LongOpenHashMap();
     private Path file;
+
+    // Update: the cells of the known maps you carry (loose or in bundles), and those updated this round
+    private final Long2IntMap carried = new Long2IntOpenHashMap();
+    private final LongSet updated = new LongOpenHashSet();
+    /** Carried maps whose cell isn't known yet. */
+    private final IntSet unknown = new IntOpenHashSet();
+    /** Maps already taken out of a bundle once for their picture: not again. */
+    private final IntSet fetched = new IntOpenHashSet();
+    /** Taken out for their picture now, to go back into bundles. */
+    private final IntList fetching = new IntArrayList();
+    /** For each unknown map with a picture: the best and second best match among the cells compared. */
+    private final Int2ObjectMap<Match> matches = new Int2ObjectOpenHashMap<>();
+    /** Which cell around you is compared next. */
+    private int matchTurn;
+
+    private static final class Match {
+        long bestCell;
+        double best = -1, second = -1;
+        final LongSet cells = new LongOpenHashSet();
+    }
 
     private Phase phase = Phase.IDLE;
     private long jobCell;
@@ -295,12 +358,14 @@ public class MapPainter extends Module {
     private final IntSet before = new IntOpenHashSet();
     private int waitTicks;
     private int gap;
-    /** Map pixels still blank, and the tick it last changed, to tell a map that stopped growing. */
+    /** Map pixels still blank (or the picture's hash in Update), and the tick it last changed. */
     private int lastBlank = -1;
     private long lastChange;
+    /** Update: ticks the map has been held near its cell's centre. */
+    private int heldNear;
     private long ticks;
     private int progress;
-    private boolean warnedFull, warnedNoMaps;
+    private boolean warnedFull, warnedNoMaps, warnedNothing;
 
     /** The hand holds the item of this handler slot, swapped in with this button; -1 when nothing is swapped. */
     private int swapSlot = -1, swapButton;
@@ -315,7 +380,11 @@ public class MapPainter extends Module {
     private final Color color = new Color();
 
     public MapPainter() {
-        super(OnFocusAddon.CATEGORY, "map-painter", "Draws new maps over an area: in every cell it takes an empty map in hand, holds it until fully drawn and puts it into a bundle. Shows what's drawn and where to fly next.");
+        super(OnFocusAddon.CATEGORY, "map-painter", "Draws new maps over an area (or updates the maps you carry): in every cell it holds the map until drawn and puts it into a bundle. Shows what's done and where to fly next.");
+    }
+
+    private boolean updating() {
+        return mode.get() == Mode.Update;
     }
 
     @Override
@@ -323,12 +392,18 @@ public class MapPainter extends Module {
         phase = Phase.IDLE;
         jobMap = -1;
         swapSlot = -1;
-        warnedFull = warnedNoMaps = false;
+        warnedFull = warnedNoMaps = warnedNothing = false;
         file = null;
-        if (mc.player != null) {
+        if (mc.player == null || mc.world == null) return;
+        loadFor(storageFile());
+        if (updating()) {
+            scanCarried();
+            updateArea();
+            info("Updating (highlight)%d(default) known map(s) you carry, %d already done this round%s.", carried.size(), finishedCount(),
+                unknown.isEmpty() ? "" : ", " + unknown.size() + " more not recognised yet");
+        } else {
             updateArea();
             info("%s. Set the corners with pos1-key / pos2-key or .map-painter pos1 / pos2.", describeArea());
-            loadFor(storageFile());
             hintDrawn();
         }
     }
@@ -338,7 +413,10 @@ public class MapPainter extends Module {
         if (mc.player != null && mc.interactionManager != null) {
             if (!mc.player.currentScreenHandler.getCursorStack().isEmpty() && canClick()) putCursorDown();
             restoreSwap();
+            // Maps out for their pictures go back where they were
+            if (canClick()) for (int map : fetching) putInBundle(map);
         }
+        fetching.clear();
         phase = Phase.IDLE;
     }
 
@@ -347,6 +425,9 @@ public class MapPainter extends Module {
         phase = Phase.IDLE;
         swapSlot = -1;
         file = null;
+        fetching.clear();
+        fetched.clear();
+        matches.clear();
     }
 
     @EventHandler
@@ -354,6 +435,11 @@ public class MapPainter extends Module {
         if (mc.player == null || mc.world == null || mc.interactionManager == null) return;
         ticks++;
         loadFor(storageFile());
+        if (updating()) {
+            scanCarried();
+            if (ticks % 5 == 0) recogniseByMarker();
+            matchNextCell();
+        }
         updateArea();
         updateNext();
 
@@ -361,29 +447,38 @@ public class MapPainter extends Module {
             gap--;
             return;
         }
+        // Every map is done and the last one put away: nothing left to do
+        if (!selecting && phase == Phase.IDLE && total() > 0 && finishedCount() == total() && (!updating() || unknown.isEmpty())) {
+            if (updating()) {
+                info("All (highlight)%d map(s)(default) you carry are updated - turning off.", total());
+                updated.clear();
+            } else info("All (highlight)%d maps(default) of the area are drawn - turning off.", total());
+            toggle();
+            return;
+        }
+        if (updating() && total() == 0 && unknown.isEmpty() && phase == Phase.IDLE) {
+            if (!warnedNothing) warning("No maps to update: carry maps drawn by Map Painter (loose or in bundles).");
+            warnedNothing = true;
+            return;
+        }
+        warnedNothing = false;
         // Inventory clicks need the player's own screen; something else moving items waits too
         if (!canClick() || mc.player.isUsingItem()) return;
         if (Modules.get().isActive(MapArtCopier.class) || Modules.get().isActive(MapArtSorter.class)) return;
 
         long cell = cellAt(mc.player.getX(), mc.player.getZ());
-        boolean inArea = inArea(cell) && !selecting;
 
         switch (phase) {
             case IDLE -> {
-                if (!inArea || done.contains(cell)) return;
-                int map = cellMap.getOrDefault(cell, -1);
-                if (map != -1 && findMap(map) != -1) {
-                    startHolding(cell, map);
-                    return;
-                }
-                if (map != -1) forgetMap(map);
-                if (centerDistance(cell) <= startDistance.get()) create(cell);
+                if (updating()) idleUpdate(cell);
+                else idleDraw(cell);
             }
             case CREATING -> {
                 int made = newMap();
                 if (made != -1) {
                     mapCell.put(made, jobCell);
                     cellMap.put(jobCell, made);
+                    known.put(made, jobCell);
                     save();
                     // The last empty map turns into the new one right in hand; otherwise the empty maps go back
                     if (findMap(made) != handIndex()) restoreSwap();
@@ -405,7 +500,29 @@ public class MapPainter extends Module {
                 }
                 phase = Phase.IDLE;
             }
+            case FETCHING -> fetch();
         }
+    }
+
+    private void idleDraw(long cell) {
+        if (selecting || !inArea(cell) || done.contains(cell)) return;
+        int map = cellMap.getOrDefault(cell, -1);
+        if (map != -1 && findMap(map) != -1) {
+            startHolding(cell, map);
+            return;
+        }
+        if (map != -1) forgetMap(map);
+        if (centerDistance(cell) <= startDistance.get()) create(cell);
+    }
+
+    private void idleUpdate(long cell) {
+        if (carried.containsKey(cell) && !updated.contains(cell)) {
+            int map = carried.get(cell);
+            if (findMap(map) != -1) startHolding(cell, map);
+            else takeOutOfBundle(map);
+            return;
+        }
+        startFetching();
     }
 
     // ---- making and holding maps ----
@@ -457,22 +574,24 @@ public class MapPainter extends Module {
         jobMap = map;
         lastBlank = -1;
         lastChange = ticks;
+        heldNear = 0;
         phase = Phase.HOLDING;
     }
 
     private void hold(long cell) {
         int index = findMap(jobMap);
         if (index == -1) {
-            // Thrown away or put somewhere else: a new one is made
-            forgetMap(jobMap);
+            // Thrown away or put somewhere else: Draw makes a new one, Update takes it from the bundle again
+            if (!updating()) forgetMap(jobMap);
             swapSlot = -1;
             phase = Phase.IDLE;
             return;
         }
         if (cell != jobCell) {
-            // Left the cell half drawn: the map stays assigned to it for when you come back
+            // Left the cell before it was done: the map stays assigned to it for when you come back
             restoreSwap();
             phase = Phase.IDLE;
+            if (updating() && useBundles.get()) putInBundle(jobMap);
             return;
         }
         if (index != handIndex()) {
@@ -484,6 +603,11 @@ public class MapPainter extends Module {
 
         MapState state = mc.world.getMapState(new MapIdComponent(jobMap));
         if (state == null) return;
+        if (updating()) {
+            holdUpdate(cell, state);
+            return;
+        }
+
         int blank = 0;
         for (byte b : state.colors) if (b == 0) blank++;
         progress = (PIXELS - blank) * 100 / PIXELS;
@@ -499,10 +623,33 @@ public class MapPainter extends Module {
         done.add(cell);
         forgetMap(jobMap);
         save();
-        long left = total() - doneInArea();
-        if (blank == 0) info("Map drawn (highlight)%d/%d(default), %d left.", doneInArea(), total(), left);
-        else warning("Map counted as drawn at %d%% - it stopped changing. %d/%d, %d left.", progress, doneInArea(), total(), left);
+        long left = total() - finishedCount();
+        if (blank == 0) info("Map drawn (highlight)%d/%d(default), %d left.", finishedCount(), total(), left);
+        else warning("Map counted as drawn at %d%% - it stopped changing. %d/%d, %d left.", progress, finishedCount(), total(), left);
+        finishJob();
+    }
 
+    /**
+     * Update: the map counts as updated once it's been held near the cell's centre for update-seconds
+     * and hasn't changed for the last second of that - a held map is gone over in under a second.
+     */
+    private void holdUpdate(long cell, MapState state) {
+        int hash = java.util.Arrays.hashCode(state.colors);
+        if (hash != lastBlank) {
+            lastBlank = hash;
+            lastChange = ticks;
+        }
+        if (centerDistance(cell) <= startDistance.get()) heldNear++;
+        progress = Math.min(100, heldNear * 100 / (updateSeconds.get() * 20));
+        if (heldNear < updateSeconds.get() * 20 || ticks - lastChange < 20) return;
+
+        updated.add(cell);
+        info("Map updated (highlight)%d/%d(default), %d left.", finishedCount(), total(), total() - finishedCount());
+        finishJob();
+    }
+
+    /** The job's map is done: the hand gets its item back and the map goes into a bundle. */
+    private void finishJob() {
         restoreSwap();
         int map = jobMap;
         jobMap = -1;
@@ -518,7 +665,7 @@ public class MapPainter extends Module {
         if (bundle == -1) return;
         click(slotId(index), 0, SlotActionType.PICKUP);
         click(slotId(bundle), 0, SlotActionType.PICKUP);
-        phase = Phase.BUNDLING;
+        if (phase == Phase.IDLE) phase = Phase.BUNDLING;
         gap = ACTION_GAP;
     }
 
@@ -527,6 +674,177 @@ public class MapPainter extends Module {
         BundleContentsComponent contents = bundle.get(DataComponentTypes.BUNDLE_CONTENTS);
         // The builder only works on copies: nothing is changed, it just says how much would fit
         return contents != null && new BundleContentsComponent.Builder(contents).add(map.copy()) > 0;
+    }
+
+    /**
+     * Takes a map out of the bundle it's in into a free slot: the bundle's selected stack is set to it
+     * (here and on the server, as scrolling over a bundle does) and a right click takes that one out.
+     */
+    private boolean takeOutOfBundle(int map) {
+        int empty = mc.player.getInventory().getEmptySlot();
+        if (empty == -1) {
+            if (!warnedFull) warning("Your inventory is full - no room to take a map out of its bundle.");
+            warnedFull = true;
+            return false;
+        }
+        warnedFull = false;
+        for (int i : inventoryIndices()) {
+            ItemStack bundle = mc.player.getInventory().getStack(i);
+            BundleContentsComponent contents = bundle.get(DataComponentTypes.BUNDLE_CONTENTS);
+            if (contents == null) continue;
+            for (int k = 0; k < contents.size(); k++) {
+                if (mapId(contents.get(k)) != map) continue;
+                int slot = slotId(i);
+                BundleItem.setSelectedStackIndex(bundle, k);
+                mc.getNetworkHandler().sendPacket(new BundleItemSelectedC2SPacket(slot, k));
+                click(slot, 1, SlotActionType.PICKUP);
+                click(slotId(empty), 0, SlotActionType.PICKUP);
+                gap = ACTION_GAP;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ---- Update: which maps you carry and where they belong ----
+
+    /** Rebuilds the carried cells (known maps, loose or in bundles) and the carried maps not known yet. */
+    private void scanCarried() {
+        carried.clear();
+        unknown.clear();
+        for (int i : inventoryIndices()) {
+            ItemStack stack = mc.player.getInventory().getStack(i);
+            carry(mapId(stack));
+            BundleContentsComponent contents = stack.get(DataComponentTypes.BUNDLE_CONTENTS);
+            if (contents == null) continue;
+            for (int k = 0; k < contents.size(); k++) carry(mapId(contents.get(k)));
+        }
+    }
+
+    private void carry(int map) {
+        if (map == -1) return;
+        if (known.containsKey(map)) carried.put(known.get(map), map);
+        else unknown.add(map);
+    }
+
+    private void learn(int map, long cell, String how) {
+        known.put(map, cell);
+        matches.remove(map);
+        save();
+        info("Recognised map #%d (%s): X %d Z %d.", map, how, (int) centerOf(ChunkPos.getPackedX(cell)), (int) centerOf(ChunkPos.getPackedZ(cell)));
+    }
+
+    /**
+     * A loose map shows you where you are on it with a player marker (two marker units a block from
+     * its centre), so a scale-0 map with exactly one such marker well inside it has its centre on the
+     * multiple of 128 nearest to you minus the marker's offset.
+     */
+    private void recogniseByMarker() {
+        for (int i : inventoryIndices()) {
+            int map = mapId(mc.player.getInventory().getStack(i));
+            if (map == -1 || !unknown.contains(map)) continue;
+            MapState state = mc.world.getMapState(new MapIdComponent(map));
+            if (state == null || state.scale != 0 || state.dimension != mc.world.getRegistryKey()) continue;
+            MapDecoration marker = null;
+            int markers = 0;
+            for (MapDecoration decoration : state.getDecorations()) {
+                if (decoration.type().value() != MapDecorationTypes.PLAYER.value()) continue;
+                marker = decoration;
+                markers++;
+            }
+            if (markers != 1 || Math.abs(marker.x()) > MARKER_MARGIN || Math.abs(marker.z()) > MARKER_MARGIN) continue;
+            int cx = (int) Math.round((mc.player.getX() - marker.x() / 2.0) / CELL);
+            int cz = (int) Math.round((mc.player.getZ() - marker.z() / 2.0) / CELL);
+            learn(map, ChunkPos.toLong(cx, cz), "by its marker");
+            unknown.remove(map);
+        }
+    }
+
+    /**
+     * Compares the pictures of the unknown maps with one loaded cell around you (a cell a tick, taking
+     * turns), and matches a map to its best cell once that's clearly better than every other compared.
+     */
+    private void matchNextCell() {
+        if (unknown.isEmpty() || mc.world.getDimension().hasCeiling()) return;
+        int turn = matchTurn++ % 9;
+        int cx = cellIndex(mc.player.getX()) + turn % 3 - 1, cz = cellIndex(mc.player.getZ()) + turn / 3 - 1;
+        long cell = ChunkPos.toLong(cx, cz);
+        // A cell whose map you carry is taken; its picture would only confuse the rest
+        if (carried.containsKey(cell)) return;
+
+        byte[] sample = null;
+        for (int map : unknown.toIntArray()) {
+            MapState state = mc.world.getMapState(new MapIdComponent(map));
+            if (state == null || state.scale != 0 || state.dimension != mc.world.getRegistryKey()) continue;
+            Match match = matches.computeIfAbsent(map, k -> new Match());
+            if (match.cells.contains(cell)) continue;
+            if (sample == null) {
+                sample = MapMatcher.sample(mc.world, cx, cz);
+                // Not loaded enough, or all sea: no telling maps apart here
+                if (sample == null || !MapMatcher.distinctive(sample)) return;
+            }
+            double score = MapMatcher.score(sample, state.colors);
+            if (score < 0) continue;
+            match.cells.add(cell);
+            if (score > match.best) {
+                match.second = match.best;
+                match.best = score;
+                match.bestCell = cell;
+            } else if (score > match.second) match.second = score;
+
+            if (match.best >= MATCH_SCORE && match.best - match.second >= MATCH_MARGIN && match.cells.size() >= MATCH_CELLS
+                && !carried.containsKey(match.bestCell)) {
+                learn(map, match.bestCell, "by its picture, %d%% alike".formatted(Math.round(match.best * 100)));
+                unknown.remove(map);
+                carried.put(match.bestCell, map);
+            }
+        }
+    }
+
+    /**
+     * Maps in bundles that the client has no picture of are taken out a few at a time: a loose map's
+     * picture comes from the server within a tick or two. They go back once it's in, and are
+     * compared with the world from then on.
+     */
+    private void startFetching() {
+        if (unknown.isEmpty()) return;
+        int free = 0;
+        for (int i = 0; i < 36; i++) if (mc.player.getInventory().getStack(i).isEmpty()) free++;
+        // One slot stays free for the next map to update
+        int room = Math.min(FETCH_BATCH, free - 1);
+        if (room <= 0) return;
+        fetching.clear();
+        for (int map : unknown.toIntArray()) {
+            if (fetching.size() >= room) break;
+            if (fetched.contains(map) || findMap(map) != -1) continue;
+            if (mc.world.getMapState(new MapIdComponent(map)) != null) continue;
+            fetching.add(map);
+        }
+        if (fetching.isEmpty()) return;
+        waitTicks = 0;
+        phase = Phase.FETCHING;
+    }
+
+    private void fetch() {
+        // First out of the bundles, one a tick...
+        for (int map : fetching) {
+            if (fetched.contains(map)) continue;
+            fetched.add(map);
+            if (takeOutOfBundle(map)) return;
+        }
+        // ...then wait for the pictures...
+        if (++waitTicks < FETCH_TICKS) return;
+        // ...and back in, one a tick
+        for (int k = 0; k < fetching.size(); k++) {
+            int map = fetching.getInt(k);
+            if (findMap(map) == -1) continue;
+            putInBundle(map);
+            if (findMap(map) == -1) return;
+            // No bundle has room: it stays loose
+            fetching.removeInt(k--);
+        }
+        fetching.clear();
+        phase = Phase.IDLE;
     }
 
     // ---- inventory ----
@@ -617,7 +935,26 @@ public class MapPainter extends Module {
 
     // ---- the area ----
 
+    /** Draw: the area between the corners. Update: the cells of the maps you carry. */
     private void updateArea() {
+        if (updating()) {
+            if (carried.isEmpty()) {
+                cellsX = cellsZ = 0;
+                return;
+            }
+            int x1 = Integer.MAX_VALUE, z1 = Integer.MAX_VALUE, x2 = Integer.MIN_VALUE, z2 = Integer.MIN_VALUE;
+            for (long cell : carried.keySet()) {
+                x1 = Math.min(x1, ChunkPos.getPackedX(cell));
+                z1 = Math.min(z1, ChunkPos.getPackedZ(cell));
+                x2 = Math.max(x2, ChunkPos.getPackedX(cell));
+                z2 = Math.max(z2, ChunkPos.getPackedZ(cell));
+            }
+            minCellX = x1;
+            minCellZ = z1;
+            cellsX = x2 - x1 + 1;
+            cellsZ = z2 - z1 + 1;
+            return;
+        }
         double x2 = pos2X.get(), z2 = pos2Z.get();
         if (selecting && mc.player != null) {
             x2 = mc.player.getX();
@@ -630,14 +967,33 @@ public class MapPainter extends Module {
         cellsZ = Math.abs(az - bz) + 1;
     }
 
+    /** Cells to do: the whole area in Draw, the carried maps' cells in Update. */
+    private boolean isTarget(long cell) {
+        return updating() ? carried.containsKey(cell) : inArea(cell);
+    }
+
+    private boolean isFinished(long cell) {
+        return updating() ? updated.contains(cell) : done.contains(cell);
+    }
+
     private int total() {
-        return cellsX * cellsZ;
+        return updating() ? carried.size() : cellsX * cellsZ;
+    }
+
+    private int finishedCount() {
+        int count = 0;
+        if (updating()) {
+            for (long cell : updated) if (carried.containsKey(cell)) count++;
+        } else {
+            for (long cell : done) if (inArea(cell)) count++;
+        }
+        return count;
     }
 
     /** "Area 16x16 maps (128x128 chunks, 256 maps) from X -1088 Z -1088 to X 1087 Z 1087". */
     public String describeArea() {
         return "Area %dx%d maps (%dx%d chunks, (highlight)%d maps(default)) from X %d Z %d to X %d Z %d".formatted(
-            cellsX, cellsZ, cellsX * 8, cellsZ * 8, total(),
+            cellsX, cellsZ, cellsX * 8, cellsZ * 8, cellsX * cellsZ,
             (int) centerOf(minCellX) - 64, (int) centerOf(minCellZ) - 64,
             (int) centerOf(minCellX + cellsX) - 65, (int) centerOf(minCellZ + cellsZ) - 65);
     }
@@ -666,24 +1022,18 @@ public class MapPainter extends Module {
         return Math.sqrt(dx * dx + dz * dz);
     }
 
-    private int doneInArea() {
-        int count = 0;
-        for (long cell : done) if (inArea(cell)) count++;
-        return count;
-    }
-
-    /** Picks the cell to show as next: not drawn, not the one being drawn now. */
+    /** Picks the cell to show as next: one to do, not the one being done now. */
     private void updateNext() {
         hasNext = false;
         if (selecting) return;
         long here = cellAt(mc.player.getX(), mc.player.getZ());
-        long current = phase == Phase.HOLDING || phase == Phase.CREATING ? jobCell : (inArea(here) && !done.contains(here) ? here : Long.MIN_VALUE);
+        long current = phase == Phase.HOLDING || phase == Phase.CREATING ? jobCell : (isTarget(here) && !isFinished(here) ? here : Long.MIN_VALUE);
         double best = Double.MAX_VALUE;
         for (int row = 0; row < cellsZ; row++) {
             for (int i = 0; i < cellsX; i++) {
                 int col = order.get() == Order.Rows && (row & 1) == 1 ? cellsX - 1 - i : i;
                 long cell = ChunkPos.toLong(minCellX + col, minCellZ + row);
-                if (cell == current || done.contains(cell)) continue;
+                if (cell == current || !isTarget(cell) || isFinished(cell)) continue;
                 if (order.get() == Order.Rows) {
                     nextCell = cell;
                     hasNext = true;
@@ -706,10 +1056,11 @@ public class MapPainter extends Module {
         pos1X.set(mc.player.getBlockX());
         pos1Z.set(mc.player.getBlockZ());
         selecting = true;
-        if (phase != Phase.IDLE) {
+        if (phase != Phase.IDLE && phase != Phase.FETCHING) {
             restoreSwap();
             phase = Phase.IDLE;
         }
+        if (updating()) warning("Corners pick the area to draw; set mode to Draw to use it.");
         info("Pos 1 set at X %d Z %d - fly to the opposite corner and set pos 2.", pos1X.get(), pos1Z.get());
     }
 
@@ -726,10 +1077,19 @@ public class MapPainter extends Module {
         hintDrawn();
     }
 
-    /** Forgets the area's drawn cells and half-drawn maps, so all of it is drawn again. */
+    /**
+     * Draw: forgets the area's drawn cells and half-drawn maps, so all of it is drawn again.
+     * Update: starts the round over, so every carried map is updated again.
+     */
     public void resetArea() {
         resetArea.set(false);
         if (mc.player == null || mc.world == null) return;
+        if (updating()) {
+            int count = updated.size();
+            updated.clear();
+            info("Started the update over - %d map(s) are updated again.", count);
+            return;
+        }
         // With the module off nothing's been read yet: read it first, or the next read would undo the reset
         loadFor(storageFile());
         updateArea();
@@ -750,9 +1110,9 @@ public class MapPainter extends Module {
 
     /** After the area changes: says if some of it is drawn already and how to draw it again. */
     private void hintDrawn() {
-        int drawn = doneInArea();
+        int drawn = finishedCount();
         if (drawn == 0) return;
-        if (drawn == total()) info("This area is already drawn. To draw it again: .map-painter reset (or the reset-area switch).");
+        if (drawn == total()) info("This area is already drawn. To draw it again: .map-painter reset (or the reset-area switch), then turn the module on. To refresh the maps you have, set mode to Update.");
         else info("%d of %d maps here are already drawn and are skipped. To start over: .map-painter reset.", drawn, total());
     }
 
@@ -775,6 +1135,9 @@ public class MapPainter extends Module {
         done.clear();
         mapCell.clear();
         cellMap.clear();
+        known.clear();
+        updated.clear();
+        matches.clear();
         phase = Phase.IDLE;
         if (!Files.exists(path)) return;
         try {
@@ -782,11 +1145,14 @@ public class MapPainter extends Module {
                 String[] p = line.trim().split(" ");
                 try {
                     if (p.length == 3 && p[0].equals("done")) done.add(ChunkPos.toLong(Integer.parseInt(p[1]), Integer.parseInt(p[2])));
-                    else if (p.length == 4 && p[0].equals("map")) {
+                    else if (p.length == 4 && (p[0].equals("map") || p[0].equals("known"))) {
                         int id = Integer.parseInt(p[1]);
                         long cell = ChunkPos.toLong(Integer.parseInt(p[2]), Integer.parseInt(p[3]));
-                        mapCell.put(id, cell);
-                        cellMap.put(cell, id);
+                        known.put(id, cell);
+                        if (p[0].equals("map")) {
+                            mapCell.put(id, cell);
+                            cellMap.put(cell, id);
+                        }
                     }
                 } catch (NumberFormatException ignored) {
                     // A broken line is skipped
@@ -801,8 +1167,9 @@ public class MapPainter extends Module {
         if (file == null) return;
         List<String> lines = new ArrayList<>();
         for (long cell : done) lines.add("done " + ChunkPos.getPackedX(cell) + " " + ChunkPos.getPackedZ(cell));
-        for (Int2LongMap.Entry e : mapCell.int2LongEntrySet()) {
-            lines.add("map " + e.getIntKey() + " " + ChunkPos.getPackedX(e.getLongValue()) + " " + ChunkPos.getPackedZ(e.getLongValue()));
+        for (Int2LongMap.Entry e : known.int2LongEntrySet()) {
+            String kind = mapCell.containsKey(e.getIntKey()) ? "map " : "known ";
+            lines.add(kind + e.getIntKey() + " " + ChunkPos.getPackedX(e.getLongValue()) + " " + ChunkPos.getPackedZ(e.getLongValue()));
         }
         try {
             Files.createDirectories(file.getParent());
@@ -816,16 +1183,19 @@ public class MapPainter extends Module {
 
     // ---- drawing ----
 
+    /** A cell's colour, or null for a cell in Update's area whose map you don't carry. */
     private SettingColor colorOf(long cell) {
         if (hasNext && cell == nextCell) return nextColor.get();
-        if (done.contains(cell)) return doneColor.get();
-        if (cellMap.containsKey(cell) || (cell == jobCell && phase == Phase.HOLDING)) return startedColor.get();
+        if (!isTarget(cell)) return null;
+        if (isFinished(cell)) return doneColor.get();
+        if (cell == jobCell && phase == Phase.HOLDING) return startedColor.get();
+        if (!updating() && cellMap.containsKey(cell)) return startedColor.get();
         return todoColor.get();
     }
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (mc.player == null || mc.world == null || total() == 0) return;
+        if (mc.player == null || mc.world == null || cellsX * cellsZ == 0) return;
         double y = mc.player.getY() - gridBelow.get();
 
         if (worldGrid.get()) {
@@ -835,8 +1205,10 @@ public class MapPainter extends Module {
                 for (int cz = pz - r; cz <= pz + r; cz++) {
                     long cell = ChunkPos.toLong(cx, cz);
                     if (!inArea(cell)) continue;
+                    SettingColor c = colorOf(cell);
+                    if (c == null) continue;
                     double x1 = centerOf(cx) - 64, z1 = centerOf(cz) - 64;
-                    color.set(colorOf(cell));
+                    color.set(c);
                     event.renderer.quadHorizontal(x1, y, z1, x1 + CELL, z1 + CELL, color);
                     color.a = Math.min(255, color.a * 3);
                     event.renderer.boxLines(x1, y, z1, x1 + CELL, y, z1 + CELL, color, 0);
@@ -865,36 +1237,40 @@ public class MapPainter extends Module {
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
-        if (!hud.get() || mc.player == null || mc.options.hudHidden || total() == 0) return;
+        if (!hud.get() || mc.player == null || mc.options.hudHidden) return;
         DrawContext context = event.drawContext;
+        boolean empty = cellsX * cellsZ == 0;
 
-        int px = Math.max(1, hudSize.get() / Math.max(cellsX, cellsZ));
-        int size = px * cellsX, height = px * cellsZ;
+        int px = empty ? 1 : Math.max(1, hudSize.get() / Math.max(cellsX, cellsZ));
+        int size = empty ? 0 : px * cellsX, height = empty ? 0 : px * cellsZ;
         int textHeight = 2 * (mc.textRenderer.fontHeight + 1) + 3;
         boolean right = hudCorner.get() == Corner.TopRight || hudCorner.get() == Corner.BottomRight;
         boolean top = hudCorner.get() == Corner.TopLeft || hudCorner.get() == Corner.TopRight;
         int x0 = right ? event.screenWidth - size - 4 : 4;
         int y0 = top ? hudOffsetY.get() : event.screenHeight - height - textHeight - hudOffsetY.get();
 
-        context.fill(x0 - 1, y0 - 1, x0 + size + 1, y0 + height + 1, selecting ? 0xA0204050 : 0xA0000000);
-        boolean blink = (ticks / 10) % 2 == 0;
-        for (int row = 0; row < cellsZ; row++) {
-            for (int col = 0; col < cellsX; col++) {
-                long cell = ChunkPos.toLong(minCellX + col, minCellZ + row);
-                SettingColor c = colorOf(cell);
-                int alpha = hasNext && cell == nextCell ? (blink ? 255 : 120) : Math.min(255, c.a * 3);
-                int argb = alpha << 24 | c.r << 16 | c.g << 8 | c.b;
-                int x = x0 + col * px, yy = y0 + row * px;
-                // A pixel's gap between cells keeps them apart when they're big enough
-                int pad = px >= 4 ? 1 : 0;
-                context.fill(x, yy, x + px - pad, yy + px - pad, argb);
+        if (!empty) {
+            context.fill(x0 - 1, y0 - 1, x0 + size + 1, y0 + height + 1, selecting ? 0xA0204050 : 0xA0000000);
+            boolean blink = (ticks / 10) % 2 == 0;
+            for (int row = 0; row < cellsZ; row++) {
+                for (int col = 0; col < cellsX; col++) {
+                    long cell = ChunkPos.toLong(minCellX + col, minCellZ + row);
+                    SettingColor c = colorOf(cell);
+                    if (c == null) continue;
+                    int alpha = hasNext && cell == nextCell ? (blink ? 255 : 120) : Math.min(255, c.a * 3);
+                    int argb = alpha << 24 | c.r << 16 | c.g << 8 | c.b;
+                    int x = x0 + col * px, yy = y0 + row * px;
+                    // A pixel's gap between cells keeps them apart when they're big enough
+                    int pad = px >= 4 ? 1 : 0;
+                    context.fill(x, yy, x + px - pad, yy + px - pad, argb);
+                }
             }
-        }
 
-        // You, where you are in the area (clamped to its edge when outside)
-        double fx = (mc.player.getX() + 64) / CELL - minCellX, fz = (mc.player.getZ() + 64) / CELL - minCellZ;
-        int dx = x0 + (int) MathHelper.clamp(fx * px, 0, size - 1), dz = y0 + (int) MathHelper.clamp(fz * px, 0, height - 1);
-        context.fill(dx - 1, dz - 1, dx + 2, dz + 2, 0xFFFFFFFF);
+            // You, where you are in the area (clamped to its edge when outside)
+            double fx = (mc.player.getX() + 64) / CELL - minCellX, fz = (mc.player.getZ() + 64) / CELL - minCellZ;
+            int dx = x0 + (int) MathHelper.clamp(fx * px, 0, size - 1), dz = y0 + (int) MathHelper.clamp(fz * px, 0, height - 1);
+            context.fill(dx - 1, dz - 1, dx + 2, dz + 2, 0xFFFFFFFF);
+        }
 
         int ty = y0 + height + 3;
         if (selecting) {
@@ -904,13 +1280,18 @@ public class MapPainter extends Module {
             context.drawTextWithShadow(mc.textRenderer, hint, textX(hint, x0, size, right), ty + mc.textRenderer.fontHeight + 1, 0x60C8FF);
             return;
         }
-        String status = "Drawn " + doneInArea() + "/" + total();
+        String status = (updating() ? "Updated " : "Drawn ") + finishedCount() + "/" + total();
         if (phase == Phase.HOLDING) status += " | map " + progress + "%";
         else if (phase == Phase.CREATING) status += " | making a map";
+        else if (phase == Phase.FETCHING) status += " | reading maps";
+        if (updating() && !unknown.isEmpty()) status += " | " + unknown.size() + " unrecognised";
         context.drawTextWithShadow(mc.textRenderer, status, textX(status, x0, size, right), ty, 0xFFFFFF);
         String next;
-        if (!hasNext) next = phase == Phase.HOLDING ? "Last map" : "All drawn - .map-painter reset to redo";
-        else {
+        if (!hasNext) {
+            if (phase == Phase.HOLDING) next = "Last map";
+            else if (updating()) next = unknown.isEmpty() ? "All updated" : "Fly over the area to recognise the rest";
+            else next = "All drawn - .map-painter reset to redo";
+        } else {
             int nx = (int) centerOf(ChunkPos.getPackedX(nextCell)), nz = (int) centerOf(ChunkPos.getPackedZ(nextCell));
             next = "Next X " + nx + " Z " + nz + " | " + Math.round(centerDistance(nextCell)) + " m";
         }
@@ -925,6 +1306,6 @@ public class MapPainter extends Module {
     @Override
     public String getInfoString() {
         if (selecting) return "selecting";
-        return doneInArea() + "/" + total();
+        return finishedCount() + "/" + total();
     }
 }
