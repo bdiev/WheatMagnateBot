@@ -22,8 +22,9 @@ const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-for
 const { buildDiscordToGameEmbed, formatDiscordBridgeMessage, getChatPlayerColor } = require('./discord/chat-message-format');
 const { createFloodSummaryPublisher } = require('./discord/flood-summary');
 const { playerProfileUrl } = require('./discord/player-profile-link');
-const { createChatAvatarLoader } = require('./discord/chat-avatar');
+const { createChatAvatarLoader, createSquareAvatarLoader } = require('./discord/chat-avatar');
 const loadChatAvatar = createChatAvatarLoader();
+const loadSquareAvatar = createSquareAvatarLoader();
 const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
 const { createPlayerSkinHistoryService } = require('./site/player-skin-history');
 const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
@@ -1574,7 +1575,7 @@ function whisperSenderFor(username) {
 function discordWhisperSender(member, user) {
   return {
     name: member?.displayName || user?.globalName || user?.username || 'You',
-    iconUrl: (member || user)?.displayAvatarURL?.({ size: 64 }) || null
+    iconUrl: (member || user)?.displayAvatarURL?.({ size: 64, extension: 'png', forceStatic: true }) || null
   };
 }
 
@@ -1626,6 +1627,7 @@ const {
     ui: UI_BUTTON_EMOJIS
   },
   loadAvatar: loadChatAvatar,
+  loadSenderAvatar: loadSquareAvatar,
   profileUrl: playerProfileUrl,
   formatMessage: text => formatDiscordBridgeMessage(text),
   getPlayerColor: async username => {

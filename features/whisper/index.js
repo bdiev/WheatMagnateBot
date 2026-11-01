@@ -43,6 +43,7 @@ function createWhisperFeature({
   state,
   emojis,
   loadAvatar = async () => ({}),
+  loadSenderAvatar = null,
   profileUrl = () => null,
   formatMessage = text => String(text || ''),
   getPlayerColor = async () => DEFAULT_PLAYER_COLOR,
@@ -132,6 +133,29 @@ function createWhisperFeature({
     return !channel.guild || Boolean(channel.permissionsFor?.(discordClient.user)?.has(PermissionsBitField.Flags.AttachFiles));
   }
 
+  // The player's head as in the game chat bridge: an attached render of their
+  // skin. A remote head is only the fallback, since those hosts sometimes
+  // answer with an error page that Discord shows as a broken image
+  async function playerAvatar(channel, username) {
+    const avatar = await loadAvatar(username, { attachFiles: canAttachFiles(channel) }).catch(() => ({}));
+    return { url: avatar.thumbnail?.url || null, files: avatar.files || null };
+  }
+
+  // The Discord sender's avatar, padded square like the player heads
+  async function senderAvatar(channel, iconUrl) {
+    if (!iconUrl) return { url: null, files: null };
+    if (!loadSenderAvatar) return { url: iconUrl, files: null };
+    const avatar = await loadSenderAvatar(iconUrl, { attachFiles: canAttachFiles(channel), name: 'discord-avatar' })
+      .catch(() => ({}));
+    return { url: avatar.thumbnail?.url || iconUrl, files: avatar.files || null };
+  }
+
+  // On an edit the old head is replaced, not kept next to the new one
+  function avatarFiles(avatar, { replace = false } = {}) {
+    if (avatar.files) return replace ? { files: avatar.files, attachments: [] } : { files: avatar.files };
+    return {};
+  }
+
   async function playerColor(username) {
     try {
       return await getPlayerColor(username);
@@ -199,17 +223,20 @@ function createWhisperFeature({
     return match?.[1] || getDialogPlayerKey(channelId);
   }
 
-  async function buildDialogHeader(channel, username) {
+  async function buildDialogHeader(channel, username, avatar) {
     const ttlMs = state.customDialogTTL.get(channel.id) || defaultTtlMs;
     const deleteAt = state.whisperDeleteTimestamps.get(channel.id) || Date.now() + ttlMs;
     const details = describeDialog(username) || {};
-    const avatar = await loadAvatar(username, { attachFiles: false }).catch(() => ({}));
     return {
+      author: {
+        name: username,
+        url: playerUrl(username),
+        ...(avatar.url ? { icon_url: avatar.url } : {})
+      },
       title: `Dialog with ${username}`,
       url: playerUrl(username),
       description: 'Write here to whisper the player: every line goes out as its own /msg.',
       color: await playerColor(username),
-      ...(avatar.thumbnail?.url ? { thumbnail: { url: avatar.thumbnail.url } } : {}),
       fields: [
         {
           name: 'Player',
@@ -245,12 +272,13 @@ function createWhisperFeature({
     const header = await findDialogHeader(channel);
     const name = username || headerUsername(header, channel.id);
     if (!name) return null;
-    const embed = await buildDialogHeader(channel, name);
+    const avatar = await playerAvatar(channel, name);
+    const embed = await buildDialogHeader(channel, name, avatar);
     if (header) {
-      await header.edit({ embeds: [embed], components: buildDeleteDialogComponents(channel.id) });
+      await header.edit({ embeds: [embed], components: buildDeleteDialogComponents(channel.id), ...avatarFiles(avatar, { replace: true }) });
       return header;
     }
-    const created = await channel.send({ embeds: [embed], components: buildDeleteDialogComponents(channel.id) });
+    const created = await channel.send({ embeds: [embed], components: buildDeleteDialogComponents(channel.id), ...avatarFiles(avatar) });
     dialogHeaders.set(channel.id, created.id);
     try {
       await created.pin();
@@ -304,12 +332,12 @@ function createWhisperFeature({
   // A whisper from the player, with their head and their chat colour
   function postIncomingDialogMessage(channel, { username, recipient = null, text, at = Date.now() }) {
     return inChannelQueue(channel.id, async () => {
-      const avatar = await loadAvatar(username, { attachFiles: canAttachFiles(channel) }).catch(() => ({}));
+      const avatar = await playerAvatar(channel, username);
       return postDialogBubble(channel, username, {
         author: {
           name: recipient ? `${username} → ${recipient}` : username,
           url: playerUrl(username),
-          ...(avatar.thumbnail?.url ? { icon_url: avatar.thumbnail.url } : {})
+          ...(avatar.url ? { icon_url: avatar.url } : {})
         },
         description: formatMessage(text),
         color: await playerColor(username),
@@ -320,16 +348,19 @@ function createWhisperFeature({
 
   // A reply sent from Discord, in Discord blurple with the sender's avatar
   function postOutgoingDialogMessage(channel, { username, sender, text, via = null }) {
-    return inChannelQueue(channel.id, () => postDialogBubble(channel, username, {
-      author: {
-        name: `${sender?.name || 'You'} → ${username}`,
-        ...(sender?.iconUrl ? { icon_url: sender.iconUrl } : {})
-      },
-      description: formatMessage(text),
-      color: OUTGOING_COLOR,
-      ...(via ? { footer: { text: `via ${via}` } } : {}),
-      timestamp: new Date()
-    }));
+    return inChannelQueue(channel.id, async () => {
+      const avatar = await senderAvatar(channel, sender?.iconUrl);
+      return postDialogBubble(channel, username, {
+        author: {
+          name: `${sender?.name || 'You'} → ${username}`,
+          ...(avatar.url ? { icon_url: avatar.url } : {})
+        },
+        description: formatMessage(text),
+        color: OUTGOING_COLOR,
+        ...(via ? { footer: { text: `via ${via}` } } : {}),
+        timestamp: new Date()
+      }, avatar.files);
+    });
   }
 
   function saveQueuedWhispers() {
@@ -361,7 +392,7 @@ function createWhisperFeature({
   }
 
   // The bubble of a queued reply, in each of its states
-  function buildQueuedBubble(item, status, via = null) {
+  function buildQueuedBubble(item, status, via = null, iconUrl = item.senderIconUrl) {
     const text = formatMessage(item.texts.join('\n'));
     const footers = {
       waiting: item.reason === 'no_bot'
@@ -373,7 +404,7 @@ function createWhisperFeature({
     return {
       author: {
         name: `${item.senderName || 'You'} → ${item.username}`,
-        ...(item.senderIconUrl ? { icon_url: item.senderIconUrl } : {})
+        ...(iconUrl ? { icon_url: iconUrl } : {})
       },
       description: status === 'cancelled' ? `~~${text}~~` : text,
       color: status === 'sent' ? OUTGOING_COLOR : 0x95A5A6,
@@ -397,7 +428,9 @@ function createWhisperFeature({
     try {
       const channel = await discordClient.channels.fetch(item.channelId);
       const message = await channel.messages.fetch(item.messageId);
-      await message.edit({ embeds: [buildQueuedBubble(item, status, via)], components: [] });
+      // The attached square avatar stays: its uploaded URL is reused
+      const iconUrl = message.embeds[0]?.author?.iconURL || item.senderIconUrl;
+      await message.edit({ embeds: [buildQueuedBubble(item, status, via, iconUrl)], components: [] });
       await refreshDialogHeader(channel);
     } catch (e) {
       debugLog('[Whisper] Failed to update a queued reply:', e.message);
@@ -419,7 +452,12 @@ function createWhisperFeature({
       touchDialog(channel);
       await upsertDialogHeader(channel, username).catch(() => {});
       try {
-        const message = await channel.send({ embeds: [buildQueuedBubble(item, 'waiting')], components: buildQueuedComponents(item) });
+        const avatar = await senderAvatar(channel, item.senderIconUrl);
+        const message = await channel.send({
+          embeds: [buildQueuedBubble(item, 'waiting', null, avatar.url)],
+          components: buildQueuedComponents(item),
+          ...avatarFiles(avatar)
+        });
         item.messageId = message.id;
       } finally {
         saveQueuedWhispers();
@@ -682,14 +720,13 @@ function createWhisperFeature({
     }
   }
 
-  async function buildClaimCard(mcUsername, messages, total, recipient) {
-    const avatar = await loadAvatar(mcUsername, { attachFiles: false }).catch(() => ({}));
+  async function buildClaimCard(mcUsername, messages, total, recipient, avatar) {
     const lines = messages.map(item => `> ${formatMessage(item.text)}`);
     return {
       author: {
         name: mcUsername,
         url: playerUrl(mcUsername),
-        ...(avatar.thumbnail?.url ? { icon_url: avatar.thumbnail.url } : {})
+        ...(avatar.url ? { icon_url: avatar.url } : {})
       },
       title: WHISPER_CLAIM_TITLE,
       description: lines.join('\n').slice(0, 4000),
@@ -724,8 +761,9 @@ function createWhisperFeature({
       total,
       recipient
     };
+    const avatar = await playerAvatar(channel, mcUsername);
     const payload = {
-      embeds: [await buildClaimCard(mcUsername, messages, total, recipient)],
+      embeds: [await buildClaimCard(mcUsername, messages, total, recipient, avatar)],
       components: [
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
@@ -740,7 +778,7 @@ function createWhisperFeature({
     if (existing?.messageId) {
       try {
         const msg = await channel.messages.fetch(existing.messageId);
-        await msg.edit(payload);
+        await msg.edit({ ...payload, ...avatarFiles(avatar, { replace: true }) });
         state.pendingWhisperClaims.set(mcKey, pending);
         return;
       } catch (_) {
@@ -749,7 +787,7 @@ function createWhisperFeature({
     }
 
     try {
-      const msg = await channel.send(payload);
+      const msg = await channel.send({ ...payload, ...avatarFiles(avatar) });
       state.pendingWhisperClaims.set(mcKey, { ...pending, messageId: msg.id });
     } catch (e) {
       console.error('[Whisper] Failed to post claim prompt:', e.message);
@@ -794,13 +832,14 @@ function createWhisperFeature({
     try {
       const statusChannel = await discordClient.channels.fetch(discordChannelId);
       const msg = await statusChannel.messages.fetch(pending.messageId);
-      const avatar = await loadAvatar(mcUsername, { attachFiles: false }).catch(() => ({}));
+      const avatar = await playerAvatar(statusChannel, mcUsername);
       await msg.edit({
+        ...avatarFiles(avatar, { replace: true }),
         embeds: [{
           author: {
             name: mcUsername,
             url: playerUrl(mcUsername),
-            ...(avatar.thumbnail?.url ? { icon_url: avatar.thumbnail.url } : {})
+            ...(avatar.url ? { icon_url: avatar.url } : {})
           },
           description: `Dialog claimed by ${claimedBy} → ${channel}`,
           color: 0x2ECC71,

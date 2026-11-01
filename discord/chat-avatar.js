@@ -100,4 +100,43 @@ function createChatAvatarLoader({
   };
 }
 
-module.exports = { createChatAvatarLoader, hasVisibleDetail, padAvatarForCircleCrop };
+// Any picture (a Discord user's avatar) padded like the heads above, so it
+// shows square beside the name too. Without a picture the remote one is kept
+function createSquareAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 * 60 * 60_000, maxEntries = 256 } = {}) {
+  const cache = new Map();
+
+  return async function loadSquareAvatar(url, { attachFiles = true, name = 'avatar' } = {}) {
+    if (!/^https:\/\//i.test(String(url || ''))) return {};
+    const remote = { thumbnail: { url } };
+    if (!attachFiles) return remote;
+
+    let entry = cache.get(url);
+    if (!entry || entry.expiresAt <= now()) {
+      let buffer = null;
+      try {
+        const response = await fetchImpl(url, { signal: AbortSignal.timeout(3000) });
+        const input = response.ok ? Buffer.from(await response.arrayBuffer()) : null;
+        if (input?.length && input.length <= 1024 * 1024) {
+          buffer = await padAvatarForCircleCrop(
+            await sharp(input, { failOn: 'error', limitInputPixels: 4096 * 4096 }).png().toBuffer()
+          );
+        }
+      } catch {
+        // The remote avatar is still shown, only round
+      }
+      entry = { buffer: buffer || entry?.buffer || null, expiresAt: now() + (buffer ? ttlMs : 60_000) };
+      cache.delete(url);
+      cache.set(url, entry);
+      if (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+    }
+
+    if (!entry.buffer) return remote;
+    const filename = `${String(name).replace(/[^a-z0-9_-]/gi, '') || 'avatar'}.png`;
+    return {
+      thumbnail: { url: `attachment://${filename}` },
+      files: [{ attachment: entry.buffer, name: filename }]
+    };
+  };
+}
+
+module.exports = { createChatAvatarLoader, createSquareAvatarLoader, hasVisibleDetail, padAvatarForCircleCrop };

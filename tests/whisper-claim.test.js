@@ -248,6 +248,64 @@ async function testRepliesWaitForOfflinePlayer() {
   }
 }
 
+async function testHeadsAreAttachedLikeGameChat() {
+  const status = fakeChannel('status-channel');
+  const dialog = fakeChannel('dialog-7');
+  const state = emptyState();
+  state.whisperChannels.set('owner:steve', 'dialog-7');
+  const requests = [];
+  const feature = dialogFeature(state, new Map([['status-channel', status], ['dialog-7', dialog]]), {
+    loadAvatar: async (name, { attachFiles }) => {
+      requests.push(attachFiles);
+      return attachFiles
+        ? { thumbnail: { url: `attachment://minecraft-avatar-${name.toLowerCase()}.png` }, files: [{ name: `minecraft-avatar-${name.toLowerCase()}.png` }] }
+        : { thumbnail: { url: `https://heads/${name}.png` } };
+    }
+  });
+  try {
+    await feature.sendWhisperClaimPrompt('Steve', 'hi', 'WheatMagnate');
+    await feature.sendWhisperClaimPrompt('Steve', 'hello?', 'WheatMagnate');
+    const card = status.sent[0];
+    assert.equal(card.embeds[0].author.icon_url, 'attachment://minecraft-avatar-steve.png', 'the claim card uses the attached head');
+    assert.deepEqual(card.attachments, [], 'an updated card replaces its head instead of adding another');
+    assert.equal(card.files.length, 1);
+
+    await feature.postIncomingDialogMessage(dialog, { username: 'Steve', text: 'hi' });
+    const [header, bubble] = dialog.sent;
+    assert.equal(header.embeds[0].author.icon_url, 'attachment://minecraft-avatar-steve.png', 'the dialog header uses the attached head');
+    assert.equal(header.files.length, 1);
+    assert.equal(bubble.embeds[0].author.icon_url, 'attachment://minecraft-avatar-steve.png');
+    assert.ok(requests.every(Boolean), 'heads are never linked from a remote host when files can be attached');
+  } finally {
+    feature.cancelWhisperCleanup('dialog-7');
+  }
+}
+
+async function testDiscordRepliesShowSquareAvatars() {
+  const dialog = fakeChannel('dialog-8');
+  const state = emptyState();
+  state.whisperChannels.set('owner:steve', 'dialog-8');
+  const feature = dialogFeature(state, new Map([['dialog-8', dialog]]), {
+    loadSenderAvatar: async (url, { attachFiles }) => attachFiles
+      ? { thumbnail: { url: 'attachment://discord-avatar.png' }, files: [{ name: 'discord-avatar.png' }] }
+      : { thumbnail: { url } }
+  });
+  const sender = { name: 'bdiev_', iconUrl: 'https://cdn.discordapp.com/avatars/1/a.png' };
+  try {
+    await feature.postOutgoingDialogMessage(dialog, { username: 'Steve', sender, text: 'hi', via: 'WheatMagnate' });
+    const reply = dialog.sent.at(-1);
+    assert.equal(reply.embeds[0].author.icon_url, 'attachment://discord-avatar.png', 'a reply shows the padded, square avatar');
+    assert.equal(reply.files.length, 1);
+
+    await feature.queueOfflineWhisper(dialog, { username: 'Steve', ownerId: 'owner', sender, texts: ['later'] });
+    const queued = dialog.sent.at(-1);
+    assert.equal(queued.embeds[0].author.icon_url, 'attachment://discord-avatar.png', 'a waiting reply shows it too');
+    assert.equal(queued.files.length, 1);
+  } finally {
+    feature.cancelWhisperCleanup('dialog-8');
+  }
+}
+
 async function run() {
   let deleted = false;
   const state = stateWithClaim();
@@ -294,6 +352,8 @@ async function run() {
   await testIdleDialogAsksOwnerFirst();
   await testHeaderFollowsJoinsAndLeaves();
   await testRepliesWaitForOfflinePlayer();
+  await testHeadsAreAttachedLikeGameChat();
+  await testDiscordRepliesShowSquareAvatars();
 
   console.log('Whisper claim tests passed.');
 }
