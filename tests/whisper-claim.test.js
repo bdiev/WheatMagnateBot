@@ -139,6 +139,35 @@ async function testDialogTimersComeBackFromHeader() {
   }
 }
 
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function testIdleDialogAsksOwnerFirst() {
+  const dialog = fakeChannel('dialog-3');
+  dialog.deletable = true;
+  dialog.delete = async () => { dialog.deleted = true; };
+  const state = emptyState();
+  state.whisperChannels.set('owner-1:steve', 'dialog-3');
+  const feature = dialogFeature(state, new Map([['dialog-3', dialog]]), { defaultTtlMs: 1_000, confirmGraceMs: 1_000 });
+
+  await feature.postIncomingDialogMessage(dialog, { username: 'Steve', text: 'hi' });
+  await wait(1_300);
+  const prompt = dialog.sent.find(message => message.embeds?.[0]?.title === 'Delete this dialog?');
+  assert.ok(prompt, 'an idle dialog asks before it is deleted');
+  assert.equal(prompt.content, '<@owner-1>', 'the owner is pinged');
+  assert.deepEqual(prompt.allowedMentions, { users: ['owner-1'] });
+  assert.equal(prompt.components[0].components[0].data.custom_id, 'keep_dialog_dialog-3');
+  assert.equal(dialog.deleted, undefined, 'nothing is deleted while the owner can still answer');
+
+  await feature.keepDialog(dialog);
+  assert.equal(await dialog.messages.fetch(prompt.id).catch(() => null), null, 'keeping the dialog removes the question');
+  await wait(600);
+  assert.equal(dialog.deleted, undefined, 'a kept dialog starts its idle time again');
+
+  await wait(2_000);
+  assert.equal(dialog.deleted, true, 'with no answer the dialog is deleted after the grace time');
+  assert.equal(state.whisperChannels.has('owner-1:steve'), false);
+}
+
 async function run() {
   let deleted = false;
   const state = stateWithClaim();
@@ -182,6 +211,7 @@ async function run() {
   await testClaimCardKeepsRecentMessages();
   await testDialogHeaderAndBubbles();
   await testDialogTimersComeBackFromHeader();
+  await testIdleDialogAsksOwnerFirst();
 
   console.log('Whisper claim tests passed.');
 }

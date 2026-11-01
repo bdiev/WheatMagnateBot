@@ -48,9 +48,12 @@ function createWhisperFeature({
   getPlayerColor = async () => DEFAULT_PLAYER_COLOR,
   // username -> { online, replyFrom }: what the dialog header shows
   describeDialog = () => ({}),
+  // How long the owner has to answer "Delete this dialog?" before it goes
+  confirmGraceMs = 5 * 60_000,
   debugLog = () => {}
 }) {
   const dialogHeaders = state.whisperDialogHeaders || new Map();
+  const deletePrompts = state.whisperDeletePrompts || new Map();
   const channelQueues = new Map();
 
   // Messages of one dialog go out one after another, so the header is made
@@ -248,14 +251,15 @@ function createWhisperFeature({
       .catch(e => debugLog('[Whisper] Failed to refresh dialog header:', e.message));
   }
 
-  function touchDialog(channelId) {
-    const ttlMs = state.customDialogTTL.get(channelId) || defaultTtlMs;
-    state.whisperDeleteTimestamps.set(channelId, Date.now() + ttlMs);
-    scheduleWhisperCleanup(channelId, ttlMs);
+  function touchDialog(channel) {
+    const ttlMs = state.customDialogTTL.get(channel.id) || defaultTtlMs;
+    state.whisperDeleteTimestamps.set(channel.id, Date.now() + ttlMs);
+    scheduleWhisperCleanup(channel.id, ttlMs);
+    dismissDeletePrompt(channel);
   }
 
   async function postDialogBubble(channel, username, embed, files) {
-    touchDialog(channel.id);
+    touchDialog(channel);
     await upsertDialogHeader(channel, username).catch(e => {
       debugLog('[Whisper] Failed to update dialog header:', e.message);
     });
@@ -295,8 +299,124 @@ function createWhisperFeature({
 
   function setDialogTtl(channel, ttlMs) {
     state.customDialogTTL.set(channel.id, ttlMs);
-    touchDialog(channel.id);
+    touchDialog(channel);
     return refreshDialogHeader(channel);
+  }
+
+  // The owner is in the channel mapping; after a lost mapping file, the one
+  // member the channel was opened for
+  async function resolveDialogOwnerId(channelId, channel = null) {
+    const ownerId = getDialogOwnerId(channelId);
+    if (ownerId) return ownerId;
+    try {
+      const ch = channel || await discordClient.channels.fetch(channelId);
+      if (!ch?.isTextBased?.() || !ch.guild) return null;
+      const overwrites = ch.permissionOverwrites?.cache ?? new Map();
+      for (const ov of overwrites.values()) {
+        if (ov.id === ch.guild.roles.everyone.id || ov.id === discordClient.user.id) continue;
+        const allowsView = ov.allow?.has?.(PermissionsBitField.Flags.ViewChannel);
+        const isMemberType = ov.type === 1 || ov.type === 'member';
+        if (isMemberType && allowsView) return ov.id;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function buildDeletePromptComponents(channelId) {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`keep_dialog_${channelId}`)
+          .setLabel('Keep dialog')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`delete_dialog_${channelId}`)
+          .setLabel('Delete now')
+          .setEmoji(emojis.farm.lavaBucket)
+          .setStyle(ButtonStyle.Danger)
+      )
+    ];
+  }
+
+  function isDeletePrompt(message, channelId) {
+    if (discordClient.user?.id && message?.author?.id !== discordClient.user.id) return false;
+    return (message?.components || []).some(row => (row.components || [])
+      .some(component => component.customId === `keep_dialog_${channelId}`));
+  }
+
+  function dismissDeletePrompt(channel) {
+    const promptId = deletePrompts.get(channel.id);
+    if (!promptId) return;
+    deletePrompts.delete(channel.id);
+    channel.messages.fetch(promptId)
+      .then(message => message.delete())
+      .catch(() => {});
+  }
+
+  async function deleteDialogChannel(channelId, reason) {
+    try {
+      const channel = await discordClient.channels.fetch(channelId);
+      if (channel && channel.deletable) {
+        removeWhisperChannelMappings(channelId);
+        await channel.delete(reason);
+      }
+    } catch (e) {
+      if (e?.code === 10003) removeWhisperChannelMappings(channelId);
+      else console.error('[Whisper] Failed to auto-delete dialog channel:', e.message);
+    }
+  }
+
+  function scheduleFinalDelete(channelId, delayMs) {
+    cancelWhisperCleanup(channelId);
+    const timer = setTimeout(() => {
+      state.whisperCleanupTimers.delete(channelId);
+      deleteDialogChannel(channelId, 'Dialog auto-deleted after inactivity');
+    }, Math.max(1_000, delayMs));
+    state.whisperCleanupTimers.set(channelId, timer);
+  }
+
+  // When a dialog has been idle long enough, its owner is pinged and asked
+  // first; the channel goes only if nobody keeps it within the grace time
+  async function askBeforeDelete(channelId) {
+    let channel;
+    try {
+      channel = await discordClient.channels.fetch(channelId);
+    } catch (e) {
+      if (e?.code === 10003) removeWhisperChannelMappings(channelId);
+      else debugLog('[Whisper] Failed to fetch idle dialog:', e.message);
+      return;
+    }
+    if (!channel?.isTextBased?.()) return;
+    const ownerId = await resolveDialogOwnerId(channelId, channel);
+    if (!ownerId) {
+      await deleteDialogChannel(channelId, 'Dialog auto-deleted after inactivity');
+      return;
+    }
+
+    const ttlMs = state.customDialogTTL.get(channelId) || defaultTtlMs;
+    const deleteAt = Date.now() + confirmGraceMs;
+    state.whisperDeleteTimestamps.set(channelId, deleteAt);
+    scheduleFinalDelete(channelId, confirmGraceMs);
+    await inChannelQueue(channelId, async () => {
+      const prompt = await channel.send({
+        content: `<@${ownerId}>`,
+        embeds: [{
+          title: 'Delete this dialog?',
+          description: `No messages for ${formatTtlMinutes(ttlMs)}. The channel will be deleted <t:${Math.floor(deleteAt / 1000)}:R> unless you keep it.`,
+          color: 0xF1C40F
+        }],
+        components: buildDeletePromptComponents(channelId),
+        allowedMentions: { users: [ownerId] }
+      });
+      deletePrompts.set(channelId, prompt.id);
+      await upsertDialogHeader(channel).catch(() => {});
+    }).catch(e => debugLog('[Whisper] Failed to ask before deleting dialog:', e.message));
+  }
+
+  // "Keep dialog": the question goes away and the idle time starts again
+  async function keepDialog(channel) {
+    touchDialog(channel);
+    await refreshDialogHeader(channel);
   }
 
   function removeWhisperChannelMappings(channelId) {
@@ -309,6 +429,7 @@ function createWhisperFeature({
     }
     if (changed) saveWhisperChannels();
     dialogHeaders.delete(channelId);
+    deletePrompts.delete(channelId);
     state.whisperDeleteTimestamps.delete(channelId);
     state.customDialogTTL.delete(channelId);
   }
@@ -323,26 +444,17 @@ function createWhisperFeature({
 
   function scheduleWhisperCleanup(channelId, ttlMs = defaultTtlMs) {
     cancelWhisperCleanup(channelId);
-    const timer = setTimeout(async () => {
-      try {
-        const channel = await discordClient.channels.fetch(channelId);
-        if (channel && channel.deletable) {
-          removeWhisperChannelMappings(channelId);
-          await channel.delete('Dialog auto-deleted after inactivity');
-        }
-      } catch (e) {
-        if (e?.code === 10003) removeWhisperChannelMappings(channelId);
-        else console.error('[Whisper] Failed to auto-delete dialog channel:', e.message);
-      } finally {
-        cancelWhisperCleanup(channelId);
-      }
+    const timer = setTimeout(() => {
+      state.whisperCleanupTimers.delete(channelId);
+      askBeforeDelete(channelId).catch(e => debugLog('[Whisper] Idle dialog check failed:', e.message));
     }, Math.max(1_000, ttlMs));
 
     state.whisperCleanupTimers.set(channelId, timer);
   }
 
   // Timers live in memory, so after a restart each dialog takes its deletion
-  // time and idle length back from its header
+  // time and idle length back from its header, and a question already asked
+  // keeps its deadline instead of being asked again
   async function restoreDialogTimers() {
     const channelIds = [...new Set(state.whisperChannels.values())];
     for (const channelId of channelIds) {
@@ -362,7 +474,14 @@ function createWhisperFeature({
         if (ttlMs && ttlMs !== defaultTtlMs) state.customDialogTTL.set(channelId, ttlMs);
         const remaining = deleteAt ? deleteAt - Date.now() : (ttlMs || defaultTtlMs);
         state.whisperDeleteTimestamps.set(channelId, Date.now() + Math.max(0, remaining));
-        scheduleWhisperCleanup(channelId, remaining);
+        const recent = await channel.messages.fetch({ limit: 20 }).catch(() => new Map());
+        const prompt = [...recent.values()].find(message => isDeletePrompt(message, channelId));
+        if (prompt) {
+          deletePrompts.set(channelId, prompt.id);
+          scheduleFinalDelete(channelId, remaining);
+        } else {
+          scheduleWhisperCleanup(channelId, remaining);
+        }
       } catch (e) {
         if (e?.code === 10003) removeWhisperChannelMappings(channelId);
         else debugLog('[Whisper] Failed to restore dialog timer:', e.message);
@@ -593,6 +712,8 @@ function createWhisperFeature({
     postOutgoingDialogMessage,
     refreshDialogHeader,
     setDialogTtl,
+    keepDialog,
+    resolveDialogOwnerId,
     restoreDialogTimers,
     removeWhisperChannelMappings,
     cancelWhisperCleanup,

@@ -1592,6 +1592,8 @@ const {
   postIncomingDialogMessage,
   postOutgoingDialogMessage,
   setDialogTtl,
+  keepDialog,
+  resolveDialogOwnerId,
   restoreDialogTimers,
   removeWhisperChannelMappings,
   cancelWhisperCleanup,
@@ -11864,7 +11866,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
     if (interaction.channelId !== DISCORD_CHANNEL_ID) {
       // Allow dialog buttons and select menus in their own channels
-      if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('set_ttl_') || interaction.customId?.startsWith('claim_whisper_'))) && 
+      if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('keep_dialog_') || interaction.customId?.startsWith('set_ttl_') || interaction.customId?.startsWith('claim_whisper_'))) && 
           !(interaction.isButton() && isAdminPanelCustomId(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
           !(interaction.isStringSelectMenu() && isAdminPanelSelectCustomId(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
           !(interaction.isStringSelectMenu() && (interaction.customId?.startsWith('add_whitelist_select') || interaction.customId?.startsWith('delete_whitelist_select')) && interaction.user.id === DISCORD_OWNER_ID) &&
@@ -12106,31 +12108,22 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
           return;
         }
+      if (interaction.customId.startsWith('keep_dialog_')) {
+        const channelId = interaction.customId.replace('keep_dialog_', '');
+        const ownerId = await resolveDialogOwnerId(channelId);
+        if (!ownerId || interaction.user.id !== ownerId) {
+          await interaction.reply({ content: 'Only the dialog owner can keep this dialog.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        await interaction.deferUpdate();
+        const dialogChannel = interaction.channel || await discordClient.channels.fetch(channelId).catch(() => null);
+        if (dialogChannel) await keepDialog(dialogChannel);
+        return;
+      }
       if (interaction.customId.startsWith('delete_dialog_')) {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const channelId = interaction.customId.replace('delete_dialog_', '');
-        let ownerId = getDialogOwnerId(channelId);
-
-        if (!ownerId) {
-          // Fallback: derive owner from channel permission overwrites after restart
-          try {
-            const ch = await discordClient.channels.fetch(channelId);
-            if (ch && ch.isTextBased() && ch.guild) {
-              const overwrites = ch.permissionOverwrites?.cache ?? new Map();
-              for (const ov of overwrites.values()) {
-                // Skip everyone role and the bot itself
-                if (ov.id === ch.guild.roles.everyone.id || ov.id === discordClient.user.id) continue;
-                // Only consider member overwrites and those that explicitly allow ViewChannel
-                const allowsView = ov.allow?.has?.(PermissionsBitField.Flags.ViewChannel);
-                const isMemberType = (ov.type === 1 || ov.type === 'member');
-                if (isMemberType && allowsView) {
-                  ownerId = ov.id;
-                  break;
-                }
-              }
-            }
-          } catch (_) {}
-        }
+        const ownerId = await resolveDialogOwnerId(channelId);
 
         if (!ownerId) {
           await safeEditInteraction(interaction, { content: 'Cannot delete: dialog owner not found.', components: [] });
@@ -12160,26 +12153,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       if (interaction.customId.startsWith('set_ttl_')) {
         const channelId = interaction.customId.replace('set_ttl_', '');
-        let ownerId = getDialogOwnerId(channelId);
-
-        if (!ownerId) {
-          // Fallback: derive owner from channel permission overwrites
-          try {
-            const ch = await discordClient.channels.fetch(channelId);
-            if (ch && ch.isTextBased() && ch.guild) {
-              const overwrites = ch.permissionOverwrites?.cache ?? new Map();
-              for (const ov of overwrites.values()) {
-                if (ov.id === ch.guild.roles.everyone.id || ov.id === discordClient.user.id) continue;
-                const allowsView = ov.allow?.has?.(PermissionsBitField.Flags.ViewChannel);
-                const isMemberType = (ov.type === 1 || ov.type === 'member');
-                if (isMemberType && allowsView) {
-                  ownerId = ov.id;
-                  break;
-                }
-              }
-            }
-          } catch (_) {}
-        }
+        const ownerId = await resolveDialogOwnerId(channelId);
 
         if (!ownerId) {
           await interaction.reply({ content: 'Cannot set auto-delete time: dialog owner not found.', flags: MessageFlags.Ephemeral });
