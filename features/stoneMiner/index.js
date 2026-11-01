@@ -153,6 +153,10 @@ function createStoneMiner({
   let hopperFullSince = null;
   let nextFoodCheckAt = 0;
   let stopReason = saved.stopReason || null;
+  // What the barrel and the hopper held when the bot last opened them
+  let barrelSeen = null;
+  let hopperSeen = null;
+  let barrelCheckDue = true;
 
   function validPosition(pos) {
     return pos && [pos.x, pos.y, pos.z].every(Number.isInteger);
@@ -192,7 +196,9 @@ function createStoneMiner({
       sessionStartedAt,
       totalMined,
       lastErrorMessage,
-      stopReason
+      stopReason,
+      barrel: barrelSeen && { ...barrelSeen },
+      hopper: hopperSeen && { ...hopperSeen }
     };
   }
 
@@ -270,6 +276,8 @@ function createStoneMiner({
   function retirePickaxe(item, inventorySlot) {
     const tracked = pickaxeBlocks.get(inventorySlot) || { blocks: 0, fromFresh: false };
     pickaxeBlocks.delete(inventorySlot);
+    // One the bot came with already worn says nothing about pickaxe life
+    if (!tracked.blocks) return;
     report(onPickaxeRetired, { name: item.name, blocksMined: tracked.blocks, countInAverage: tracked.fromFresh });
   }
 
@@ -385,6 +393,8 @@ function createStoneMiner({
     running = true;
     sessionMined = 0;
     sessionStartedAt = new Date().toISOString();
+    // A first look into the barrel, so the site knows its pickaxes
+    barrelCheckDue = true;
     log('[Stone Miner] Started.');
     loop(generation).catch(error => log(`[Stone Miner] Loop crashed: ${error.message}`));
   }
@@ -524,6 +534,7 @@ function createStoneMiner({
         if (await shiftClick(current, window, stack.slot)) moved = true;
       }
       contents = hopperContents(window);
+      hopperSeen = { items: contents.total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
     } finally {
       try { current.closeWindow(window); } catch {}
     }
@@ -636,7 +647,7 @@ function createStoneMiner({
     const wornPickaxes = items.filter(item => isPickaxe(item) && !isPickaxeUsable(current, item));
     // Without food in the barrel it is looked for again only once a minute
     const needsFood = !items.some(item => isSafeFood(current, item)) && Date.now() >= nextFoodCheckAt;
-    if (!needsPickaxe && !needsFood && !wornPickaxes.length) return;
+    if (!needsPickaxe && !needsFood && !wornPickaxes.length && !barrelCheckDue) return;
 
     const storage = findStorage(current);
     if (!storage) {
@@ -667,6 +678,13 @@ function createStoneMiner({
         foodFound = Boolean(food);
         if (food) await shiftClick(current, window, food.slot);
       }
+      barrelSeen = {
+        pickaxes: containerItems().filter(item => isPickaxe(item) && isPickaxeUsable(current, item)).length,
+        wornPickaxes: containerItems().filter(item => isPickaxe(item) && !isPickaxeUsable(current, item)).length,
+        food: containerItems().filter(item => isSafeFood(current, item)).reduce((sum, item) => sum + item.count, 0),
+        at: new Date().toISOString()
+      };
+      barrelCheckDue = false;
     } finally {
       try { current.closeWindow(window); } catch {}
     }

@@ -3796,6 +3796,9 @@ async function getStoneMinerStats(currentUser, url) {
       food: inventory.filter(item => STONE_MINER_FOODS.some(part => item.name.includes(part))).reduce((sum, item) => sum + (Number(item.count) || 0), 0),
       stone: inventory.filter(item => STONE_MINER_STONES.has(item.name)).reduce((sum, item) => sum + (Number(item.count) || 0), 0)
     } : null,
+    // As the bot saw them the last time it opened them
+    barrel: miner.barrel || null,
+    hopper: miner.hopper || null,
     state: {
       enabled: Boolean(miner.enabled),
       running: Boolean(miner.running && connected),

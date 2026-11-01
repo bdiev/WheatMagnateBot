@@ -740,7 +740,7 @@
               <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Diamond_Pickaxe.png" alt=""></span>
             </div>
             <strong id="stoneMinerPickaxeAverage">-</strong>
-            <small id="stoneMinerRetiredPickaxes">retired pickaxes: -</small>
+            <small id="stoneMinerRetiredPickaxes">blocks per pickaxe</small>
           </article>
         </section>
 
@@ -826,16 +826,16 @@
             </div>
             <dl class="miner-supplies">
               <div>
-                <dt><img src="/items/Iron_Pickaxe.png" alt="" aria-hidden="true">Pickaxe</dt>
+                <dt><img src="/items/Iron_Pickaxe.png" alt="" aria-hidden="true">Pickaxe in hand</dt>
                 <dd>
                   <strong id="stoneMinerPickaxe">-</strong>
                   <span class="miner-durability" aria-hidden="true"><i id="stoneMinerPickaxeBar"></i></span>
                 </dd>
               </div>
-              <div>
-                <dt><img src="/items/Barrel.png" alt="" aria-hidden="true">Spare pickaxes</dt>
+              <div title="Usable pickaxes in the barrel, as of the last time the bot opened it">
+                <dt><img src="/items/Barrel.png" alt="" aria-hidden="true">Pickaxes in barrel</dt>
                 <dd>
-                  <strong id="stoneMinerSparePickaxes">-</strong>
+                  <strong id="stoneMinerBarrelPickaxes">-</strong>
                 </dd>
               </div>
               <div>
@@ -844,11 +844,18 @@
                   <strong id="stoneMinerFood">-</strong>
                 </dd>
               </div>
-              <div>
-                <dt><img src="/items/Hopper.png" alt="" aria-hidden="true">Stone to hopper</dt>
+              <div title="Stone the bot carries; at 64 it goes into the hopper">
+                <dt><img src="/items/Cobblestone.png" alt="" aria-hidden="true">Stone carried</dt>
                 <dd>
                   <strong id="stoneMinerCarried">-</strong>
                   <span class="miner-durability miner-stack" aria-hidden="true"><i id="stoneMinerCarriedBar"></i></span>
+                </dd>
+              </div>
+              <div title="How full the hopper was the last time the bot filled it">
+                <dt><img src="/items/Hopper.png" alt="" aria-hidden="true">Hopper</dt>
+                <dd>
+                  <strong id="stoneMinerHopper">-</strong>
+                  <span class="miner-durability miner-stack" aria-hidden="true"><i id="stoneMinerHopperBar"></i></span>
                 </dd>
               </div>
             </dl>
@@ -1867,6 +1874,6 @@
     <script src="/player-accent.js?v=1" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=363" defer></script>
+    <script src="/app.js?v=364" defer></script>
   </body>
 </html>

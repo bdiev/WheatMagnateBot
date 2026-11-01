@@ -12092,10 +12092,22 @@ function renderStoneMinerGenerator(payload) {
     ? `${formatMobLabel(pickaxe.name)}${percent == null ? '' : ` · ${percent}%`}`
     : carried ? 'None' : '-';
   setMinerMeter('#stoneMinerPickaxeBar', percent ?? (pickaxe ? 100 : 0));
-  $('#stoneMinerSparePickaxes').textContent = carried ? formatNumber(Math.max(0, (carried.pickaxes || 0) - (pickaxe ? 1 : 0))) : '-';
-  $('#stoneMinerFood').textContent = carried ? formatNumber(carried.food || 0) : '-';
-  $('#stoneMinerCarried').textContent = carried ? `${formatNumber(carried.stone || 0)} / 64` : '-';
+  const barrel = payload.barrel;
+  const barrelPickaxes = $('#stoneMinerBarrelPickaxes');
+  barrelPickaxes.textContent = barrel
+    ? `${formatNumber(barrel.pickaxes || 0)}${barrel.wornPickaxes ? ` · ${formatNumber(barrel.wornPickaxes)} worn` : ''}`
+    : 'not opened yet';
+  barrelPickaxes.title = barrel?.at ? `checked ${formatDate(barrel.at)}` : '';
+  const food = carried ? formatNumber(carried.food || 0) : '-';
+  $('#stoneMinerFood').textContent = barrel ? `${food} · ${formatNumber(barrel.food || 0)} in barrel` : food;
+  $('#stoneMinerCarried').textContent = carried ? `${formatNumber(Math.min(carried.stone || 0, 9999))} / 64` : '-';
   setMinerMeter('#stoneMinerCarriedBar', carried ? ((carried.stone || 0) / 64) * 100 : 0, 'stack');
+  const hopper = payload.hopper;
+  const hopperText = $('#stoneMinerHopper');
+  hopperText.textContent = hopper ? `${formatNumber(hopper.items)} / ${formatNumber(hopper.capacity)}` : 'not filled yet';
+  hopperText.title = hopper?.at ? `checked ${formatDate(hopper.at)}` : '';
+  const hopperPercent = hopper?.capacity ? (hopper.items / hopper.capacity) * 100 : 0;
+  setMinerMeter('#stoneMinerHopperBar', hopperPercent, hopperPercent >= 100 ? 'low' : 'stack');
 }
 
 function renderStoneMiner(payload = {}) {
@@ -12124,7 +12136,9 @@ function renderStoneMiner(payload = {}) {
     : 'current session average';
   const pickaxes = payload.pickaxes || {};
   $('#stoneMinerPickaxeAverage').textContent = pickaxes.averageBlocks == null ? '-' : formatNumber(pickaxes.averageBlocks);
-  $('#stoneMinerRetiredPickaxes').textContent = `retired pickaxes: ${formatNumber(pickaxes.retired || 0)}`;
+  $('#stoneMinerRetiredPickaxes').textContent = pickaxes.retired
+    ? `blocks per pickaxe · ${formatNumber(pickaxes.retired)} worn out`
+    : 'blocks per pickaxe · none worn out yet';
   renderStoneMinerControl(miner);
   renderStoneMinerGenerator(payload);
   requestAnimationFrame(() => drawChartById('stoneMinerChart'));

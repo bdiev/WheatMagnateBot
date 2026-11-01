@@ -204,14 +204,24 @@ async function testMinesGrownBlocksAndSwapsWornPickaxe() {
   await until(() => bot.dug.length === 2, 'it keeps mining as the block grows back');
   assert.equal(miner.getStatus().sessionMined, 2);
   assert.deepEqual(mined, ['cobblestone', 'cobblestone'], 'every mined block is reported for the statistics');
-  assert.deepEqual(retired, [{ name: 'diamond_pickaxe', blocksMined: 0, countInAverage: false }],
-    'a pickaxe the bot came with is reported but kept out of the average');
+  assert.deepEqual(retired, [], 'a pickaxe the bot came with already worn is not counted');
   assert.ok(miner.getStatus().sessionStartedAt);
+  const barrel = miner.getStatus().barrel;
+  assert.equal(barrel.pickaxes, 0, 'the site sees what is left in the barrel');
+  assert.equal(barrel.wornPickaxes, 1);
+
+  // The fresh pickaxe wears out after two blocks and is swapped for the next one
+  bot.slots[bot.heldItem.slot].durabilityUsed = 1555;
+  chest.push(item('diamond_pickaxe', 5, { maxDurability: 1561, durabilityUsed: 0 }));
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  await until(() => bot.dug.length === 3, 'it mines on with the next pickaxe');
+  assert.deepEqual(retired, [{ name: 'diamond_pickaxe', blocksMined: 2, countInAverage: true }],
+    'a pickaxe taken fresh and worn out here counts in the average');
 
   miner.stop();
   bot.setBlock(1, 65, 0, 'cobblestone');
   await wait(100);
-  assert.equal(bot.dug.length, 2, 'a stopped miner does not mine');
+  assert.equal(bot.dug.length, 3, 'a stopped miner does not mine');
   miner.dispose();
 }
 
