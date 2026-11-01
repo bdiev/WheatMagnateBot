@@ -12028,6 +12028,7 @@ function renderStoneMinerControl(miner) {
   else if (miner.enabled) text = `${STONE_MINER_PHASES[miner.phase] || 'Starting'}.`;
   else text = blocks ? 'Stopped.' : 'Learn the generator blocks first.';
   if (miner?.lastErrorMessage && miner.enabled) text = miner.lastErrorMessage;
+  if (miner?.stopReason && !miner.enabled) text = miner.stopReason;
   status.textContent = text;
   status.title = text;
   if (learnStatus) {
@@ -12107,7 +12108,9 @@ function renderStoneMiner(payload = {}) {
   const minerState = miner.learning ? 'learning' : miner.running ? 'mining' : miner.enabled ? 'waiting' : 'stopped';
   const tab = $('#tab-stone-miner');
   if (tab) tab.dataset.minerState = minerState;
-  $('#stoneMinerState').textContent = { learning: 'Learning', mining: 'Mining', waiting: 'Waiting', stopped: 'Stopped' }[minerState];
+  $('#stoneMinerState').textContent = minerState === 'stopped' && miner.stopReason
+    ? 'Hopper Full'
+    : { learning: 'Learning', mining: 'Mining', waiting: 'Waiting', stopped: 'Stopped' }[minerState];
   $('#stoneMinerUpdated').textContent = `last update: ${formatDate(miner.observedAt)}`;
   setRollingNumber('#stoneMinerTotal', payload.totalMined || 0);
   setRollingNumber('#stoneMinerToday', payload.todayMined || 0);

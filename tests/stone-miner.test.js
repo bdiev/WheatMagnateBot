@@ -94,12 +94,32 @@ function fakeBot({ inventory = [], chest = [], hopper = [] } = {}) {
     bot.window = window;
     return window;
   };
-  bot.moveSlotItem = async (from, to) => {
+  // Dragging with the cursor is refused by the server while a container is
+  // open; only a shift-click moves a stack
+  bot.moveSlotItem = async () => { throw new Error('moveSlotItem is refused by the server'); };
+  bot.clickWindow = async (slot, button, mode) => {
+    assert.equal(mode, 1, 'stacks are moved with a shift-click');
     const { window } = bot;
-    const moving = window.slots[from];
-    const target = window.slots[to];
-    window.slots[to] = moving && { ...moving, slot: to };
-    window.slots[from] = target && { ...target, slot: from };
+    const moving = window.slots[slot];
+    if (!moving) return;
+    const toContainer = slot >= window.inventoryStart;
+    const [from, to] = toContainer ? [0, window.inventoryStart] : [window.inventoryStart, window.inventoryEnd];
+    let left = moving.count;
+    for (let target = from; target < to && left > 0; target += 1) {
+      const entry = window.slots[target];
+      if (entry && entry.name === moving.name && entry.count < 64 && moving.count > 1) {
+        const add = Math.min(64 - entry.count, left);
+        entry.count += add;
+        left -= add;
+      }
+    }
+    for (let target = from; target < to && left > 0; target += 1) {
+      if (!window.slots[target]) {
+        window.slots[target] = { ...moving, count: left, slot: target };
+        left = 0;
+      }
+    }
+    window.slots[slot] = left ? { ...moving, count: left } : null;
   };
   // Closing writes the window's inventory part back to the bot
   bot.closeWindow = window => {
@@ -224,6 +244,33 @@ async function testFillsTheHopperFromAStack() {
   miner.dispose();
 }
 
+async function testStopsWhenTheHopperStaysFull() {
+  fs.rmSync(stateFile, { force: true });
+  const inventory = [
+    item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 }), item('bread', 37),
+    item('cobblestone', 9, { count: 64 })
+  ];
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('cobblestone', slot, { count: 64 }));
+  const { bot } = fakeBot({ inventory, hopper });
+  const miner = createStoneMiner({ stateFile, hopperRetryMs: 20, hopperStallMs: 80 });
+  miner.attachBot(bot);
+  miner.setLearning(true);
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  bot.setBlock(1, 65, 0, 'air');
+  await until(() => !miner.getStatus().enabled, 'a hopper that does not drain stops the miner');
+  const status = miner.getStatus();
+  assert.match(status.stopReason, /hopper/i);
+  assert.equal(status.running, false);
+  assert.equal(createStoneMiner({ stateFile }).getStatus().stopReason, status.stopReason, 'the reason survives a restart');
+
+  hopper.length = 0;
+  miner.start();
+  assert.equal(miner.getStatus().stopReason, null, 'starting again clears the reason');
+  await until(() => hopper.length === 1, 'an emptied hopper takes the stone again');
+  assert.equal(miner.getStatus().enabled, true);
+  miner.dispose();
+}
+
 async function testTakesPickaxesFromTheBarrelBelow() {
   fs.rmSync(stateFile, { force: true });
   const barrel = [item('diamond_pickaxe', 0, { maxDurability: 1561, durabilityUsed: 0 })];
@@ -263,6 +310,7 @@ async function testKeepsRetryingWithoutPickaxe() {
   await testLearnsTheLineInFrontFromOneBrokenBlock();
   await testMinesGrownBlocksAndSwapsWornPickaxe();
   await testFillsTheHopperFromAStack();
+  await testStopsWhenTheHopperStaysFull();
   await testTakesPickaxesFromTheBarrelBelow();
   await testKeepsRetryingWithoutPickaxe();
   fs.rmSync(stateFile, { force: true });

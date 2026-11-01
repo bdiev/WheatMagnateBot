@@ -238,6 +238,8 @@ function createModulesForBot(context, {
       onChange: status => {
         // Learning ends by starting the miner on its own
         if (status?.enabled && context.task === 'idle') context.task = 'stone_miner';
+        // A full hopper turns the miner off on its own
+        if (status && !status.enabled && context.task === 'stone_miner') context.task = 'idle';
         context.emit?.('status', context.getStatus?.());
       },
       ...stoneMinerHooks

@@ -13,9 +13,10 @@
  *      chest or barrel) and a fresh one is taken from it; food is taken from
  *      it too when the bot has none
  *   4. Once the bot carries a stack of mined stone, it is put into the hopper
- *      in front of it
+ *      in front of it; when the hopper stays full without draining, the
+ *      miner turns itself off
  *
- * Like the Obsidian Farm it never stops on its own: every error is retried.
+ * Apart from a full hopper it never stops on its own: every error is retried.
  */
 
 const fs = require('node:fs');
@@ -49,6 +50,8 @@ const DEPOSIT_FROM_COUNT = 64;
 // A hopper holds five stacks and drains slowly: when it was full, the bot
 // mines on and tries again a little later
 const HOPPER_RETRY_MS = 10_000;
+// Full for this long without draining: everything after the hopper is full
+const HOPPER_STALL_MS = 30_000;
 const REGROW_WAIT_MS = 500;
 const DIG_TIMEOUT_MS = 10_000;
 const CONTAINER_TIMEOUT_MS = 5_000;
@@ -123,7 +126,8 @@ function isSafeFood(bot, item) {
 }
 
 function createStoneMiner({
-  stateFile = null, log = () => {}, onChange = () => {}, onMined = () => {}, onPickaxeRetired = () => {}
+  stateFile = null, log = () => {}, onChange = () => {}, onMined = () => {}, onPickaxeRetired = () => {},
+  hopperRetryMs = HOPPER_RETRY_MS, hopperStallMs = HOPPER_STALL_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -146,6 +150,9 @@ function createStoneMiner({
   let lastSavedAt = 0;
   let regrowWaiters = [];
   let nextHopperAttemptAt = 0;
+  let hopperFullSince = null;
+  let nextFoodCheckAt = 0;
+  let stopReason = saved.stopReason || null;
 
   function validPosition(pos) {
     return pos && [pos.x, pos.y, pos.z].every(Number.isInteger);
@@ -165,7 +172,7 @@ function createStoneMiner({
     if (!stateFile) return;
     try {
       fs.mkdirSync(path.dirname(stateFile), { recursive: true });
-      fs.writeFileSync(stateFile, JSON.stringify({ ...desired, totalMined }, null, 2), 'utf8');
+      fs.writeFileSync(stateFile, JSON.stringify({ ...desired, totalMined, stopReason }, null, 2), 'utf8');
     } catch (error) {
       log(`[Stone Miner] Could not save state: ${error.message}`);
     }
@@ -184,7 +191,8 @@ function createStoneMiner({
       sessionMined,
       sessionStartedAt,
       totalMined,
-      lastErrorMessage
+      lastErrorMessage,
+      stopReason
     };
   }
 
@@ -340,6 +348,8 @@ function createStoneMiner({
     learning = false;
     desired.enabled = true;
     lastErrorMessage = null;
+    stopReason = null;
+    hopperFullSince = null;
     saveState();
     if (bot?.entity && !running) startLoop();
     return getStatus();
@@ -347,6 +357,7 @@ function createStoneMiner({
 
   function stop() {
     desired.enabled = false;
+    stopReason = null;
     learning = false;
     haltLoop();
     saveState();
@@ -489,36 +500,107 @@ function createStoneMiner({
   }
 
   // From a full stack on, the mined stone goes into the hopper in front of the
-  // bot, as many stacks as it has free slots
+  // bot. A hopper that stays full without draining means everything after it
+  // is full too, and the miner turns itself off
   async function depositMinedStone(current) {
-    const stacks = () => current.inventory.items().filter(item => MINED_ITEMS.has(item.name));
-    const carried = stacks().reduce((sum, item) => sum + item.count, 0);
+    const carried = current.inventory.items()
+      .filter(item => MINED_ITEMS.has(item.name))
+      .reduce((sum, item) => sum + item.count, 0);
     if (carried < DEPOSIT_FROM_COUNT || Date.now() < nextHopperAttemptAt) return;
     const hopper = findHopper(current);
     if (!hopper) {
-      nextHopperAttemptAt = Date.now() + HOPPER_RETRY_MS;
+      nextHopperAttemptAt = Date.now() + hopperRetryMs;
       log('[Stone Miner] No hopper within reach for the mined stone.');
       return;
     }
     phase = 'depositing';
-    try { current.stopDigging?.(); } catch {}
-    await current.lookAt(hopper.position.offset(0.5, 0.5, 0.5), true);
-    const window = await withTimeout(current.openContainer(hopper), CONTAINER_TIMEOUT_MS, 'The hopper did not open.');
-    let full = false;
+    const window = await openWindow(current, hopper, 'The hopper did not open.');
+    let moved = false;
+    let contents;
     try {
       const start = window.inventoryStart;
       for (const stack of window.slots.slice(start, window.inventoryEnd).filter(item => item && MINED_ITEMS.has(item.name))) {
-        const destination = window.firstEmptySlotRange(0, start);
-        if (destination == null) {
-          full = true;
-          break;
-        }
-        await current.moveSlotItem(stack.slot, destination);
+        if (!hopperRoom(window)) break;
+        if (await shiftClick(current, window, stack.slot)) moved = true;
       }
+      contents = hopperContents(window);
     } finally {
       try { current.closeWindow(window); } catch {}
     }
-    if (full) nextHopperAttemptAt = Date.now() + HOPPER_RETRY_MS;
+
+    if (moved || contents.room > 0) {
+      hopperFullSince = null;
+      return;
+    }
+    nextHopperAttemptAt = Date.now() + hopperRetryMs;
+    if (!hopperFullSince || contents.total < hopperFullSince.total) {
+      hopperFullSince = { at: Date.now(), total: contents.total };
+      log('[Stone Miner] The hopper is full; checking whether it drains.');
+      return;
+    }
+    if (Date.now() - hopperFullSince.at >= hopperStallMs) {
+      stopBecause(`The hopper stayed full for ${Math.round(hopperStallMs / 1000)} s: mining stopped.`);
+    }
+  }
+
+  function hopperRoom(window) {
+    return hopperContents(window).room > 0;
+  }
+
+  // Room for more stone and the items already in the hopper
+  function hopperContents(window) {
+    let room = 0;
+    let total = 0;
+    for (const item of window.slots.slice(0, window.inventoryStart)) {
+      if (!item) {
+        room += 64;
+        continue;
+      }
+      total += item.count;
+      if (MINED_ITEMS.has(item.name)) room += Math.max(0, (item.stackSize || 64) - item.count);
+    }
+    return { room, total };
+  }
+
+  function stopBecause(reason) {
+    log(`[Stone Miner] ${reason}`);
+    desired.enabled = false;
+    stopReason = reason;
+    hopperFullSince = null;
+    haltLoop();
+    saveState();
+    notifyChange();
+  }
+
+  async function openWindow(current, block, timeoutMessage) {
+    try { current.stopDigging?.(); } catch {}
+    await current.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
+    const window = await withTimeout(current.openContainer(block), CONTAINER_TIMEOUT_MS, timeoutMessage);
+    // The slots may come a moment after the window itself
+    await waitFor(() => window.slots.slice(window.inventoryStart, window.inventoryEnd).some(Boolean), 1_000);
+    return window;
+  }
+
+  // Shift-click moves a stack between the container and the inventory in one
+  // server action, as the Obsidian Farm does: dragging it with the cursor is
+  // refused by the server while a container is open
+  async function shiftClick(current, window, slot) {
+    const before = window.slots[slot];
+    if (!before) return false;
+    await current.clickWindow(slot, 0, 1);
+    return waitFor(() => {
+      const after = window.slots[slot];
+      return !after || after.type !== before.type || after.count < before.count;
+    }, 2_000);
+  }
+
+  async function waitFor(check, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (check()) return true;
+      await sleep(100);
+    }
+    return check();
   }
 
   async function eatIfHungry(current) {
@@ -552,7 +634,8 @@ function createStoneMiner({
     const items = current.inventory.items();
     const needsPickaxe = !findBestUsablePickaxe(current, items);
     const wornPickaxes = items.filter(item => isPickaxe(item) && !isPickaxeUsable(current, item));
-    const needsFood = !items.some(item => isSafeFood(current, item));
+    // Without food in the barrel it is looked for again only once a minute
+    const needsFood = !items.some(item => isSafeFood(current, item)) && Date.now() >= nextFoodCheckAt;
     if (!needsPickaxe && !needsFood && !wornPickaxes.length) return;
 
     const storage = findStorage(current);
@@ -561,46 +644,39 @@ function createStoneMiner({
       return;
     }
     phase = 'restocking';
-    try { current.stopDigging?.(); } catch {}
-    await current.lookAt(storage.position.offset(0.5, 0.5, 0.5), true);
-    const window = await withTimeout(current.openContainer(storage), CONTAINER_TIMEOUT_MS, 'The chest did not open.');
+    const usableBefore = new Set(items.filter(item => isPickaxe(item) && isPickaxeUsable(current, item)).map(item => item.slot));
+    const window = await openWindow(current, storage, 'The barrel did not open.');
+    let foodFound = !needsFood;
     try {
       const start = window.inventoryStart;
-      const end = window.inventoryEnd;
       const containerItems = () => window.slots.slice(0, start).filter(Boolean);
-      const inventoryItems = () => window.slots.slice(start, end).filter(Boolean);
-      const emptyContainerSlot = () => window.firstEmptySlotRange(0, start);
-      const emptyInventorySlot = () => window.firstEmptySlotRange(start, end);
+      const inventoryItems = () => window.slots.slice(start, window.inventoryEnd).filter(Boolean);
       const inventorySlotOf = windowSlot => windowSlot - start + 9;
 
+      // Worn ones first, so the barrel slot and the inventory slot are free
+      for (const worn of inventoryItems().filter(item => isPickaxe(item) && !isPickaxeUsable(current, item))) {
+        const slot = inventorySlotOf(worn.slot);
+        if (await shiftClick(current, window, worn.slot)) retirePickaxe(worn, slot);
+      }
       if (needsPickaxe) {
         const fresh = findBestUsablePickaxe(current, containerItems());
-        if (fresh) {
-          const worn = inventoryItems().find(item => isPickaxe(item) && !isPickaxeUsable(current, item));
-          const destination = worn ? worn.slot : emptyInventorySlot();
-          if (destination == null) throw supplyError('The inventory is full, no room for a pickaxe.');
-          // Onto a worn pickaxe the two swap places
-          await current.moveSlotItem(fresh.slot, destination);
-          if (worn) retirePickaxe(worn, inventorySlotOf(destination));
-          pickaxeBlocks.set(inventorySlotOf(destination), { blocks: 0, fromFresh: true });
-        }
-      }
-      for (const worn of inventoryItems().filter(item => isPickaxe(item) && !isPickaxeUsable(current, item))) {
-        const destination = emptyContainerSlot();
-        if (destination == null) break;
-        await current.moveSlotItem(worn.slot, destination);
-        retirePickaxe(worn, inventorySlotOf(worn.slot));
+        if (fresh) await shiftClick(current, window, fresh.slot);
       }
       if (needsFood) {
         const food = containerItems().find(item => isSafeFood(current, item));
-        const destination = emptyInventorySlot();
-        if (food && destination != null) await current.moveSlotItem(food.slot, destination);
+        foodFound = Boolean(food);
+        if (food) await shiftClick(current, window, food.slot);
       }
     } finally {
       try { current.closeWindow(window); } catch {}
     }
+    if (!foodFound) nextFoodCheckAt = Date.now() + 60_000;
+
+    const fresh = current.inventory.items().find(item =>
+      isPickaxe(item) && isPickaxeUsable(current, item) && !usableBefore.has(item.slot));
+    if (fresh) pickaxeBlocks.set(fresh.slot, { blocks: 0, fromFresh: true });
     if (!findBestUsablePickaxe(current, current.inventory.items())) {
-      throw supplyError('No usable pickaxe in the bot inventory or the nearby chest.');
+      throw supplyError('No usable pickaxe in the bot inventory or the barrel.');
     }
   }
 
