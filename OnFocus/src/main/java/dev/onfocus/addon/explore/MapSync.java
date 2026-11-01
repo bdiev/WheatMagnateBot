@@ -48,8 +48,8 @@ import java.util.regex.Pattern;
 public final class MapSync {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final Pattern REGION_FILE = Pattern.compile("^(-?\\d+)_(-?\\d+)\\.xwmc$");
-    /** The site keeps the map up to this many blocks from 0, 0 each way: ±100k. */
-    private static final int MAX_DISTANCE = 100_000;
+    /** The site keeps the map up to this many blocks from 0, 0 each way: ±250k. */
+    private static final int MAX_DISTANCE = 250_000;
     /** How often the cache folders are listed again, for regions redrawn since. */
     private static final long RESCAN_MS = 60_000;
     /** Between looks at the folders once everything is sent: often enough to keep up with Xaero's saves. */
@@ -346,7 +346,7 @@ public final class MapSync {
         return regions;
     }
 
-    /** Whether a region, along one axis, reaches into the site's square, ±100k around 0, 0. */
+    /** Whether a region, along one axis, reaches into the site's square, ±250k around 0, 0. */
     static boolean inRange(int region) {
         long from = (long) region * XaeroCacheFile.SIZE;
         return from < MAX_DISTANCE && from + XaeroCacheFile.SIZE > -MAX_DISTANCE;

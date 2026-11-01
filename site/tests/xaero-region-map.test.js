@@ -64,10 +64,10 @@ function testExploredCounts() {
 
   const full = Buffer.alloc(128, 0xff);
   // ±30k is chunks -1875 to 1874: region 58 (chunks 1856 to 1887) has 19 columns inside, region 59 none
-  assert.deepEqual(countExploredChunks([{ x: 58, z: 0, mask: full }]), { 30000: 19 * 32, 50000: 1024, 100000: 1024 });
-  assert.deepEqual(countExploredChunks([{ x: 59, z: 0, mask: full }]), { 30000: 0, 50000: 1024, 100000: 1024 });
-  assert.deepEqual(countExploredChunks([{ x: -59, z: -59, mask: full }]), { 30000: 19 * 19, 50000: 1024, 100000: 1024 }, 'the negative edges too');
-  assert.deepEqual(countExploredChunks([{ x: 0, z: 0, mask }, { x: 1, z: 0, mask: null }]), { 30000: 2, 50000: 2, 100000: 2 }, 'a region not worked out yet adds nothing');
+  assert.deepEqual(countExploredChunks([{ x: 58, z: 0, mask: full }]), { 30000: 19 * 32, 50000: 1024, 100000: 1024, 150000: 1024, 200000: 1024, 250000: 1024 });
+  assert.deepEqual(countExploredChunks([{ x: 59, z: 0, mask: full }]), { 30000: 0, 50000: 1024, 100000: 1024, 150000: 1024, 200000: 1024, 250000: 1024 });
+  assert.deepEqual(countExploredChunks([{ x: -59, z: -59, mask: full }]), { 30000: 19 * 19, 50000: 1024, 100000: 1024, 150000: 1024, 200000: 1024, 250000: 1024 }, 'the negative edges too');
+  assert.deepEqual(countExploredChunks([{ x: 0, z: 0, mask }, { x: 1, z: 0, mask: null }]), { 30000: 2, 50000: 2, 100000: 2, 150000: 2, 200000: 2, 250000: 2 }, 'a region not worked out yet adds nothing');
 }
 
 async function testParentShrinks() {
@@ -122,12 +122,12 @@ async function testService() {
     const small = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#000' } }).png().toBuffer();
     await assert.rejects(service.handleModRequest(request('PUT', small, auth), recordingResponse(), modUrl(0, 0)), /512 x 512/);
     await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(0, 0, 5)), /modified/);
-    // Only ±100k around 0, 0: region 195 reaches into it (to X 99,840), 196 doesn't
-    await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(196, 0)), /within 100000 blocks/);
-    await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(0, -197)), /within 100000 blocks/);
-    assert.equal(tileInRange(0, 195), true);
-    assert.equal(tileInRange(0, -196), true);
-    assert.equal(tileInRange(0, -197), false);
+    // Only ±250k around 0, 0: region 488 reaches into it (to X 249,856), 489 doesn't
+    await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(489, 0)), /within 250000 blocks/);
+    await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(0, -490)), /within 250000 blocks/);
+    assert.equal(tileInRange(0, 488), true);
+    assert.equal(tileInRange(0, -489), true);
+    assert.equal(tileInRange(0, -490), false);
     assert.equal(tileInRange(MAX_LEVEL, -1), true, 'the top level is four tiles');
     assert.equal(tileInRange(MAX_LEVEL, 1), false);
 
@@ -162,14 +162,14 @@ async function testService() {
     res = recordingResponse();
     assert.equal(await service.handleRequest(request('GET'), res, new URL('http://localhost/api/area-explorer/map/explored?server=oldfrog.org&dimension=overworld')), true);
     assert.deepEqual(JSON.parse(res.body), {
-      chunks: { 30000: 256, 50000: 256, 100000: 256 },
-      totals: { 30000: 3750 ** 2, 50000: 6250 ** 2, 100000: 12500 ** 2 },
+      chunks: { 30000: 256, 50000: 256, 100000: 256, 150000: 256, 200000: 256, 250000: 256 },
+      totals: { 30000: 3750 ** 2, 50000: 6250 ** 2, 100000: 12500 ** 2, 150000: 18750 ** 2, 200000: 25000 ** 2, 250000: 31250 ** 2 },
       pending: 0
     });
     // A region stored before masks were kept: left out, then worked out in the background
     await db.query('UPDATE area_explorer_region_tiles SET chunk_mask = NULL WHERE level = 0');
     const fresh = createXaeroRegionMapService({ pool: poolFor(db), authenticate: async () => null, enforceRateLimit: () => true, sendJson, sendError() {} });
-    assert.deepEqual(await fresh.exploredChunks(scope), { chunks: { 30000: 0, 50000: 0, 100000: 0 }, totals: { 30000: 3750 ** 2, 50000: 6250 ** 2, 100000: 12500 ** 2 }, pending: 1 });
+    assert.deepEqual(await fresh.exploredChunks(scope), { chunks: { 30000: 0, 50000: 0, 100000: 0, 150000: 0, 200000: 0, 250000: 0 }, totals: { 30000: 3750 ** 2, 50000: 6250 ** 2, 100000: 12500 ** 2, 150000: 18750 ** 2, 200000: 25000 ** 2, 250000: 31250 ** 2 }, pending: 1 });
     assert.equal(await fresh.fillChunkMasks(), false, 'all done in one batch');
     assert.equal((await fresh.exploredChunks(scope)).chunks[30000], 256, 'the same chunks as from the upload');
     fresh.stop();
@@ -202,7 +202,7 @@ async function testService() {
     await service.handleRequest(request('GET'), res, new URL('http://localhost/api/area-explorer/map/tiles/0/50/50.webp?server=oldfrog.org&dimension=overworld'));
     assert.equal(res.statusCode, 404);
     res = recordingResponse();
-    await service.handleRequest(request('GET'), res, new URL('http://localhost/api/area-explorer/map/tiles/2/60/0.webp?server=oldfrog.org&dimension=overworld'));
+    await service.handleRequest(request('GET'), res, new URL('http://localhost/api/area-explorer/map/tiles/2/130/0.webp?server=oldfrog.org&dimension=overworld'));
     assert.equal(res.statusCode, 404, 'a tile past the square is not even looked up');
     assert.match(res.headers['Cache-Control'], /max-age=86400/);
 
@@ -306,11 +306,14 @@ function testWiring() {
   assert.match(appSource, /drawXaeroRegionMap\(ctx, canvas, view, ratio\);/);
   assert.match(indexSource, /<span id="areaExplorerGrid"><\/span>\s+<span id="areaExplorerExplored"/, 'the explored share sits by the grid');
   assert.match(appSource, /\/api\/area-explorer\/map\/explored\?/);
-  // The territory: ±30k, ±50k or ±100k around 0, 0 - from -30,000 to 30,000 each way - and no more
-  assert.match(appSource, /const AREA_EXPLORER_RADII = Object\.freeze\(\[30_000, 50_000, 100_000\]\);/);
-  assert.deepEqual([...indexSource.matchAll(/data-area-radius="(\d+)"/g)].map(match => Number(match[1])), [30_000, 50_000, 100_000]);
-  assert.match(appSource, /ae\.extent = 2 \* Number\(button\.dataset\.areaRadius\)/, 'the square is twice the radius a side');
-  assert.equal(MAX_DISTANCE, 100_000, 'the site keeps no more than the largest territory');
+  // The territory: ±30k up to ±250k around 0, 0 - from -30,000 to 30,000 each way - and no more,
+  // stepped through with + and -, ±100k to begin with
+  assert.match(appSource, /const AREA_EXPLORER_RADII = Object\.freeze\(\[30_000, 50_000, 100_000, 150_000, 200_000, 250_000\]\);/);
+  assert.match(appSource, /const AREA_EXPLORER_DEFAULT_RADIUS = 100_000;/);
+  assert.match(indexSource, /id="areaExplorerExtentIn"[^>]*>\+<\/button>\s+<span id="areaExplorerExtentLabel"[^>]*>±100k/);
+  assert.match(indexSource, /id="areaExplorerExtentOut"[^>]*>&minus;<\/button>/);
+  assert.match(appSource, /ae\.extent = 2 \* radius;/, 'the square is twice the radius a side');
+  assert.equal(MAX_DISTANCE, 250_000, 'the site keeps no more than the largest territory');
   assert.match(appSource, /const half = areaExplorerState\(\)\.extent \/ 2;\s+const left = Math\.max\(-half/, 'tiles are only asked for inside the territory');
 }
 

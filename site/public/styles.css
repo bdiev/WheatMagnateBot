@@ -13117,7 +13117,11 @@ body.kill-aura-modal-open {
   border-bottom: 2px solid var(--line-soft);
 }
 
+.area-explorer-extent { align-items: center; }
 .area-explorer-extent .chart-range-button { white-space: nowrap; }
+.area-explorer-extent-step { min-width: 30px; font-size: 16px; font-weight: 700; }
+.area-explorer-extent-step:disabled { opacity: 0.4; cursor: default; transform: none; }
+.area-explorer-extent-label { min-width: 92px; padding: 0 6px; text-align: center; font-size: 12px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .area-explorer-map-wrap {
   position: relative;
@@ -14017,7 +14021,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   .area-explorer-layout .panel-head h2 { font-size: 17px; }
   #areaExplorerScopeSummary { font-size: 13px; }
   .area-explorer-map-bar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 14px; }
-  .area-explorer-map-bar .area-explorer-extent { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: auto; }
+  .area-explorer-map-bar .area-explorer-extent { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; width: auto; }
+  .area-explorer-extent-label { min-width: 0; }
   .area-explorer-extent-tail { display: none; }
   .area-explorer-extent .chart-range-button { min-height: 44px; padding-inline: 4px; }
   .area-explorer-map { height: clamp(340px, 54svh, 480px); min-height: 0; }

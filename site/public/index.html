@@ -1107,9 +1107,9 @@
             </div>
             <div class="area-explorer-map-bar">
               <div class="chart-controls area-explorer-extent" role="group" aria-label="How far from 0, 0">
-                <button class="chart-range-button" type="button" data-area-radius="30000" aria-pressed="false" title="From -30,000 to 30,000 each way">±30k<span class="area-explorer-extent-tail"> blocks</span></button>
-                <button class="chart-range-button" type="button" data-area-radius="50000" aria-pressed="false" title="From -50,000 to 50,000 each way">±50k<span class="area-explorer-extent-tail"> blocks</span></button>
-                <button class="chart-range-button" type="button" data-area-radius="100000" aria-pressed="false" title="From -100,000 to 100,000 each way">±100k<span class="area-explorer-extent-tail"> blocks</span></button>
+                <button id="areaExplorerExtentIn" class="chart-range-button area-explorer-extent-step" type="button" aria-label="Show less of the map" title="Show less of the map">+</button>
+                <span id="areaExplorerExtentLabel" class="area-explorer-extent-label" aria-live="polite">±100k<span class="area-explorer-extent-tail"> blocks</span></span>
+                <button id="areaExplorerExtentOut" class="chart-range-button area-explorer-extent-step" type="button" aria-label="Show more of the map" title="Show more of the map">&minus;</button>
               </div>
             </div>
             <div id="areaExplorerMapWrap" class="area-explorer-map-wrap">

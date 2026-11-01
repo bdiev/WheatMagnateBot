@@ -6369,7 +6369,9 @@ const AREA_EXPLORER_PHASES = Object.freeze({
 });
 // The map shows a square territory around 0, 0, and nothing past it: its tiles, finds and runs.
 // Picked by its radius: ±30k is -30,000 to 30,000 each way. ae.extent is the side, twice that.
-const AREA_EXPLORER_RADII = Object.freeze([30_000, 50_000, 100_000]);
+// + and - step through these; ±100k to begin with.
+const AREA_EXPLORER_RADII = Object.freeze([30_000, 50_000, 100_000, 150_000, 200_000, 250_000]);
+const AREA_EXPLORER_DEFAULT_RADIUS = 100_000;
 // Signs under loot under markers under bases: the rarer, the higher
 // Markers of structures that stay where they are: no Remove (the site refuses it too)
 const AREA_EXPLORER_PERMANENT_MARKERS = Object.freeze(['End Portal', 'End Gateway', 'End City', 'Ancient City', 'Trial Chamber']);
@@ -6527,7 +6529,7 @@ function saveAreaExplorerSetting(key, value) {
 
 function readAreaExplorerExtent() {
   const saved = Number(readAreaExplorerSetting('areaExplorerRadius', ''));
-  return 2 * (AREA_EXPLORER_RADII.includes(saved) ? saved : AREA_EXPLORER_RADII[0]);
+  return 2 * (AREA_EXPLORER_RADII.includes(saved) ? saved : AREA_EXPLORER_DEFAULT_RADIUS);
 }
 
 function areaExplorerScopeParams(extra = {}) {
@@ -7392,11 +7394,26 @@ function noteAreaExplorerViewMoved() {
 
 function renderAreaExplorerExtent() {
   const ae = areaExplorerState();
-  $$('[data-area-radius]').forEach(button => {
-    const active = 2 * Number(button.dataset.areaRadius) === ae.extent;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
+  const radius = ae.extent / 2;
+  const index = AREA_EXPLORER_RADII.indexOf(radius);
+  const label = $('#areaExplorerExtentLabel');
+  label.firstChild.textContent = `±${radius / 1000}k`;
+  label.title = `From -${radius.toLocaleString('en-US')} to ${radius.toLocaleString('en-US')} each way`;
+  $('#areaExplorerExtentIn').disabled = index <= 0;
+  $('#areaExplorerExtentOut').disabled = index >= AREA_EXPLORER_RADII.length - 1;
+}
+
+/** One step closer (-1) or further out (+1) through the territories. */
+function stepAreaExplorerExtent(step) {
+  const ae = areaExplorerState();
+  const index = AREA_EXPLORER_RADII.indexOf(ae.extent / 2) + step;
+  if (index < 0 || index >= AREA_EXPLORER_RADII.length) return;
+  const radius = AREA_EXPLORER_RADII[index];
+  ae.extent = 2 * radius;
+  saveAreaExplorerSetting('areaExplorerRadius', radius);
+  renderAreaExplorerExtent();
+  fitAreaExplorerMap();
+  queueAreaExplorerMapDraw();
 }
 
 function areaExplorerToScreen(view, canvas, x, z) {
@@ -8042,7 +8059,7 @@ function drawAreaExplorerMap() {
   renderAreaExplorerExplored();
 }
 
-/** "Explored 58.3%": how much of the territory picked (±30k, ±50k, all) the map has drawn. */
+/** "Explored 58.3%": how much of the territory picked (±30k up to ±250k) the map has drawn. */
 function renderAreaExplorerExplored() {
   const ae = areaExplorerState();
   const label = $('#areaExplorerExplored');
@@ -8890,13 +8907,8 @@ function setupAreaExplorer() {
   $('#areaExplorerLogMore').addEventListener('click', () => {
     loadAreaExplorerLog({ older: true }).catch(error => setBanner(`Could not load older events: ${error.message}`));
   });
-  $$('[data-area-radius]').forEach(button => button.addEventListener('click', () => {
-    ae.extent = 2 * Number(button.dataset.areaRadius);
-    saveAreaExplorerSetting('areaExplorerRadius', button.dataset.areaRadius);
-    renderAreaExplorerExtent();
-    fitAreaExplorerMap();
-    queueAreaExplorerMapDraw();
-  }));
+  $('#areaExplorerExtentIn').addEventListener('click', () => stepAreaExplorerExtent(-1));
+  $('#areaExplorerExtentOut').addEventListener('click', () => stepAreaExplorerExtent(1));
   $('#areaExplorerZoomIn').addEventListener('click', () => zoomAreaExplorerMap(2));
   $('#areaExplorerZoomOut').addEventListener('click', () => zoomAreaExplorerMap(0.5));
   $('#areaExplorerMapReset').addEventListener('click', () => {

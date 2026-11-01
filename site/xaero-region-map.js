@@ -16,17 +16,17 @@ const crypto = require('node:crypto');
 const sharp = require('sharp');
 
 const REGION_PX = 512;
-// The map covers at most 100,000 blocks from 0, 0 each way; the dashboard shows ±30k, ±50k or all of it
-const MAX_DISTANCE = 100_000;
-// Level 9: a tile is 512 regions, 262,144 blocks a side - the whole map in four tiles
-const MAX_LEVEL = 9;
+// The map covers at most 250,000 blocks from 0, 0 each way; the dashboard shows ±30k up to all of it
+const MAX_DISTANCE = 250_000;
+// Level 10: a tile is 1024 regions, 524,288 blocks a side - the whole map in four tiles
+const MAX_LEVEL = 10;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 // A tile is rebuilt once it has been dirty this long, so a burst of uploads under it costs one rebuild.
 // Zoomed-out levels batch more uploads, but their deadlines are measured from the original
 // change, not from each child's rebuild: the whole map must keep up with the flight.
 const DIRTY_SETTLE_MS = 2_000;
 // Levels 1 to MAX_LEVEL, in order
-const LEVEL_SETTLE_MS = Object.freeze([2_000, 5_000, 10_000, 15_000, 20_000, 25_000, 30_000, 30_000, 30_000]);
+const LEVEL_SETTLE_MS = Object.freeze([2_000, 5_000, 10_000, 15_000, 20_000, 25_000, 30_000, 30_000, 30_000, 30_000]);
 const WORKER_BATCH = 16;
 const WORKER_IDLE_MS = 2_000;
 // Open dashboards hear of new tiles this soon: the live map keeps up with the flight
@@ -37,8 +37,8 @@ const NIGHT_SUFFIX = '@night';
 // A region is 32 chunks a side; its drawn ones are kept as 1024 bits
 const REGION_CHUNKS = REGION_PX / 16;
 const CHUNK_MASK_BYTES = REGION_CHUNKS * REGION_CHUNKS / 8;
-// The dashboard's territories, ±30k, ±50k and all of it: how much of each is explored
-const TERRITORY_RADII = Object.freeze([30_000, 50_000, 100_000]);
+// The dashboard's territories, ±30k up to all of it: how much of each is explored
+const TERRITORY_RADII = Object.freeze([30_000, 50_000, 100_000, 150_000, 200_000, 250_000]);
 // Regions stored before chunk masks were kept get theirs worked out this many at a time
 const MASK_BATCH = 32;
 // Explored counts are kept this long, unless an upload in the scope changes them first
@@ -75,7 +75,7 @@ function parseRegionCoordinate(value) {
   return tileInRange(0, number) ? number : null;
 }
 
-/** Whether a tile of the level, along one axis, reaches into the map's square, ±100k around 0, 0. */
+/** Whether a tile of the level, along one axis, reaches into the map's square, ±250k around 0, 0. */
 function tileInRange(level, coordinate) {
   const blocks = REGION_PX * 2 ** level;
   return coordinate * blocks < MAX_DISTANCE && (coordinate + 1) * blocks > -MAX_DISTANCE;
