@@ -47,9 +47,13 @@ const DIG_REACH = 5.1;
 const MAX_LINE_LENGTH = 8;
 const EAT_BELOW_FOOD = 18;
 const DEPOSIT_FROM_COUNT = 64;
-// A hopper holds five stacks and drains slowly: when it was full, the bot
-// mines on and tries again a little later
-const HOPPER_RETRY_MS = 10_000;
+// Opening the hopper stops mining, so it is opened once every five minutes.
+// It passes on only 2.5 items a second, slower than the bot mines, so stone
+// piles up in the inventory; with three free slots or fewer the bot opens it
+// sooner, once a stack could have drained
+const HOPPER_INTERVAL_MS = 5 * 60_000;
+const HOPPER_URGENT_INTERVAL_MS = 26_000;
+const HOPPER_URGENT_FREE_SLOTS = 3;
 // Full for this long without draining: everything after the hopper is full
 const HOPPER_STALL_MS = 30_000;
 const REGROW_WAIT_MS = 500;
@@ -107,14 +111,34 @@ function isPickaxe(item) {
   return Boolean(item?.name) && PICKAXE_PRIORITY.includes(item.name);
 }
 
+// Mining speed as Minecraft counts it: the material's speed plus
+// Efficiency's level squared plus one
+const PICKAXE_SPEED = {
+  wooden_pickaxe: 2, stone_pickaxe: 4, iron_pickaxe: 6,
+  diamond_pickaxe: 8, netherite_pickaxe: 9, golden_pickaxe: 12
+};
+
+function enchantLevel(item, name) {
+  let enchants = [];
+  try { enchants = item?.enchants || []; } catch {}
+  const entry = enchants.find(enchant => String(enchant?.name || '').replace(/^minecraft:/, '') === name);
+  return Number(entry?.lvl) || 0;
+}
+
+function pickaxeSpeed(item) {
+  const efficiency = enchantLevel(item, 'efficiency');
+  return (PICKAXE_SPEED[item.name] || 1) + (efficiency > 0 ? efficiency * efficiency + 1 : 0);
+}
+
+// The fastest usable pickaxe; of equally fast ones the least worn
 function findBestUsablePickaxe(bot, items) {
   let best = null;
   for (const item of items) {
     if (!isPickaxe(item) || !isPickaxeUsable(bot, item)) continue;
-    const rank = PICKAXE_PRIORITY.indexOf(item.name);
+    const speed = pickaxeSpeed(item);
     const percent = getRemainingDurabilityPercent(bot, item);
-    if (!best || rank < best.rank || (rank === best.rank && percent > best.percent)) {
-      best = { item, rank, percent };
+    if (!best || speed > best.speed || (speed === best.speed && percent > best.percent)) {
+      best = { item, speed, percent };
     }
   }
   return best?.item || null;
@@ -127,7 +151,8 @@ function isSafeFood(bot, item) {
 
 function createStoneMiner({
   stateFile = null, log = () => {}, onChange = () => {}, onMined = () => {}, onPickaxeRetired = () => {},
-  hopperRetryMs = HOPPER_RETRY_MS, hopperStallMs = HOPPER_STALL_MS
+  hopperIntervalMs = HOPPER_INTERVAL_MS, hopperUrgentIntervalMs = HOPPER_URGENT_INTERVAL_MS,
+  hopperStallMs = HOPPER_STALL_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -149,7 +174,7 @@ function createStoneMiner({
   let loopGeneration = 0;
   let lastSavedAt = 0;
   let regrowWaiters = [];
-  let nextHopperAttemptAt = 0;
+  let lastHopperVisitAt = 0;
   let hopperFullSince = null;
   let nextFoodCheckAt = 0;
   let stopReason = saved.stopReason || null;
@@ -441,7 +466,12 @@ function createStoneMiner({
       return false;
     }
     phase = 'mining';
-    const pickaxe = findBestUsablePickaxe(current, current.inventory.items());
+    // The pickaxe in hand is kept until it wears out: picking the least worn
+    // one each block swapped identical pickaxes back and forth
+    const held = current.heldItem;
+    const pickaxe = isPickaxe(held) && isPickaxeUsable(current, held)
+      ? held
+      : findBestUsablePickaxe(current, current.inventory.items());
     if (!pickaxe) throw supplyError('No usable pickaxe.');
     if (current.heldItem?.slot !== pickaxe.slot) await current.equip(pickaxe, 'hand');
     await withTimeout(current.dig(target, true), DIG_TIMEOUT_MS, 'Mining took too long.');
@@ -516,10 +546,13 @@ function createStoneMiner({
     const carried = current.inventory.items()
       .filter(item => MINED_ITEMS.has(item.name))
       .reduce((sum, item) => sum + item.count, 0);
-    if (carried < DEPOSIT_FROM_COUNT || Date.now() < nextHopperAttemptAt) return;
+    if (carried < DEPOSIT_FROM_COUNT) return;
+    const urgent = current.inventory.emptySlotCount() <= HOPPER_URGENT_FREE_SLOTS;
+    const sinceVisit = Date.now() - lastHopperVisitAt;
+    if (sinceVisit < (urgent ? hopperUrgentIntervalMs : hopperIntervalMs)) return;
+    lastHopperVisitAt = Date.now();
     const hopper = findHopper(current);
     if (!hopper) {
-      nextHopperAttemptAt = Date.now() + hopperRetryMs;
       log('[Stone Miner] No hopper within reach for the mined stone.');
       return;
     }
@@ -543,7 +576,6 @@ function createStoneMiner({
       hopperFullSince = null;
       return;
     }
-    nextHopperAttemptAt = Date.now() + hopperRetryMs;
     if (!hopperFullSince || contents.total < hopperFullSince.total) {
       hopperFullSince = { at: Date.now(), total: contents.total };
       log('[Stone Miner] The hopper is full; checking whether it drains.');
@@ -671,7 +703,10 @@ function createStoneMiner({
       }
       if (needsPickaxe) {
         const fresh = findBestUsablePickaxe(current, containerItems());
-        if (fresh) await shiftClick(current, window, fresh.slot);
+        if (fresh && await shiftClick(current, window, fresh.slot)) {
+          const efficiency = enchantLevel(fresh, 'efficiency');
+          log(`[Stone Miner] Took a ${fresh.name}${efficiency ? ` with Efficiency ${efficiency}` : ''} from the barrel.`);
+        }
       }
       if (needsFood) {
         const food = containerItems().find(item => isSafeFood(current, item));
