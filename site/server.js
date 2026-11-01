@@ -2053,6 +2053,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       JOIN owned_dialogs dialogs ON LOWER(dialogs.player_username) = LOWER(messages.player_username)
       LEFT JOIN read_state ON read_state.player_key = LOWER(messages.player_username)
       WHERE messages.account_id=$3::uuid AND (
+        (
           messages.direction = 'outgoing'
           AND LOWER(messages.site_username) = LOWER($1)
         )
@@ -2060,6 +2061,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
           messages.direction = 'incoming'
           AND (messages.site_username IS NULL OR LOWER(messages.site_username) = LOWER($1))
         )
+      )
       GROUP BY LOWER(messages.player_username), messages.player_username, read_state.read_id
     ),
     names AS (
@@ -2248,6 +2250,7 @@ async function getWhisperNotifications(currentUser, url) {
       FROM site_whisper_messages messages
       JOIN owned_dialogs dialogs ON LOWER(dialogs.player_username) = LOWER(messages.player_username)
       WHERE messages.account_id=$3::uuid AND (
+        (
           messages.direction = 'outgoing'
           AND LOWER(messages.site_username) = LOWER($2)
         )
@@ -2255,6 +2258,7 @@ async function getWhisperNotifications(currentUser, url) {
           messages.direction = 'incoming'
           AND (messages.site_username IS NULL OR LOWER(messages.site_username) = LOWER($2))
         )
+      )
     )
     SELECT
       COALESCE(MAX(id), 0)::text AS max_id,

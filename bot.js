@@ -57,7 +57,7 @@ const {
   listReadyCommandSenders,
   pickRandomCommandSender
 } = require('./features/playerInfoBackfill');
-const { createWhisperFeature } = require('./features/whisper');
+const { createWhisperFeature, isWhisperClaimEmbed } = require('./features/whisper');
 const { createPearlLoaderFeature, PEARL_LOADER_ROLE } = require('./features/pearlLoader');
 const { chooseObserver } = require('./features/serverObserver');
 const { createFollowFeature } = require('./features/follow');
@@ -1330,10 +1330,9 @@ const killAura = createKillAuraFeature({
 let obsidianStatsWriteQueue = Promise.resolve();
 let whisperConversations = new Map(); // username -> messageId
 let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
-let pendingWhisperClaims = new Map(); // key: mcUsernameLower -> { messageId, lastMessage }
+let pendingWhisperClaims = new Map(); // key: mcUsernameLower -> { messageId, username, messages, total, recipient }
 let whisperCleanupTimers = new Map(); // channelId -> timeout handle
-let lastDialogMessages = new Map(); // channelId -> messageId of last message with delete button
-let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle for footer updates
+let whisperDialogHeaders = new Map(); // channelId -> messageId of the pinned dialog header
 let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
 let customDialogTTL = new Map(); // channelId -> custom TTL in ms (user-configured)
 const temporaryInteractionMessages = new Map(); // messageId -> { interval, timeout, deadline }
@@ -1570,6 +1569,14 @@ function whisperSenderFor(username) {
   return observerBot?.entity ? observerBot : null;
 }
 
+// How a Discord user appears on their replies in a dialog channel
+function discordWhisperSender(member, user) {
+  return {
+    name: member?.displayName || user?.globalName || user?.username || 'You',
+    iconUrl: (member || user)?.displayAvatarURL?.({ size: 64 }) || null
+  };
+}
+
 function markOutboundWhisper(username, text) {
   const normalized = String(text || '')
     .replace(/§[0-9a-fk-or]/gi, '')
@@ -1582,12 +1589,15 @@ const {
   loadWhisperChannels,
   setWhisperChannelMapping,
   getDialogOwnerId,
-  sendWhisperEmbed,
+  postIncomingDialogMessage,
+  postOutgoingDialogMessage,
+  setDialogTtl,
+  restoreDialogTimers,
   removeWhisperChannelMappings,
   cancelWhisperCleanup,
-  scheduleWhisperCleanup,
   sendWhisperClaimPrompt,
   removeWhisperClaimPrompt,
+  markWhisperClaimed,
   getOrCreateWhisperChannel
 } = createWhisperFeature({
   discordClient,
@@ -1599,8 +1609,7 @@ const {
     whisperChannels,
     pendingWhisperClaims,
     whisperCleanupTimers,
-    lastDialogMessages,
-    whisperFooterUpdateIntervals,
+    whisperDialogHeaders,
     whisperDeleteTimestamps,
     customDialogTTL
   },
@@ -1608,6 +1617,17 @@ const {
     farm: FARM_EMOJIS,
     ui: UI_BUTTON_EMOJIS
   },
+  loadAvatar: loadChatAvatar,
+  profileUrl: playerProfileUrl,
+  formatMessage: text => formatDiscordBridgeMessage(text),
+  getPlayerColor: async username => {
+    const tags = await resolvePlayerChatTags(username);
+    return getChatPlayerColor({ isBot: tags.isBot, isWhitelisted: isWhitelistedPlayer(username), isNewPlayer: tags.isNewPlayer });
+  },
+  describeDialog: username => ({
+    online: isMinecraftPlayerOnline(username),
+    replyFrom: whisperSenderFor(username)?.username || null
+  }),
   debugLog
 });
 
@@ -2937,6 +2957,7 @@ if (DISCORD_BOT_TOKEN) {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     console.log(`[Discord] Bot ID: ${discordClient.user.id}`);
     console.log(`[Discord] Guilds: ${discordClient.guilds.cache.size}`);
+    restoreDialogTimers().catch(err => console.error('[Whisper] Failed to restore dialog timers:', err.message));
     await recordSystemLog({
       level: 'info',
       category: 'discord',
@@ -3103,7 +3124,7 @@ if (DISCORD_BOT_TOKEN) {
               if (msg.createdTimestamp < twoWeeksAgo) return false; // cannot bulk delete older than 14 days
               const desc = msg.embeds[0]?.description || '';
               const lowerDesc = desc.toLowerCase();
-              if (msg.embeds[0]?.title === 'New whisper from Minecraft') return false; // keep pending /msg claim cards
+              if (isWhisperClaimEmbed(msg.embeds[0])) return false; // keep pending /msg claim cards
               // Don't delete death-related messages
               if (lowerDesc.includes('died') || lowerDesc.includes('death') || lowerDesc.includes('perished') || lowerDesc.includes('💀') || desc.includes(':skull:')) return false;
               // Don't delete whisper messages and conversations
@@ -6839,6 +6860,7 @@ async function executeBotCommand(command) {
       timestamp: Date.now(),
       siteUsername: requestedBy || null
     });
+    whisperReplyAccounts.set(username.toLowerCase(), DEFAULT_ACCOUNT_ID);
     await removeWhisperClaimPrompt(username);
     let sentChunks = 0;
     for (const chunk of splitMinecraftMessage(cleanMessage)) {
@@ -8690,18 +8712,17 @@ async function safeEditInteraction(interaction, payload) {
   }
 }
 
-// Function to send whispers to Discord with buttons
-// recipient: the bot the player wrote to, when it is not WheatMagnate
+// A whisper goes to the dialog channels opened for this player, or to a claim
+// card in the main channel when nobody has one
+// recipient: the bot the player wrote to, WheatMagnate when not given
 async function sendWhisperToDiscord(username, message, { recipient = null } = {}) {
   if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
     console.log('[Discord] Bot not ready for whisper.');
     return;
   }
 
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  const headline = `${username} → you`;
   const body = message;
+  const receiver = recipient || bot?.username || null;
 
   // Fan out to all private channels tied to this MC username
   const targets = [];
@@ -8714,7 +8735,7 @@ async function sendWhisperToDiscord(username, message, { recipient = null } = {}
 
   if (targets.length === 0) {
     console.log(`[Whisper] No private channel for ${username}, skipping.`);
-    await sendWhisperClaimPrompt(username, body, recipient);
+    await sendWhisperClaimPrompt(username, body, receiver);
     return;
   }
 
@@ -8728,12 +8749,7 @@ async function sendWhisperToDiscord(username, message, { recipient = null } = {}
         continue;
       }
 
-      await sendWhisperEmbed(channel, {
-        senderLabel: recipient ? `${username} → ${recipient}` : username,
-        body: `**${body}**`
-      });
-      const effectiveTTL = customDialogTTL.get(channel.id) || WHISPER_TTL_MS;
-      scheduleWhisperCleanup(channel.id, effectiveTTL);
+      await postIncomingDialogMessage(channel, { username, recipient: receiver, text: body });
     } catch (e) {
       console.error('[Whisper] Failed to deliver whisper:', e.message);
     }
@@ -10784,7 +10800,7 @@ function createBot() {
       debugLog(`[Whisper] Routed ${username} reply to site dialog only.`);
       return;
     }
-    sendWhisperToDiscord(username, message);
+    sendWhisperToDiscord(username, cleanedWhisper);
   });
 
 
@@ -12033,30 +12049,20 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           setWhisperChannelMapping(interaction.user.id, mcUsername, whisperChannel.id);
           pendingWhisperClaims.delete(mcUsername);
 
-          try {
-            await sendWhisperEmbed(whisperChannel, {
-              senderLabel: mcUsername,
-              body: pending.lastMessage
-            });
-            scheduleWhisperCleanup(whisperChannel.id);
-          } catch (e) {
-            console.error('[Whisper] Failed to deliver claimed whisper copy:', e.message);
+          // The dialog opens with what the player wrote while it waited
+          const displayUsername = pending.username || mcUsername;
+          const waiting = pending.messages?.length ? pending.messages : [{ text: pending.lastMessage, at: Date.now(), recipient: pending.recipient }];
+          for (const item of waiting) {
+            try {
+              await postIncomingDialogMessage(whisperChannel, {
+                username: displayUsername, recipient: item.recipient || null, text: item.text, at: item.at
+              });
+            } catch (e) {
+              console.error('[Whisper] Failed to deliver claimed whisper copy:', e.message);
+            }
           }
 
-          // Mark claim message as claimed
-          try {
-            const statusChannel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-            const msg = await statusChannel.messages.fetch(pending.messageId);
-            await msg.edit({
-              embeds: [{
-                title: 'Dialog claimed',
-                description: `MC: **${mcUsername}**\nDiscord: ${interaction.user.tag}`,
-                color: 65280,
-                timestamp: new Date()
-              }],
-              components: []
-            });
-          } catch (_) {}
+          await markWhisperClaimed(pending, { mcUsername: displayUsername, claimedBy: interaction.user.toString(), channel: whisperChannel });
 
           await interaction.editReply({ content: `Channel created: ${whisperChannel}`, components: [] });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 10_000);
@@ -12200,11 +12206,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             new StringSelectMenuOptionBuilder()
               .setLabel('30 minutes')
               .setValue('30')
-              .setEmoji('⏲️')
+              .setEmoji('⏲️'),
+            new StringSelectMenuOptionBuilder()
+              .setLabel('1 hour')
+              .setValue('60')
+              .setEmoji('🕐')
           );
 
         await interaction.reply({
-          content: 'Choose auto-delete time for new messages:',
+          content: 'Delete this dialog after how long without messages?',
           components: [new ActionRowBuilder().addComponents(selectMenu)],
           flags: MessageFlags.Ephemeral
         });
@@ -12831,11 +12841,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
         // Write conversation entry in the private channel with styling and auto-delete
         try {
-          await sendWhisperEmbed(whisperChannel, {
-            senderLabel: interaction.user.username,
-            body: displayMessage
+          await postOutgoingDialogMessage(whisperChannel, {
+            username: selectedUsername,
+            sender: discordWhisperSender(interaction.member, interaction.user),
+            text: displayMessage,
+            via: messageSender.username
           });
-          scheduleWhisperCleanup(whisperChannel.id);
           // Track channel for inbound replies routing
           setWhisperChannelMapping(interaction.user.id, selectedUsername, whisperChannel.id);
         } catch (e) {
@@ -12847,18 +12858,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const channelId = interaction.customId.replace('set_ttl_select_', '');
       const minutes = parseInt(interaction.values[0], 10);
 
+      // The new idle length starts counting now; the header shows it
       const ttlMs = minutes * 60 * 1000;
-      customDialogTTL.set(channelId, ttlMs);
-
-      // Update the deletion timestamp for the current message to apply new TTL immediately
-      const newDeleteTimestamp = Date.now() + ttlMs;
-      whisperDeleteTimestamps.set(channelId, newDeleteTimestamp);
-
-      // Reschedule the cleanup with new TTL
-      scheduleWhisperCleanup(channelId, ttlMs);
+      const dialogChannel = await discordClient.channels.fetch(channelId).catch(() => null);
+      if (dialogChannel) await setDialogTtl(dialogChannel, ttlMs);
 
       await interaction.editReply({ 
-        content: `${STATUS_EMOJIS.connected} Auto-delete time set to ${minutes} minute${minutes !== 1 ? 's' : ''}. This will apply to new messages in this dialog.`,
+        content: `${STATUS_EMOJIS.connected} Auto-delete time set to ${minutes >= 60 ? `${minutes / 60} hour${minutes !== 60 ? 's' : ''}` : `${minutes} minute${minutes !== 1 ? 's' : ''}`} of inactivity.`,
         components: []
       });
       setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
@@ -13182,33 +13188,42 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (channelId === message.channel.id) {
         const [ownerId, mcUsername] = key.split(':');
         if (message.author.id !== ownerId) return; // Only channel owner can send
-        if (!bot) {
-          await message.reply({ content: 'Bot is offline, message not sent.' });
-          return;
-        }
 
         // Each line becomes its own /msg; a leading /msg <user> typed by hand is dropped.
         const whispers = buildPlayerWhisperCommands(mcUsername, message.content);
         if (whispers.length === 0) return;
 
         const relaySender = whisperSenderFor(mcUsername);
+        if (!relaySender) {
+          await message.reply({ content: 'Bot is offline, message not sent.' }).catch(() => {});
+          return;
+        }
+        // Only lines that really went out are mirrored; the original message is
+        // kept when nothing was sent, so the text is not lost
+        const sentWhispers = [];
         for (const whisper of whispers) {
           try {
             if (!sendMinecraftChat(whisper.command, { bot: relaySender })) throw new Error('No bot is in game.');
             console.log(`[Whisper Relay] Sent to ${mcUsername}: ${whisper.text} (by ${message.author.tag})`);
+            sentWhispers.push(whisper);
+            // Mark outbound whisper to suppress any unexpected public echo
+            markOutboundWhisper(mcUsername, whisper.text);
           } catch (e) {
             console.error('[Whisper Relay] Failed to send message:', e.message);
           }
-          // Mark outbound whisper to suppress any unexpected public echo
-          markOutboundWhisper(mcUsername, whisper.text);
+        }
+        if (sentWhispers.length === 0) {
+          await message.reply({ content: 'Bot is offline, message not sent.' }).catch(() => {});
+          return;
         }
 
         try {
-          await sendWhisperEmbed(message.channel, {
-            senderLabel: message.author.username,
-            body: whispers.map(whisper => whisper.text).join('\n')
+          await postOutgoingDialogMessage(message.channel, {
+            username: mcUsername,
+            sender: discordWhisperSender(message.member, message.author),
+            text: sentWhispers.map(whisper => whisper.text).join('\n'),
+            via: relaySender.username
           });
-          scheduleWhisperCleanup(message.channel.id);
         } catch (e) {
           console.error('[Whisper] Failed to mirror outbound message:', e.message);
         }

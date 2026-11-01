@@ -23,6 +23,10 @@ assert.doesNotMatch(serverSource, /url\.pathname === '\/api\/whisper\/online'[\s
   'a secondary account gets its own whisper list');
 assert.match(serverSource, /async function whisperAccountId[\s\S]*?role === 'pearl_loader'[\s\S]*?statusCode:403/,
   'the Pearl Loader account is refused private messages on the server');
+assert.doesNotMatch(serverSource, /messages\.account_id=\$3::uuid AND \(\s*messages\.direction/,
+  'the account filter must cover incoming messages too, not only outgoing ones (AND binds before OR)');
+assert.match(serverSource, /async function getWhisperNotifications[\s\S]*?messages\.account_id=\$3::uuid AND \(\s*\(\s*messages\.direction = 'outgoing'[\s\S]*?\)\s*OR\s*\([\s\S]*?\)\s*\)\s*\)/,
+  'whisper unread counts stay within the selected bot');
 assert.equal(assertModuleAvailable({ id:'secondary', isDefault:false }, 'whisper'), true,
   'private messages are a per-bot module');
 
