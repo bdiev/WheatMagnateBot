@@ -12042,9 +12042,59 @@ function renderStoneMinerControl(miner) {
   if (toggleButton) {
     toggleButton.textContent = miner?.enabled ? 'Stop Miner' : 'Start Miner';
     toggleButton.classList.toggle('danger-button', Boolean(miner?.enabled));
+    toggleButton.classList.toggle('miner-primary-button', !miner?.enabled);
     toggleButton.disabled = !miner || (!miner.enabled && !blocks);
   }
   if (clearButton) clearButton.disabled = !miner || !blocks;
+  const lineStatus = $('#stoneMinerLineStatus');
+  if (lineStatus) lineStatus.textContent = blocks ? 'Forget the line to teach a new one.' : 'No line yet: press Learn.';
+}
+
+const STONE_MINER_SIDES = { east: 'east', west: 'west', north: 'north', south: 'south', up: 'up', down: 'down' };
+const STONE_MINER_HEIGHTS = { head: 'at head height', feet: 'at feet height', below: 'below the bot' };
+
+function minerMeterTone(percent) {
+  return percent <= 15 ? 'low' : percent <= 40 ? 'mid' : 'high';
+}
+
+function setMinerMeter(selector, percent, tone = minerMeterTone(percent)) {
+  const bar = $(selector);
+  if (!bar) return;
+  const value = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+  bar.style.width = `${value}%`;
+  bar.dataset.tone = tone;
+}
+
+// The learned line as cells from the bot outwards, and what the bot carries
+function renderStoneMinerGenerator(payload) {
+  const line = payload.line || {};
+  const blocks = Array.isArray(line.blocks) ? line.blocks : [];
+  const list = $('#stoneMinerLine');
+  if (list) {
+    list.innerHTML = blocks.length
+      ? blocks.map((block, index) => `<li title="${escapeHtml(`${block.x} ${block.y} ${block.z}`)}"><img src="/items/Cobblestone.png" alt="" aria-hidden="true"><span>${index + 1}</span></li>`).join('')
+      : '<li class="miner-line-empty">Press Learn and break a block</li>';
+  }
+  const summary = $('#stoneMinerLineSummary');
+  if (summary) {
+    const direction = line.direction;
+    summary.textContent = blocks.length
+      ? [`${formatNumber(blocks.length)} ${blocks.length === 1 ? 'block' : 'blocks'}`,
+        direction ? `${STONE_MINER_SIDES[direction.side] || direction.side} ${STONE_MINER_HEIGHTS[direction.height] || ''}`.trim() : null]
+        .filter(Boolean).join(' · ')
+      : 'No line learned yet.';
+  }
+  const carried = payload.carried;
+  const pickaxe = carried?.pickaxe;
+  const percent = pickaxe?.remainingPercent;
+  $('#stoneMinerPickaxe').textContent = pickaxe
+    ? `${formatMobLabel(pickaxe.name)}${percent == null ? '' : ` · ${percent}%`}`
+    : carried ? 'None' : '-';
+  setMinerMeter('#stoneMinerPickaxeBar', percent ?? (pickaxe ? 100 : 0));
+  $('#stoneMinerSparePickaxes').textContent = carried ? formatNumber(Math.max(0, (carried.pickaxes || 0) - (pickaxe ? 1 : 0))) : '-';
+  $('#stoneMinerFood').textContent = carried ? formatNumber(carried.food || 0) : '-';
+  $('#stoneMinerCarried').textContent = carried ? `${formatNumber(carried.stone || 0)} / 64` : '-';
+  setMinerMeter('#stoneMinerCarriedBar', carried ? ((carried.stone || 0) / 64) * 100 : 0, 'stack');
 }
 
 function renderStoneMiner(payload = {}) {
@@ -12054,10 +12104,10 @@ function renderStoneMiner(payload = {}) {
   state.charts.stoneMinerMonthly = payload.history?.monthly || [];
   setChartLoading('stoneMinerChart', false);
   const miner = payload.state || {};
-  const label = miner.learning
-    ? 'Learning'
-    : miner.running ? 'Mining' : miner.enabled ? 'Waiting' : 'Stopped';
-  $('#stoneMinerState').textContent = label;
+  const minerState = miner.learning ? 'learning' : miner.running ? 'mining' : miner.enabled ? 'waiting' : 'stopped';
+  const tab = $('#tab-stone-miner');
+  if (tab) tab.dataset.minerState = minerState;
+  $('#stoneMinerState').textContent = { learning: 'Learning', mining: 'Mining', waiting: 'Waiting', stopped: 'Stopped' }[minerState];
   $('#stoneMinerUpdated').textContent = `last update: ${formatDate(miner.observedAt)}`;
   setRollingNumber('#stoneMinerTotal', payload.totalMined || 0);
   setRollingNumber('#stoneMinerToday', payload.todayMined || 0);
@@ -12073,6 +12123,7 @@ function renderStoneMiner(payload = {}) {
   $('#stoneMinerPickaxeAverage').textContent = pickaxes.averageBlocks == null ? '-' : formatNumber(pickaxes.averageBlocks);
   $('#stoneMinerRetiredPickaxes').textContent = `retired pickaxes: ${formatNumber(pickaxes.retired || 0)}`;
   renderStoneMinerControl(miner);
+  renderStoneMinerGenerator(payload);
   requestAnimationFrame(() => drawChartById('stoneMinerChart'));
 }
 

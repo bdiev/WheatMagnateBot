@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=308">
+  <link rel="stylesheet" href="/styles.css?v=309">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -700,53 +700,74 @@
         </section>
       </section>
 
-      <section id="tab-stone-miner" class="tab-panel" data-panel="stone-miner">
+      <section id="tab-stone-miner" class="tab-panel" data-panel="stone-miner" data-miner-state="stopped">
         <section id="stoneMinerStatsCarousel" class="stats-grid five obsidian-stats-grid stone-miner-stats-grid" data-loop-carousel>
-          <article class="stat">
-            <span class="stat-label">Total Mined</span>
+          <article class="stat miner-stat miner-total-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Total Mined</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Cobblestone.png" alt=""></span>
+            </div>
             <strong id="stoneMinerTotal">-</strong>
             <small>all-time blocks</small>
           </article>
-          <article class="stat">
-            <span class="stat-label">Miner State</span>
-            <strong id="stoneMinerState">-</strong>
+          <article class="stat miner-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Miner State</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Lever.png" alt=""></span>
+            </div>
+            <div class="aura-state-value"><i aria-hidden="true"></i><strong id="stoneMinerState">-</strong></div>
             <small id="stoneMinerUpdated">last update: -</small>
           </article>
-          <article class="stat">
-            <span class="stat-label">Today</span>
+          <article class="stat miner-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Today</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Clock.png" alt=""></span>
+            </div>
             <strong id="stoneMinerToday">-</strong>
             <small id="stoneMinerTodayTimezone">calendar day</small>
           </article>
-          <article class="stat">
-            <span class="stat-label">Rate</span>
+          <article class="stat miner-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Rate</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Daylight_Detector.png" alt=""></span>
+            </div>
             <strong id="stoneMinerRate">-/h</strong>
             <small id="stoneMinerSession">current session average</small>
           </article>
-          <article class="stat">
-            <span class="stat-label">Pickaxe Average</span>
+          <article class="stat miner-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Pickaxe Average</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Diamond_Pickaxe.png" alt=""></span>
+            </div>
             <strong id="stoneMinerPickaxeAverage">-</strong>
             <small id="stoneMinerRetiredPickaxes">retired pickaxes: -</small>
           </article>
         </section>
 
-        <section id="stoneMinerAdminCarousel" class="farm-admin-grid admin-only" data-loop-carousel hidden>
+        <section id="stoneMinerAdminCarousel" class="farm-admin-grid stone-miner-admin-grid admin-only" data-loop-carousel hidden>
           <section class="panel admin-command-panel">
             <div class="panel-head">
-              <div>
-                <h2>Miner Power</h2>
-                <p id="stoneMinerStatus" aria-live="polite">Start or stop mining the generator.</p>
+              <div class="aura-control-title">
+                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Lever.png" alt=""></span>
+                <div>
+                  <h2>Miner Power</h2>
+                  <p id="stoneMinerStatus" aria-live="polite">Start or stop mining the generator.</p>
+                </div>
               </div>
             </div>
             <div class="admin-command-actions">
-              <button id="stoneMinerToggleButton" type="button" data-bot-command="stone_miner_toggle">Start</button>
+              <button id="stoneMinerToggleButton" class="miner-primary-button" type="button" data-bot-command="stone_miner_toggle">Start Miner</button>
             </div>
           </section>
 
           <section class="panel admin-command-panel">
             <div class="panel-head">
-              <div>
-                <h2>Learn Blocks</h2>
-                <p id="stoneMinerLearnStatus">Break one block to show the direction.</p>
+              <div class="aura-control-title">
+                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Compass.png" alt=""></span>
+                <div>
+                  <h2>Direction</h2>
+                  <p id="stoneMinerLearnStatus" aria-live="polite">Break one block to show the direction.</p>
+                </div>
               </div>
             </div>
             <div class="admin-command-actions">
@@ -756,30 +777,82 @@
 
           <section class="panel admin-command-panel">
             <div class="panel-head">
-              <div>
-                <h2>Supplies</h2>
-                <p title="Worn pickaxes go back into the barrel the bot stands on. Every stack of stone goes into the hopper in front of it.">Pickaxes and food come from the barrel below the bot.</p>
+              <div class="aura-control-title">
+                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Stone.png" alt=""></span>
+                <div>
+                  <h2>Mining Line</h2>
+                  <p id="stoneMinerLineStatus" aria-live="polite">Forget the line to teach a new one.</p>
+                </div>
               </div>
             </div>
             <div class="admin-command-actions">
-              <button id="stoneMinerClearButton" class="ghost-button" type="button" data-bot-command="stone_miner_clear">Clear Blocks</button>
+              <button id="stoneMinerClearButton" class="ghost-button" type="button" data-bot-command="stone_miner_clear">Clear Line</button>
             </div>
           </section>
         </section>
 
-        <section class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Mined Stone</h2>
-              <p>Blocks mined by hour, day, or month.</p>
+        <section class="split-grid stone-miner-data-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div class="kill-aura-section-title">
+                <span class="kill-aura-section-icon" aria-hidden="true"><img src="/items/Clock.png" alt=""></span>
+                <div>
+                  <h2>Mined Stone</h2>
+                  <p>Blocks mined by hour, day, or month.</p>
+                </div>
+              </div>
+              <div class="chart-controls" data-chart-controls="stoneMinerChart" role="group" aria-label="Stone history range: hours show 7 days, days show 90 days, and months show full history">
+                <button class="chart-range-button" type="button" data-chart-range="hours">Hours</button>
+                <button class="chart-range-button active" type="button" data-chart-range="days">Days</button>
+                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+              </div>
             </div>
-            <div class="chart-controls" data-chart-controls="stoneMinerChart" role="group" aria-label="Stone history range: hours show 7 days, days show 90 days, and months show full history">
-              <button class="chart-range-button" type="button" data-chart-range="hours">Hours</button>
-              <button class="chart-range-button active" type="button" data-chart-range="days">Days</button>
-              <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+            <div class="chart-scroll player-chart-loading" aria-busy="true"><div class="player-chart-skeleton" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><canvas id="stoneMinerChart" class="chart tall" height="300"></canvas></div>
+          </section>
+
+          <section class="panel stone-miner-generator-panel">
+            <div class="panel-head">
+              <div class="kill-aura-section-title">
+                <span class="kill-aura-section-icon" aria-hidden="true"><img src="/items/Cobblestone.png" alt=""></span>
+                <div>
+                  <h2>Generator</h2>
+                  <p id="stoneMinerLineSummary">No line learned yet.</p>
+                </div>
+              </div>
             </div>
-          </div>
-          <div class="chart-scroll player-chart-loading" aria-busy="true"><div class="player-chart-skeleton" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><canvas id="stoneMinerChart" class="chart tall" height="300"></canvas></div>
+            <div class="miner-line">
+              <span class="miner-line-bot" title="The bot on its barrel"><img src="/items/Barrel.png" alt="Bot on the barrel"></span>
+              <ol id="stoneMinerLine" class="miner-line-cells" aria-label="Learned mining line"></ol>
+            </div>
+            <dl class="miner-supplies">
+              <div>
+                <dt><img src="/items/Iron_Pickaxe.png" alt="" aria-hidden="true">Pickaxe</dt>
+                <dd>
+                  <strong id="stoneMinerPickaxe">-</strong>
+                  <span class="miner-durability" aria-hidden="true"><i id="stoneMinerPickaxeBar"></i></span>
+                </dd>
+              </div>
+              <div>
+                <dt><img src="/items/Barrel.png" alt="" aria-hidden="true">Spare pickaxes</dt>
+                <dd>
+                  <strong id="stoneMinerSparePickaxes">-</strong>
+                </dd>
+              </div>
+              <div>
+                <dt><img src="/items/Bread.png" alt="" aria-hidden="true">Food</dt>
+                <dd>
+                  <strong id="stoneMinerFood">-</strong>
+                </dd>
+              </div>
+              <div>
+                <dt><img src="/items/Hopper.png" alt="" aria-hidden="true">Stone to hopper</dt>
+                <dd>
+                  <strong id="stoneMinerCarried">-</strong>
+                  <span class="miner-durability miner-stack" aria-hidden="true"><i id="stoneMinerCarriedBar"></i></span>
+                </dd>
+              </div>
+            </dl>
+          </section>
         </section>
       </section>
 
@@ -1794,6 +1867,6 @@
     <script src="/player-accent.js?v=1" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=361" defer></script>
+    <script src="/app.js?v=362" defer></script>
   </body>
 </html>

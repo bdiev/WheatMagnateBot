@@ -3666,6 +3666,26 @@ async function getKillAuraStats(currentUser, url) {
   };
 }
 
+const STONE_MINER_PICKAXES = ['netherite_pickaxe', 'diamond_pickaxe', 'iron_pickaxe', 'stone_pickaxe', 'golden_pickaxe', 'wooden_pickaxe'];
+const STONE_MINER_STONES = new Set(['stone', 'cobblestone', 'mossy_cobblestone', 'granite', 'diorite', 'andesite', 'deepslate', 'cobbled_deepslate', 'tuff', 'basalt', 'smooth_basalt', 'blackstone']);
+const STONE_MINER_FOODS = ['bread', 'apple', 'beef', 'steak', 'porkchop', 'mutton', 'chicken', 'rabbit', 'carrot', 'potato', 'pie', 'stew', 'melon', 'cookie', 'kelp', 'cod', 'salmon', 'berries', 'beetroot'];
+
+// Where the learned line runs from the bot: a compass side (or up/down) and
+// whether it is at head or feet height
+function stoneMinerDirection(anchor, blocks) {
+  const first = blocks[0];
+  if (!anchor || !first) return null;
+  const dx = first.x - anchor.x;
+  const dz = first.z - anchor.z;
+  const dy = first.y - anchor.y;
+  let side;
+  if (blocks.length > 1 && blocks[1].x === first.x && blocks[1].z === first.z) side = blocks[1].y > first.y ? 'up' : 'down';
+  else if (Math.abs(dx) >= Math.abs(dz)) side = dx > 0 ? 'east' : 'west';
+  else side = dz > 0 ? 'south' : 'north';
+  const height = dy >= 1 ? 'head' : dy === 0 ? 'feet' : 'below';
+  return { side, height };
+}
+
 async function getStoneMinerStats(currentUser, url) {
   assertDatabase();
   const scoped = await scopedAccountRuntime(url, currentUser);
@@ -3752,9 +3772,30 @@ async function getStoneMinerStats(currentUser, url) {
   const miner = runtimeBot.stoneMiner || runtimeBot.modules?.stoneMiner || {};
   const connected = Boolean(runtimeBot.connected ?? runtimeBot.status === 'online');
   const pickaxes = pickaxeResult.rows[0] || {};
+  const inventory = connected && Array.isArray(runtimeBot.inventory) ? runtimeBot.inventory.filter(Boolean) : [];
+  const carriedPickaxes = inventory.filter(item => STONE_MINER_PICKAXES.includes(item.name));
+  const bestPickaxe = carriedPickaxes
+    .slice()
+    .sort((a, b) => STONE_MINER_PICKAXES.indexOf(a.name) - STONE_MINER_PICKAXES.indexOf(b.name)
+      || (Number(b.remainingPercent) || 0) - (Number(a.remainingPercent) || 0))[0] || null;
+  const blocks = Array.isArray(miner.blocks) ? miner.blocks.slice(0, 16) : [];
   return {
     accountId,
     timezone,
+    line: {
+      blocks,
+      anchor: miner.anchor || null,
+      direction: stoneMinerDirection(miner.anchor, blocks)
+    },
+    carried: connected ? {
+      pickaxe: bestPickaxe && {
+        name: bestPickaxe.name,
+        remainingPercent: bestPickaxe.remainingPercent == null ? null : Math.round(Number(bestPickaxe.remainingPercent))
+      },
+      pickaxes: carriedPickaxes.length,
+      food: inventory.filter(item => STONE_MINER_FOODS.some(part => item.name.includes(part))).reduce((sum, item) => sum + (Number(item.count) || 0), 0),
+      stone: inventory.filter(item => STONE_MINER_STONES.has(item.name)).reduce((sum, item) => sum + (Number(item.count) || 0), 0)
+    } : null,
     state: {
       enabled: Boolean(miner.enabled),
       running: Boolean(miner.running && connected),

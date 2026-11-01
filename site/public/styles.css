@@ -14257,3 +14257,402 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   transform: none;
 }
 .area-explorer-highlight-more:hover { border-color: var(--accent); color: var(--text); transform: none; }
+
+/* Stone Miner: generator dashboard in stone greys */
+#tab-stone-miner {
+  --aura-accent: #6f7c88;
+  --aura-accent-strong: #3f4a54;
+  --aura-soft: color-mix(in srgb, #8d99a5 12%, var(--panel));
+  --aura-glow: color-mix(in srgb, #8d99a5 22%, transparent);
+  --miner-good: #5bc66b;
+  --miner-warn: #e8ad38;
+  --miner-bad: #d65c58;
+}
+
+:root[data-theme="dark"] #tab-stone-miner {
+  --aura-accent: #a9b6c2;
+  --aura-accent-strong: #dbe4ec;
+  --aura-soft: color-mix(in srgb, #9aa7b3 10%, var(--panel));
+  --aura-glow: color-mix(in srgb, #a9b6c2 16%, transparent);
+}
+
+#tab-stone-miner.active {
+  gap: 18px;
+}
+
+#tab-stone-miner .stat,
+#tab-stone-miner .panel {
+  border-color: color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 4px;
+  box-shadow: 0 12px 30px color-mix(in srgb, #02050a 10%, transparent);
+}
+
+#tab-stone-miner .miner-stat {
+  position: relative;
+  min-height: 142px;
+  overflow: hidden;
+  padding: 17px 18px 16px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--panel) 95%, white), var(--panel));
+}
+
+/* A faint block outline in the corner of every card */
+#tab-stone-miner .miner-stat::after {
+  content: "";
+  position: absolute;
+  right: -26px;
+  bottom: -40px;
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--aura-glow);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 12px color-mix(in srgb, var(--aura-glow) 35%, transparent);
+  opacity: .7;
+  transform: rotate(18deg);
+  pointer-events: none;
+}
+
+#tab-stone-miner .miner-total-stat {
+  border-color: color-mix(in srgb, var(--aura-accent) 40%, var(--line));
+  background:
+    radial-gradient(circle at 100% 0, var(--aura-glow), transparent 50%),
+    linear-gradient(145deg, var(--aura-soft), var(--panel) 66%);
+}
+
+#tab-stone-miner .miner-stat:hover {
+  border-color: color-mix(in srgb, var(--aura-accent) 50%, var(--line));
+  transform: translateY(-2px);
+}
+
+#tab-stone-miner .stat-label {
+  color: color-mix(in srgb, var(--muted) 88%, var(--text));
+  font-size: 12px;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+#tab-stone-miner .miner-stat > strong {
+  position: relative;
+  z-index: 1;
+  display: block;
+  margin: 14px 0 6px;
+  font-size: clamp(24px, 2vw, 30px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.025em;
+}
+
+#tab-stone-miner .miner-stat .aura-state-value {
+  margin: 14px 0 6px;
+}
+
+#tab-stone-miner .miner-stat .aura-state-value strong {
+  font-size: clamp(22px, 1.8vw, 28px);
+}
+
+#tab-stone-miner .miner-stat small {
+  position: relative;
+  z-index: 1;
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#tab-stone-miner[data-miner-state="waiting"] .aura-state-value i,
+#tab-stone-miner[data-miner-state="learning"] .aura-state-value i {
+  border-color: color-mix(in srgb, var(--miner-warn) 30%, var(--panel));
+  background: var(--miner-warn);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--miner-warn) 13%, transparent);
+}
+
+#tab-stone-miner[data-miner-state="mining"] .aura-state-value i {
+  border-color: color-mix(in srgb, var(--miner-good) 30%, var(--panel));
+  background: var(--miner-good);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--miner-good) 14%, transparent);
+  animation: miner-pulse 1.6s ease-in-out infinite;
+}
+
+#tab-stone-miner[data-miner-state="learning"] .aura-state-value i {
+  animation: miner-pulse 1s ease-in-out infinite;
+}
+
+@keyframes miner-pulse {
+  50% { box-shadow: 0 0 0 9px transparent; }
+}
+
+#tab-stone-miner .stone-miner-admin-grid {
+  gap: 12px;
+}
+
+#tab-stone-miner .stone-miner-admin-grid .panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 132px;
+  background: linear-gradient(155deg, color-mix(in srgb, var(--panel-soft) 56%, var(--panel)), var(--panel));
+}
+
+#tab-stone-miner .stone-miner-admin-grid .panel-head {
+  padding: 16px 16px 8px;
+  border-bottom: 0;
+  background: transparent;
+}
+
+#tab-stone-miner .stone-miner-admin-grid .panel-head p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+#tab-stone-miner .stone-miner-admin-grid .admin-command-actions {
+  padding: 0 16px 16px;
+}
+
+#tab-stone-miner .stone-miner-admin-grid .admin-command-actions button {
+  width: 100%;
+  min-height: 38px;
+  height: 38px;
+  border-radius: 4px;
+}
+
+#tab-stone-miner .miner-primary-button {
+  border: 1px solid color-mix(in srgb, var(--miner-good) 70%, #fff);
+  color: #0f2413;
+  background: linear-gradient(180deg, #7bd88a, #4fb15f);
+  box-shadow: 0 8px 18px color-mix(in srgb, #3f9e50 22%, transparent);
+}
+
+#tab-stone-miner .miner-primary-button:disabled {
+  border-color: var(--line);
+  color: var(--muted);
+  background: var(--panel-soft);
+  box-shadow: none;
+}
+
+#tab-stone-miner .stone-miner-data-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+#tab-stone-miner .stone-miner-data-grid > .panel {
+  grid-column: auto;
+  min-width: 0;
+}
+
+#tab-stone-miner .stone-miner-data-grid .panel-head {
+  align-items: center;
+  padding: 19px 20px;
+  background: linear-gradient(180deg, var(--panel-soft), var(--panel));
+}
+
+#tab-stone-miner .stone-miner-data-grid .panel-head h2 {
+  font-size: 16px;
+}
+
+/* The line: the bot on its barrel, then the learned blocks outwards */
+.miner-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 20px 6px;
+}
+
+.miner-line-bot,
+.miner-line-cells li {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+}
+
+.miner-line-bot {
+  border: 2px solid color-mix(in srgb, var(--miner-good) 55%, var(--line));
+  background: color-mix(in srgb, var(--miner-good) 10%, var(--panel));
+}
+
+.miner-line-bot img,
+.miner-line-cells img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.miner-line-cells {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.miner-line-cells li {
+  position: relative;
+  border: 1px solid color-mix(in srgb, var(--aura-accent) 32%, var(--line));
+  background: var(--aura-soft);
+}
+
+.miner-line-cells li span {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.miner-line-cells li.miner-line-empty {
+  width: auto;
+  padding: 0 14px;
+  border-style: dashed;
+  color: var(--muted);
+  background: transparent;
+  font-size: 13px;
+}
+
+.miner-supplies {
+  display: grid;
+  margin: 10px 20px 18px;
+}
+
+.miner-supplies > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.miner-supplies > div:last-child {
+  border-bottom: 0;
+}
+
+.miner-supplies dt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.miner-supplies dt img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.miner-supplies dd {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+}
+
+.miner-supplies dd strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.miner-durability {
+  display: block;
+  width: 96px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 80%, transparent);
+}
+
+.miner-durability i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--miner-good);
+  transition: width 400ms ease;
+}
+
+.miner-durability i[data-tone="mid"] { background: var(--miner-warn); }
+.miner-durability i[data-tone="low"] { background: var(--miner-bad); }
+.miner-durability i[data-tone="stack"] { background: var(--aura-accent); }
+
+#tab-stone-miner button:focus-visible {
+  outline: 3px solid var(--aura-glow);
+  outline-offset: 2px;
+}
+
+@media (min-width: 701px) {
+  #tab-stone-miner > .stone-miner-stats-grid {
+    display: grid !important;
+    grid-column: 1 / -1 !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  #tab-stone-miner > .stone-miner-stats-grid .stat {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 1100px) and (min-width: 701px) {
+  #tab-stone-miner > .stone-miner-stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 960px) {
+  #tab-stone-miner .stone-miner-data-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  #tab-stone-miner .miner-stat {
+    min-height: 118px;
+  }
+
+  /* Phones stack the chart header; keep its title on the left */
+  #tab-stone-miner .stone-miner-data-grid .panel-head {
+    align-items: stretch;
+  }
+
+  #tab-stone-miner .stone-miner-generator-panel .panel-head {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .miner-line {
+    padding: 14px 16px 4px;
+  }
+
+  .miner-supplies {
+    margin: 8px 16px 14px;
+  }
+
+  .miner-durability {
+    width: 72px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #tab-stone-miner .aura-state-value i {
+    animation: none !important;
+  }
+}
