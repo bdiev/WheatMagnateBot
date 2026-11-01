@@ -12006,7 +12006,7 @@ const STONE_MINER_PHASES = {
   mining: 'Mining',
   waiting: 'Waiting for stone to grow',
   restocking: 'Taking a pickaxe or food',
-  dropping: 'Dropping mined blocks',
+  depositing: 'Filling the hopper',
   eating: 'Eating',
   returning: 'Walking back to the generator',
   retrying: 'Retrying'
@@ -12032,11 +12032,11 @@ function renderStoneMinerControl(miner) {
   status.title = text;
   if (learnStatus) {
     learnStatus.textContent = miner?.learning
-      ? `Learning · ${blocksText}. Break the stone.`
-      : blocks ? `${blocksText} learned.` : 'Break the stone next to the bot.';
+      ? 'Break one block in front of the bot.'
+      : blocks ? `${blocksText} in a line in front of the bot.` : 'Break one block to show the direction.';
   }
   if (learnButton) {
-    learnButton.textContent = miner?.learning ? 'Done Learning' : 'Learn';
+    learnButton.textContent = miner?.learning ? 'Cancel Learning' : 'Learn';
     learnButton.disabled = !miner || (!miner.learning && !connected);
   }
   if (toggleButton) {

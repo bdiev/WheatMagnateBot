@@ -235,7 +235,11 @@ function createModulesForBot(context, {
     stoneMiner: stoneMinerFactory({
       stateFile: path.join(accountRoot, 'stone-miner.json'),
       log: message => console.log(`${message} [${context.username}]`),
-      onChange: () => context.emit?.('status', context.getStatus?.()),
+      onChange: status => {
+        // Learning ends by starting the miner on its own
+        if (status?.enabled && context.task === 'idle') context.task = 'stone_miner';
+        context.emit?.('status', context.getStatus?.());
+      },
       ...stoneMinerHooks
     })
   };

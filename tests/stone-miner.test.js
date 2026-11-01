@@ -26,8 +26,9 @@ function item(name, slot, extra = {}) {
   return { name, slot, type: name.length, count: 1, ...extra };
 }
 
-// A bot at 0,64,0 with a generator block east of its head and a chest behind it
-function fakeBot({ inventory = [], chest = [] } = {}) {
+// A bot standing on a barrel at 0,63,0, with a generator block east of its
+// head, a chest behind it and a hopper in front
+function fakeBot({ inventory = [], chest = [], hopper = [] } = {}) {
   const bot = new EventEmitter();
   const world = new Map();
   const blockAt = pos => {
@@ -40,12 +41,14 @@ function fakeBot({ inventory = [], chest = [] } = {}) {
     bot.emit('blockUpdate', old, blockAt({ x, y, z }));
   };
   world.set('0,64,-2', 'chest');
+  world.set('0,63,0', 'barrel');
+  world.set('-1,64,0', 'hopper');
   bot.entity = { position: new Vec3(0.5, 64, 0.5), height: 1.62, yaw: 0 };
   bot.food = 20;
   bot.registry = {
     itemsByName: { diamond_pickaxe: { maxDurability: 1561 }, iron_pickaxe: { maxDurability: 250 } },
     foodsByName: { bread: {} },
-    blocksByName: { chest: { id: 54 }, barrel: { id: 1 }, trapped_chest: { id: 2 } }
+    blocksByName: { chest: { id: 54 }, barrel: { id: 1 }, trapped_chest: { id: 2 }, hopper: { id: 154 } }
   };
   bot.slots = new Array(46).fill(null);
   for (const entry of inventory) bot.slots[entry.slot] = entry;
@@ -70,13 +73,19 @@ function fakeBot({ inventory = [], chest = [] } = {}) {
     bot.slots[entry.slot] = null;
   };
   bot.consume = async () => { bot.food = 20; };
-  bot.findBlocks = () => [new Vec3(0, 64, -2)];
-  // A 27-slot chest: window slots 0-26, then the bot inventory 27-62
-  bot.openContainer = async () => {
-    const window = { inventoryStart: 27, inventoryEnd: 63, slots: new Array(63).fill(null) };
-    chest.forEach((entry, index) => { window.slots[index] = { ...entry, slot: index }; });
+  bot.findBlocks = ({ matching }) => [...world.entries()]
+    .filter(([, name]) => [].concat(matching).includes(bot.registry.blocksByName[name]?.id))
+    .map(([key]) => new Vec3(...key.split(',').map(Number)));
+  bot.opened = [];
+  // A 27-slot barrel (or a 5-slot hopper), then the bot inventory
+  bot.openContainer = async block => {
+    bot.opened.push(block.name);
+    const contents = block.name === 'hopper' ? hopper : chest;
+    const size = block.name === 'hopper' ? 5 : 27;
+    const window = { inventoryStart: size, inventoryEnd: size + 36, slots: new Array(size + 36).fill(null), contents };
+    contents.forEach((entry, index) => { window.slots[index] = { ...entry, slot: index }; });
     for (let slot = 9; slot < 45; slot += 1) {
-      if (bot.slots[slot]) window.slots[slot - 9 + 27] = { ...bot.slots[slot], slot: slot - 9 + 27 };
+      if (bot.slots[slot]) window.slots[slot - 9 + size] = { ...bot.slots[slot], slot: slot - 9 + size };
     }
     window.firstEmptySlotRange = (start, end) => {
       for (let slot = start; slot < end; slot += 1) if (!window.slots[slot]) return slot;
@@ -94,17 +103,18 @@ function fakeBot({ inventory = [], chest = [] } = {}) {
   };
   // Closing writes the window's inventory part back to the bot
   bot.closeWindow = window => {
-    chest.length = 0;
-    window.slots.slice(0, 27).forEach(entry => entry && chest.push(entry));
-    for (let slot = 27; slot < 63; slot += 1) {
+    const size = window.inventoryStart;
+    window.contents.length = 0;
+    window.slots.slice(0, size).forEach(entry => entry && window.contents.push(entry));
+    for (let slot = size; slot < size + 36; slot += 1) {
       const entry = window.slots[slot];
-      bot.slots[slot - 27 + 9] = entry ? { ...entry, slot: slot - 27 + 9 } : null;
+      bot.slots[slot - size + 9] = entry ? { ...entry, slot: slot - size + 9 } : null;
     }
   };
   return { bot, world };
 }
 
-async function testLearnsOnlyStoneBrokenNearTheBot() {
+async function testLearnsTheLineInFrontFromOneBrokenBlock() {
   fs.rmSync(stateFile, { force: true });
   const { bot } = fakeBot();
   const miner = createStoneMiner({ stateFile });
@@ -114,24 +124,33 @@ async function testLearnsOnlyStoneBrokenNearTheBot() {
   assert.equal(miner.getStatus().blockCount, 0, 'nothing is learned outside learning mode');
 
   miner.setLearning(true);
-  bot.setBlock(1, 65, 0, 'cobblestone');
-  bot.setBlock(1, 65, 0, 'air');
-  bot.setBlock(2, 64, 1, 'stone');
-  bot.setBlock(2, 64, 1, 'air');
   bot.setBlock(5, 64, 0, 'cobblestone');
   bot.setBlock(5, 64, 0, 'air');
   bot.setBlock(1, 64, 0, 'dirt');
   bot.setBlock(1, 64, 0, 'air');
-  bot.setBlock(1, 65, 0, 'cobblestone');
-  bot.setBlock(1, 65, 0, 'air');
+  assert.equal(miner.getStatus().learning, true, 'a far block or a non-stone block does not count');
+
+  bot.setBlock(2, 65, 0, 'cobblestone');
+  bot.setBlock(2, 65, 0, 'air');
   const status = miner.getStatus();
-  assert.deepEqual(status.blocks, [{ x: 1, y: 65, z: 0 }, { x: 2, y: 64, z: 1 }],
-    'stone broken within two blocks is learned once; far blocks and dirt are not');
+  assert.deepEqual(status.blocks, [1, 2, 3, 4, 5].map(x => ({ x, y: 65, z: 0 })),
+    'every block at head height in that direction the bot reaches is learned, nearest first');
   assert.deepEqual(status.anchor, { x: 0, y: 64, z: 0 });
+  assert.equal(status.learning, false);
+  assert.equal(status.enabled, true, 'learning starts the miner');
 
   const restored = createStoneMiner({ stateFile });
-  assert.equal(restored.getStatus().blockCount, 2, 'learned blocks survive a restart');
+  assert.equal(restored.getStatus().blockCount, 5, 'the learned line survives a restart');
   miner.dispose();
+
+  const side = createStoneMiner({ stateFile: null });
+  side.attachBot(bot);
+  side.setLearning(true);
+  bot.setBlock(1, 64, -2, 'stone');
+  bot.setBlock(1, 64, -2, 'air');
+  assert.deepEqual(side.getStatus().blocks, [-1, -2, -3, -4].map(z => ({ x: 1, y: 64, z })),
+    'the line follows the axis the block lies on most, keeping its row and height');
+  side.dispose();
 }
 
 async function testMinesGrownBlocksAndSwapsWornPickaxe() {
@@ -176,16 +195,12 @@ async function testMinesGrownBlocksAndSwapsWornPickaxe() {
   miner.dispose();
 }
 
-async function testDropsMinedBlocksWhenFull() {
+async function testFillsTheHopperFromAStack() {
   fs.rmSync(stateFile, { force: true });
   const pickaxe = item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 });
-  const inventory = [pickaxe, item('bread', 37)];
-  // Two free slots left: 35 and 44
-  for (const slot of [...Array(25).keys()].map(i => i + 9).concat([38, 39, 40, 41, 42, 43])) {
-    inventory.push(item('cobblestone', slot, { count: 64 }));
-  }
-  inventory.push(item('torch', 34));
-  const { bot } = fakeBot({ inventory });
+  const inventory = [pickaxe, item('bread', 37), item('torch', 34), item('cobblestone', 9, { count: 40 })];
+  const hopper = [item('cobblestone', 0, { count: 64 }), item('cobblestone', 1, { count: 64 })];
+  const { bot } = fakeBot({ inventory, hopper });
   const miner = createStoneMiner({ stateFile });
   miner.attachBot(bot);
   miner.setLearning(true);
@@ -193,9 +208,35 @@ async function testDropsMinedBlocksWhenFull() {
   bot.setBlock(1, 65, 0, 'air');
   miner.start();
   bot.setBlock(1, 65, 0, 'cobblestone');
-  await until(() => bot.dug.length === 1, 'it mines after dropping');
-  assert.equal(bot.tossed.length, 31, 'every cobblestone stack is dropped');
+  await until(() => bot.dug.length === 1, 'it mines');
+  assert.equal(bot.opened.includes('hopper'), false, 'less than a stack stays with the bot');
+  miner.stop();
+
+  for (const slot of [10, 11, 12, 13]) bot.slots[slot] = item('cobblestone', slot, { count: 64 });
+  miner.start();
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  await until(() => bot.dug.length === 2, 'it mines after filling the hopper');
+  assert.equal(hopper.length, 5, 'the hopper gets as many stacks as it has room for');
+  assert.equal(bot.inventory.items().filter(entry => entry.name === 'cobblestone').length, 2,
+    'what did not fit waits for the next try');
   assert.ok(bot.inventory.items().some(entry => entry.name === 'torch'), 'other items are kept');
+  assert.equal(bot.tossed.length, 0, 'nothing is thrown on the ground');
+  miner.dispose();
+}
+
+async function testTakesPickaxesFromTheBarrelBelow() {
+  fs.rmSync(stateFile, { force: true });
+  const barrel = [item('diamond_pickaxe', 0, { maxDurability: 1561, durabilityUsed: 0 })];
+  const { bot } = fakeBot({ inventory: [item('bread', 37)], chest: barrel });
+  const miner = createStoneMiner({ stateFile });
+  miner.attachBot(bot);
+  miner.setLearning(true);
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  bot.setBlock(1, 65, 0, 'air');
+  miner.start();
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  await until(() => bot.dug.length === 1, 'it mines with the pickaxe from the barrel');
+  assert.equal(bot.opened[0], 'barrel', 'the barrel the bot stands on is used before the chest nearby');
   miner.dispose();
 }
 
@@ -219,9 +260,10 @@ async function testKeepsRetryingWithoutPickaxe() {
 }
 
 (async () => {
-  await testLearnsOnlyStoneBrokenNearTheBot();
+  await testLearnsTheLineInFrontFromOneBrokenBlock();
   await testMinesGrownBlocksAndSwapsWornPickaxe();
-  await testDropsMinedBlocksWhenFull();
+  await testFillsTheHopperFromAStack();
+  await testTakesPickaxesFromTheBarrelBelow();
   await testKeepsRetryingWithoutPickaxe();
   fs.rmSync(stateFile, { force: true });
   console.log('Stone miner tests passed.');

@@ -4,13 +4,16 @@
  * Stone Miner: the bot stands at a cobblestone generator and keeps mining the
  * blocks it regrows.
  *
- *   1. Learn: while learning, every stone-like block a player breaks within
- *      two blocks of the bot is remembered (with the spot the bot stands on)
- *   2. Mine: each remembered block that has grown back is mined
- *   3. Worn pickaxes go into the nearest chest or barrel and a fresh one is
- *      taken from it; food is taken from it too when the bot has none
- *   4. When the inventory is nearly full, the mined blocks are dropped at the
- *      bot's feet for the collector under it
+ *   1. Learn: the first stone-like block a player breaks within two blocks of
+ *      the bot gives the direction and height: every block on that line in
+ *      front of the bot that it can reach (about five) is remembered, with
+ *      the spot the bot stands on, and mining starts at once
+ *   2. Mine: each of those blocks holding stone is mined, nearest first
+ *   3. Worn pickaxes go into the barrel the bot stands on (or the nearest
+ *      chest or barrel) and a fresh one is taken from it; food is taken from
+ *      it too when the bot has none
+ *   4. Once the bot carries a stack of mined stone, it is put into the hopper
+ *      in front of it
  *
  * Like the Obsidian Farm it never stops on its own: every error is retried.
  */
@@ -23,7 +26,7 @@ const STONE_BLOCKS = new Set([
   'stone', 'cobblestone', 'mossy_cobblestone', 'granite', 'diorite', 'andesite',
   'deepslate', 'cobbled_deepslate', 'tuff', 'basalt', 'smooth_basalt', 'blackstone'
 ]);
-// What the blocks above drop; these are dropped for the collector
+// What the blocks above drop; these go into the hopper
 const MINED_ITEMS = new Set([...STONE_BLOCKS]);
 const PICKAXE_PRIORITY = [
   'netherite_pickaxe', 'diamond_pickaxe', 'iron_pickaxe',
@@ -36,12 +39,16 @@ const UNSAFE_FOOD = new Set([
 const STORAGE_BLOCKS = new Set(['chest', 'trapped_chest', 'barrel']);
 
 const LEARN_RADIUS = 2;
-const MAX_BLOCKS = 32;
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const STORAGE_REACH = 4.5;
-const DIG_REACH = 4.5;
+// From the eye to a block's centre; about five blocks in a straight line
+const DIG_REACH = 5.1;
+const MAX_LINE_LENGTH = 8;
 const EAT_BELOW_FOOD = 18;
-const DROP_WHEN_FREE_SLOTS = 2;
+const DEPOSIT_FROM_COUNT = 64;
+// A hopper holds five stacks and drains slowly: when it was full, the bot
+// mines on and tries again a little later
+const HOPPER_RETRY_MS = 10_000;
 const REGROW_WAIT_MS = 500;
 const DIG_TIMEOUT_MS = 10_000;
 const CONTAINER_TIMEOUT_MS = 5_000;
@@ -121,7 +128,7 @@ function createStoneMiner({
   const saved = loadState();
   const desired = {
     enabled: Boolean(saved.enabled),
-    blocks: Array.isArray(saved.blocks) ? saved.blocks.filter(validPosition).slice(0, MAX_BLOCKS) : [],
+    blocks: Array.isArray(saved.blocks) ? saved.blocks.filter(validPosition).slice(0, MAX_LINE_LENGTH) : [],
     anchor: validPosition(saved.anchor) ? saved.anchor : null
   };
   let totalMined = Math.max(0, Number(saved.totalMined) || 0);
@@ -138,6 +145,7 @@ function createStoneMiner({
   let loopGeneration = 0;
   let lastSavedAt = 0;
   let regrowWaiters = [];
+  let nextHopperAttemptAt = 0;
 
   function validPosition(pos) {
     return pos && [pos.x, pos.y, pos.z].every(Number.isInteger);
@@ -195,6 +203,42 @@ function createStoneMiner({
     return dx <= LEARN_RADIUS && dz <= LEARN_RADIUS && dy >= -LEARN_RADIUS && dy <= 1 + LEARN_RADIUS;
   }
 
+  // The broken block gives the direction: the line runs from the bot through
+  // it at its height, along the axis it lies on most, as far as the bot reaches
+  function lineThrough(pos) {
+    const feet = feetPosition();
+    const dx = pos.x - feet.x;
+    const dz = pos.z - feet.z;
+    let step;
+    let first;
+    if (dx || dz) {
+      step = Math.abs(dx) >= Math.abs(dz) ? { x: Math.sign(dx), y: 0, z: 0 } : { x: 0, y: 0, z: Math.sign(dz) };
+      first = step.x ? { x: feet.x + step.x, y: pos.y, z: pos.z } : { x: pos.x, y: pos.y, z: feet.z + step.z };
+    } else {
+      step = { x: 0, y: pos.y > feet.y ? 1 : -1, z: 0 };
+      first = { x: pos.x, y: step.y > 0 ? feet.y + 2 : feet.y - 1, z: pos.z };
+    }
+    const eye = bot.entity.position.offset(0, bot.entity.height || 1.62, 0);
+    const line = [];
+    for (let k = 0; k < MAX_LINE_LENGTH; k += 1) {
+      const block = { x: first.x + step.x * k, y: first.y + step.y * k, z: first.z + step.z * k };
+      if (eye.distanceTo(new Vec3(block.x + 0.5, block.y + 0.5, block.z + 0.5)) > DIG_REACH) break;
+      line.push(block);
+    }
+    return line;
+  }
+
+  function learnLine(pos) {
+    const line = lineThrough(pos);
+    if (!line.length) return;
+    learning = false;
+    desired.blocks = line;
+    desired.anchor = feetPosition();
+    log(`[Stone Miner] Learned ${line.length} blocks from ${positionKey(line[0])} to ${positionKey(line[line.length - 1])}.`);
+    start();
+    notifyChange();
+  }
+
   function isLearned(pos) {
     const key = positionKey(pos);
     return desired.blocks.some(block => positionKey(block) === key);
@@ -203,13 +247,8 @@ function createStoneMiner({
   function onBlockUpdate(oldBlock, newBlock) {
     const pos = newBlock?.position || oldBlock?.position;
     if (!pos) return;
-    if (learning && isStoneBlock(oldBlock) && isAir(newBlock) && isNearBot(pos) && !isLearned(pos)) {
-      if (desired.blocks.length >= MAX_BLOCKS) return;
-      desired.blocks.push({ x: pos.x, y: pos.y, z: pos.z });
-      desired.anchor = feetPosition();
-      saveState();
-      log(`[Stone Miner] Learned block at ${positionKey(pos)} (${desired.blocks.length} in total).`);
-      notifyChange();
+    if (learning && isStoneBlock(oldBlock) && isAir(newBlock) && isNearBot(pos)) {
+      learnLine(pos);
       return;
     }
     if (running && isStoneBlock(newBlock) && isLearned(pos)) wakeRegrowWaiters();
@@ -296,7 +335,7 @@ function createStoneMiner({
 
   function start() {
     if (!desired.blocks.length) {
-      throw new Error('Stone Miner has no blocks yet: press Learn and break the generator blocks next to the bot.');
+      throw new Error('Stone Miner has no blocks yet: press Learn and break a block in front of the bot.');
     }
     learning = false;
     desired.enabled = true;
@@ -370,7 +409,7 @@ function createStoneMiner({
   // One pass: keep the bot in place and supplied, then mine one grown block
   async function runStep(current, generation) {
     await returnToAnchor(current);
-    if (current.inventory.emptySlotCount() <= DROP_WHEN_FREE_SLOTS) await dropMinedBlocks(current);
+    await depositMinedStone(current);
     await ensureSupplies(current);
     await eatIfHungry(current);
     if (!isCurrent(generation, current)) return false;
@@ -436,13 +475,50 @@ function createStoneMiner({
     });
   }
 
-  // Dropped looking down, so they land in the collector under the bot
-  async function dropMinedBlocks(current) {
-    const items = current.inventory.items().filter(item => MINED_ITEMS.has(item.name));
-    if (!items.length) return;
-    phase = 'dropping';
-    await current.look(current.entity.yaw, -Math.PI / 2, true);
-    for (const item of items) await current.tossStack(item);
+  function findHopper(current) {
+    const id = current.registry?.blocksByName?.hopper?.id;
+    if (id == null) return null;
+    const eye = current.entity.position.offset(0, current.entity.height || 1.62, 0);
+    const positions = current.findBlocks({ matching: id, maxDistance: Math.ceil(STORAGE_REACH) + 1, count: 8 }) || [];
+    return positions
+      .map(pos => ({ pos, distance: eye.distanceTo(pos.offset(0.5, 0.5, 0.5)) }))
+      .filter(entry => entry.distance <= STORAGE_REACH)
+      .sort((a, b) => a.distance - b.distance)
+      .map(entry => current.blockAt(entry.pos))
+      .find(Boolean) || null;
+  }
+
+  // From a full stack on, the mined stone goes into the hopper in front of the
+  // bot, as many stacks as it has free slots
+  async function depositMinedStone(current) {
+    const stacks = () => current.inventory.items().filter(item => MINED_ITEMS.has(item.name));
+    const carried = stacks().reduce((sum, item) => sum + item.count, 0);
+    if (carried < DEPOSIT_FROM_COUNT || Date.now() < nextHopperAttemptAt) return;
+    const hopper = findHopper(current);
+    if (!hopper) {
+      nextHopperAttemptAt = Date.now() + HOPPER_RETRY_MS;
+      log('[Stone Miner] No hopper within reach for the mined stone.');
+      return;
+    }
+    phase = 'depositing';
+    try { current.stopDigging?.(); } catch {}
+    await current.lookAt(hopper.position.offset(0.5, 0.5, 0.5), true);
+    const window = await withTimeout(current.openContainer(hopper), CONTAINER_TIMEOUT_MS, 'The hopper did not open.');
+    let full = false;
+    try {
+      const start = window.inventoryStart;
+      for (const stack of window.slots.slice(start, window.inventoryEnd).filter(item => item && MINED_ITEMS.has(item.name))) {
+        const destination = window.firstEmptySlotRange(0, start);
+        if (destination == null) {
+          full = true;
+          break;
+        }
+        await current.moveSlotItem(stack.slot, destination);
+      }
+    } finally {
+      try { current.closeWindow(window); } catch {}
+    }
+    if (full) nextHopperAttemptAt = Date.now() + HOPPER_RETRY_MS;
   }
 
   async function eatIfHungry(current) {
@@ -454,7 +530,10 @@ function createStoneMiner({
     await current.consume();
   }
 
+  // The barrel the bot stands on first, then the nearest one in reach
   function findStorage(current) {
+    const below = current.blockAt(current.entity.position.offset(0, -0.5, 0).floored());
+    if (below?.name && STORAGE_BLOCKS.has(below.name)) return below;
     const ids = [...STORAGE_BLOCKS]
       .map(name => current.registry?.blocksByName?.[name]?.id)
       .filter(id => id != null);
