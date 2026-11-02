@@ -183,6 +183,7 @@ function createStoneMiner({
   let hopperSeen = null;
   let barrelCheckDue = true;
   let lineCheckDue = true;
+  let lastLineView = null;
 
   function validPosition(pos) {
     return pos && [pos.x, pos.y, pos.z].every(Number.isInteger);
@@ -483,8 +484,10 @@ function createStoneMiner({
     const target = findGrownBlock(current);
     if (!target) {
       phase = 'waiting';
+      logLineView(current);
       return false;
     }
+    lastLineView = null;
     phase = 'mining';
     // The pickaxe in hand is kept until it wears out: picking the least worn
     // one each block swapped identical pickaxes back and forth
@@ -522,6 +525,23 @@ function createStoneMiner({
       throw new Error('The generator blocks are out of reach.');
     }
     return null;
+  }
+
+  // What the bot sees on each learned block while it waits, logged when it
+  // changes, so a line it does not mine to the end can be explained
+  function logLineView(current) {
+    const eye = current.entity.position.offset(0, current.entity.height || 1.62, 0);
+    const view = desired.blocks.map((pos, index) => {
+      const block = current.blockAt(new Vec3(pos.x, pos.y, pos.z));
+      const distance = eye.distanceTo(new Vec3(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5));
+      const notes = [];
+      if (distance > DIG_REACH) notes.push('out of reach');
+      if (block && current.canDigBlock?.(block) === false) notes.push('cannot dig');
+      return `${index + 1}) ${positionKey(pos)} ${block?.name || 'unloaded'} ${distance.toFixed(1)}m${notes.length ? ` (${notes.join(', ')})` : ''}`;
+    }).join('; ');
+    if (view === lastLineView) return;
+    lastLineView = view;
+    log(`[Stone Miner] Waiting, line of ${desired.blocks.length}: ${view}.`);
   }
 
   // The bot may be pushed off its spot; it walks back if it can
