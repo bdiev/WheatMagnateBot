@@ -182,6 +182,7 @@ function createStoneMiner({
   let barrelSeen = null;
   let hopperSeen = null;
   let barrelCheckDue = true;
+  let lineCheckDue = true;
 
   function validPosition(pos) {
     return pos && [pos.x, pos.y, pos.z].every(Number.isInteger);
@@ -275,6 +276,23 @@ function createStoneMiner({
     desired.anchor = feetPosition();
     log(`[Stone Miner] Learned ${line.length} blocks from ${positionKey(line[0])} to ${positionKey(line[line.length - 1])}.`);
     start();
+    notifyChange();
+  }
+
+  // A line learned by an older version holds only the one or two blocks a
+  // player broke; once the bot is on its spot it is rebuilt through the first
+  // of them to everything in reach
+  function extendLine(current) {
+    lineCheckDue = false;
+    const feet = feetPosition(current);
+    const anchor = desired.anchor;
+    if (!desired.blocks.length || !anchor || !feet) return;
+    if (feet.x !== anchor.x || feet.y !== anchor.y || feet.z !== anchor.z) return;
+    const line = lineThrough(desired.blocks[0]);
+    if (line.length <= desired.blocks.length) return;
+    log(`[Stone Miner] Extended the learned line from ${desired.blocks.length} to ${line.length} blocks.`);
+    desired.blocks = line;
+    saveState();
     notifyChange();
   }
 
@@ -420,6 +438,7 @@ function createStoneMiner({
     sessionStartedAt = new Date().toISOString();
     // A first look into the barrel, so the site knows its pickaxes
     barrelCheckDue = true;
+    lineCheckDue = true;
     log('[Stone Miner] Started.');
     loop(generation).catch(error => log(`[Stone Miner] Loop crashed: ${error.message}`));
   }
@@ -455,6 +474,7 @@ function createStoneMiner({
   // One pass: keep the bot in place and supplied, then mine one grown block
   async function runStep(current, generation) {
     await returnToAnchor(current);
+    if (lineCheckDue) extendLine(current);
     await depositMinedStone(current);
     await ensureSupplies(current);
     await eatIfHungry(current);

@@ -372,8 +372,26 @@ async function testKeepsRetryingWithoutPickaxe() {
   assert.throws(() => createStoneMiner({ stateFile: null }).start(), /no blocks/);
 }
 
+async function testExtendsALineLearnedByAnOlderVersion() {
+  // Older versions saved only the blocks a player broke while learning
+  fs.writeFileSync(stateFile, JSON.stringify({
+    enabled: true, blocks: [{ x: 1, y: 65, z: 0 }], anchor: { x: 0, y: 64, z: 0 }
+  }));
+  const pickaxe = item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 });
+  const { bot, world } = fakeBot({ inventory: [pickaxe, item('bread', 37)], chest: [item('bread', 0)] });
+  for (let x = 1; x <= 5; x += 1) world.set(`${x},65,0`, 'stone');
+  const miner = createStoneMiner({ stateFile });
+  miner.attachBot(bot);
+  miner.onSpawn(bot);
+  await until(() => bot.dug.length === 5, 'every block in reach is mined, not only the saved one');
+  assert.deepEqual(bot.dug, [1, 2, 3, 4, 5].map(x => `${x},65,0`), 'nearest first');
+  assert.equal(createStoneMiner({ stateFile }).getStatus().blockCount, 5, 'the extended line is saved');
+  miner.dispose();
+}
+
 (async () => {
   await testLearnsTheLineInFrontFromOneBrokenBlock();
+  await testExtendsALineLearnedByAnOlderVersion();
   await testMinesGrownBlocksAndSwapsWornPickaxe();
   await testFillsTheHopperFromAStack();
   await testKeepsThePickaxeInHand();
