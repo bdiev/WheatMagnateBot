@@ -513,6 +513,8 @@ function createStoneMiner({
     }
     if (lineCheckDue) extendLine(current);
     await depositMinedStone(current);
+    // A hopper found full is fed from the next pass on, without a block mined first
+    if (hopperFull) return false;
     await ensureSupplies(current);
     await eatIfHungry(current);
     if (!isCurrent(generation, current)) return false;

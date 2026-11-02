@@ -268,7 +268,9 @@ async function testFillsTheHopperFromAStack() {
   for (const slot of [10, 11, 12, 13]) bot.slots[slot] = item('cobblestone', slot, { count: 64 });
   miner.start();
   bot.setBlock(1, 65, 0, 'cobblestone');
-  await until(() => bot.dug.length === 2, 'it mines after filling the hopper');
+  await until(() => miner.getStatus().hopperFull, 'it fills the hopper');
+  await wait(100);
+  assert.equal(bot.dug.length, 1, 'with a stack left over and the hopper full it does not mine');
   assert.equal(hopper.length, 5, 'the hopper gets as many stacks as it has room for');
   assert.equal(bot.inventory.items().filter(entry => entry.name === 'cobblestone').length, 2,
     'what did not fit waits for the next try');
