@@ -88,7 +88,7 @@ class NotificationService {
     this.pending = new Map();
   }
 
-  async report(eventType, { key = 'default', title, message, metadata = {}, resolved = false, transient = false, systemLog = true } = {}) {
+  async report(eventType, { key = 'default', title, message, metadata = {}, resolved = false, transient = false, systemLog = true, silent = false } = {}) {
     if (!this.repository) {
       if (eventType !== 'database_unavailable' || resolved) return { skipped: true, reason: 'repository_unavailable' };
       const notification = { id: null, event_type: eventType, dedup_key: String(key), severity: 'critical', status: 'active', title: title || 'Database unavailable', message: message || 'PostgreSQL is not configured.', metadata };
@@ -98,7 +98,7 @@ class NotificationService {
     }
     const lockKey = JSON.stringify([eventType, String(key), String(metadata?.accountId || '')]);
     const previous = this.pending.get(lockKey) || Promise.resolve();
-    const operation = previous.then(() => this._report(eventType, { key, title, message, metadata, resolved, transient, systemLog }));
+    const operation = previous.then(() => this._report(eventType, { key, title, message, metadata, resolved, transient, systemLog, silent }));
     const tracked = operation.catch(() => {});
     this.pending.set(lockKey, tracked);
     try { return await operation; } finally { if (this.pending.get(lockKey) === tracked) this.pending.delete(lockKey); }
@@ -135,6 +135,8 @@ class NotificationService {
     if (event.resolved) {
       if (!active) return { skipped: true, reason: 'not_active' };
       await this.repository.resolveActive(active.id);
+      // Closed without a message of its own when another one already says so
+      if (event.silent) return { resolved: true, silent: true };
       const notification = await this.repository.createNotification({
         eventType, dedupKey: String(event.key), severity: 'info', status: 'resolved',
         title: event.title || `${active.title} resolved`,

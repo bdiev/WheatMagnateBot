@@ -48,8 +48,19 @@ assert.match(
 );
 assert.match(
   botSource,
-  /intentionalProcessShutdown\s*=\s*multiAccountShuttingDown\s*\|\|\s*normalizedReason\s*===\s*'Process shutdown'[\s\S]*?if \(!intentionalProcessShutdown\)\s*\{[\s\S]*?reportNotification\('bot_disconnected'/,
+  /intentionalProcessShutdown\s*=\s*multiAccountShuttingDown\s*\|\|\s*normalizedReason\s*===\s*'Process shutdown'[\s\S]*?if \(!intentionalProcessShutdown\)\s*\{\s*reportConnectionLoss\('bot_disconnected'/,
   'intentional process shutdown must not create a disconnect notification'
+);
+
+assert.match(
+  botSource,
+  /function reportConnectionLoss[\s\S]*?if \(multiAccountShuttingDown\) return;[\s\S]*?if \(back && eventType === 'bot_disconnected'\) return;/,
+  'a disconnect or kick reported by a process that is being replaced on redeploy must be dropped'
+);
+assert.match(
+  botSource,
+  /reportNotification\('bot_kicked', \{ key: 'minecraft', resolved: true, silent: true \}\)/,
+  'the kick alert is closed without a second recovery message'
 );
 
 console.log('Scheduled restart notification policy tests passed.');

@@ -7,6 +7,29 @@ const PROFILE_CACHE_TTL = 60 * 60_000;
 const TEXTURE_CACHE_TTL = 24 * 60 * 60_000;
 const profileCache = new Map();
 const textureCache = new Map();
+// NameMC refuses automated requests with 403 or 429: it is left alone for a
+// while instead of being asked again for every player who joins
+const BLOCKED_PAUSE = 6 * 60 * 60_000;
+let blockedUntil = 0;
+
+function nameMcError(message, code) {
+  return Object.assign(new Error(message), { code });
+}
+
+function assertNotBlocked() {
+  if (Date.now() < blockedUntil) throw nameMcError('NameMC requests are paused after NameMC refused them.', 'NAMEMC_PAUSED');
+}
+
+function checkResponse(response, what) {
+  if (response.ok) return;
+  if (response.status === 403 || response.status === 429) {
+    // Requests already on their way when the first refusal came are not news
+    assertNotBlocked();
+    blockedUntil = Date.now() + BLOCKED_PAUSE;
+    throw nameMcError(`NameMC ${what} request was refused (HTTP ${response.status}); NameMC requests are paused for ${BLOCKED_PAUSE / 3_600_000} hours.`, 'NAMEMC_BLOCKED');
+  }
+  throw new Error(`NameMC ${what} request failed: HTTP ${response.status}`);
+}
 
 function hasPngSignature(body) {
   return body.length >= 8 && body.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
@@ -51,11 +74,12 @@ async function fetchNameMcCapeTexture(capeHash, { fetchImpl = fetch } = {}) {
   if (!/^[a-f0-9]{16}$/.test(capeHash)) throw new Error('Invalid NameMC cape identifier.');
   const cached = textureCache.get(capeHash);
   if (cached && Date.now() - cached.storedAt < TEXTURE_CACHE_TTL) return cached;
+  assertNotBlocked();
   const response = await fetchImpl(`https://s.namemc.com/i/${capeHash}.js`, {
     signal:AbortSignal.timeout(8_000),
     headers:{ Accept:'application/javascript', 'User-Agent':'WheatMagnateBot/1.0' }
   });
-  if (!response.ok) throw new Error(`NameMC cape request failed: HTTP ${response.status}`);
+  checkResponse(response,'cape');
   const source = await response.text();
   if (source.length > 1024 * 1024) throw new Error('NameMC cape response is too large.');
   const body = decodeNameMcCapeScript(capeHash,source);
@@ -70,11 +94,12 @@ async function fetchNameMcProfileCapes(username, { fetchImpl = fetch, forceRefre
   const cacheKey = username.toLowerCase();
   const cached = profileCache.get(cacheKey);
   if (!forceRefresh && cached && Date.now() - cached.storedAt < PROFILE_CACHE_TTL) return cached.capes;
+  assertNotBlocked();
   const response = await fetchImpl(`https://r.jina.ai/http://namemc.com/profile/${encodeURIComponent(username)}`, {
     signal:AbortSignal.timeout(12_000),
     headers:{ Accept:'text/plain', 'User-Agent':'WheatMagnateBot/1.0' }
   });
-  if (!response.ok) throw new Error(`NameMC profile request failed: HTTP ${response.status}`);
+  checkResponse(response,'profile');
   const markdown = await response.text();
   if (markdown.length > 2 * 1024 * 1024) throw new Error('NameMC profile response is too large.');
   const capes = parseNameMcCapes(markdown);

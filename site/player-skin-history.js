@@ -73,7 +73,11 @@ function createPlayerSkinHistoryService({
       }
       if (nameMc.currentCapeHash) currentCapeHash = nameMc.currentCapeHash;
     } catch (error) {
-      warn(`[PlayerSkinHistory] Could not import NameMC capes for ${player.username}: ${error.message}`);
+      // While NameMC is paused nothing is asked, so there is nothing to report
+      if (error.code === 'NAMEMC_BLOCKED') warn(`[PlayerSkinHistory] ${error.message}`);
+      else if (error.code !== 'NAMEMC_PAUSED') {
+        warn(`[PlayerSkinHistory] Could not import NameMC capes for ${player.username}: ${error.message}`);
+      }
     }
     return currentCapeHash;
   }

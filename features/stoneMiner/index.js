@@ -188,7 +188,6 @@ function createStoneMiner({
   let hopperSeen = null;
   let barrelCheckDue = true;
   let lineCheckDue = true;
-  let lastLineView = null;
   // Since when each learned block has looked empty, and the stone mined last
   const emptySince = new Map();
   let lastMinedName = 'cobblestone';
@@ -503,10 +502,8 @@ function createStoneMiner({
     const target = grown || findStaleBlock(current);
     if (!target) {
       phase = 'waiting';
-      logLineView(current);
       return false;
     }
-    lastLineView = null;
     phase = 'mining';
     // The pickaxe in hand is kept until it wears out: picking the least worn
     // one each block swapped identical pickaxes back and forth
@@ -515,19 +512,36 @@ function createStoneMiner({
       ? held
       : findBestUsablePickaxe(current, current.inventory.items());
     if (!pickaxe) throw supplyError('No usable pickaxe.');
-    if (current.heldItem?.slot !== pickaxe.slot) await current.equip(pickaxe, 'hand');
+    if (current.heldItem?.slot !== pickaxe.slot) await equipPickaxe(current, pickaxe);
+    const pickaxeSlot = current.heldItem?.slot ?? pickaxe.slot;
     await withTimeout(current.dig(target, true), DIG_TIMEOUT_MS, 'Mining took too long.');
     // Whether a stale block held stone shows only when it grows back
     if (!grown) return true;
     lastMinedName = target.name;
     sessionMined += 1;
     totalMined += 1;
-    const tracked = pickaxeBlocks.get(pickaxe.slot) || { blocks: 0, fromFresh: false };
+    const tracked = pickaxeBlocks.get(pickaxeSlot) || { blocks: 0, fromFresh: false };
     tracked.blocks += 1;
-    pickaxeBlocks.set(pickaxe.slot, tracked);
+    pickaxeBlocks.set(pickaxeSlot, tracked);
     report(onMined, { name: target.name });
     if (Date.now() - lastSavedAt > SAVE_EVERY_MS) saveState();
     return true;
+  }
+
+  // Equipping moves a pickaxe from the inventory into the hotbar, swapping it
+  // with what was there; its count moves along, or a fresh pickaxe from the
+  // barrel lost its place in the average
+  async function equipPickaxe(current, pickaxe) {
+    const from = pickaxe.slot;
+    await current.equip(pickaxe, 'hand');
+    const to = current.heldItem?.slot;
+    if (to == null || to === from) return;
+    const moved = pickaxeBlocks.get(from);
+    const swapped = pickaxeBlocks.get(to);
+    pickaxeBlocks.delete(from);
+    pickaxeBlocks.delete(to);
+    if (moved) pickaxeBlocks.set(to, moved);
+    if (swapped) pickaxeBlocks.set(from, swapped);
   }
 
   function findGrownBlock(current) {
@@ -587,23 +601,6 @@ function createStoneMiner({
       return stone;
     }
     return { ...block, name: data?.name || lastMinedName };
-  }
-
-  // What the bot sees on each learned block while it waits, logged when it
-  // changes, so a line it does not mine to the end can be explained
-  function logLineView(current) {
-    const eye = current.entity.position.offset(0, current.entity.height || 1.62, 0);
-    const view = desired.blocks.map((pos, index) => {
-      const block = current.blockAt(new Vec3(pos.x, pos.y, pos.z));
-      const distance = eye.distanceTo(new Vec3(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5));
-      const notes = [];
-      if (distance > DIG_REACH) notes.push('out of reach');
-      if (isStoneBlock(block) && current.canDigBlock?.(block) === false) notes.push('cannot dig');
-      return `${index + 1}) ${positionKey(pos)} ${block?.name || 'unloaded'} ${distance.toFixed(1)}m${notes.length ? ` (${notes.join(', ')})` : ''}`;
-    }).join('; ');
-    if (view === lastLineView) return;
-    lastLineView = view;
-    log(`[Stone Miner] Waiting, line of ${desired.blocks.length}: ${view}.`);
   }
 
   // The bot may be pushed off its spot; it walks back if it can

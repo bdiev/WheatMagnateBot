@@ -5759,6 +5759,25 @@ const primaryProtectionLever = createProtectionLeverController({
 let obsidianFarmResumeBot = null;
 const reconnectAttemptTimes = [];
 
+// A redeploy starts the new process before the old one stops, and the new
+// bot's login drops the old one, which reported a disconnect and a kick just
+// before being shut down. These reports wait a minute: they are dropped when
+// the process is shutting down by then, a disconnect is dropped when the bot
+// is already back, and a kick it recovered from is only reported, not kept open
+const CONNECTION_LOSS_GRACE_MS = 60_000;
+let lastPrimarySpawnAt = 0;
+
+function reportConnectionLoss(eventType, details) {
+  const lostAt = Date.now();
+  const timer = setTimeout(() => {
+    if (multiAccountShuttingDown) return;
+    const back = lastPrimarySpawnAt > lostAt;
+    if (back && eventType === 'bot_disconnected') return;
+    reportNotification(eventType, back ? { ...details, transient: true } : details);
+  }, CONNECTION_LOSS_GRACE_MS);
+  timer.unref?.();
+}
+
 function reportNotification(eventType, details = {}) {
   if (isScheduledRestartConnectionEvent(eventType)) {
     console.log(`[Notification] ${eventType} suppressed during the scheduled server restart window.`);
@@ -10672,7 +10691,7 @@ function createBot() {
     const normalizedReason = normalizeStatusReason(reason);
     const intentionalProcessShutdown = multiAccountShuttingDown || normalizedReason === 'Process shutdown';
     if (!intentionalProcessShutdown) {
-      reportNotification('bot_disconnected', {
+      reportConnectionLoss('bot_disconnected', {
         key: 'minecraft', title: 'Bot disconnected',
         message: buildDisconnectReason(reason, 'Connection lost'),
         metadata: { reason: normalizedReason || null }
@@ -10762,22 +10781,23 @@ function createBot() {
       if (!suppressDefaultAuthCachePersist) authCacheStore.persist(DEFAULT_ACCOUNT_ID,config.profilesFolder).catch(error => console.error('[Accounts] Default auth-cache persistence failed:',error.message));
     },1000);
     reconnectAttemptTimes.length = 0;
+    const firstSpawnOfProcess = !lastPrimarySpawnAt;
+    lastPrimarySpawnAt = Date.now();
     recordFarmAnnotation('bot_reconnected', 'Bot reconnected').catch(() => {});
+    // One message for the recovery: "Connection restored" already says the
+    // bot is back, so a separate "Bot reconnected" is sent only when the
+    // disconnect alert is turned off, and never for the start of a process
     reportNotification('bot_disconnected', {
       key: 'minecraft', resolved: true, title: 'Bot connection restored',
       message: 'The Minecraft bot connected and spawned successfully.'
     }).then(result => {
-      if (!result?.resolved) return;
-      // The resolved bot_disconnected entry above already logs this recovery.
+      if (result?.reason !== 'disabled' || firstSpawnOfProcess) return;
       reportNotification('bot_reconnected', {
         key: 'minecraft', transient: true, systemLog: false, title: 'Bot reconnected',
         message: 'The Minecraft bot connected and spawned successfully.'
       });
     });
-    reportNotification('bot_kicked', {
-      key: 'minecraft', resolved: true, title: 'Kick recovered',
-      message: 'The bot reconnected after being kicked.'
-    });
+    reportNotification('bot_kicked', { key: 'minecraft', resolved: true, silent: true });
     reportNotification('unauthorized_player_nearby', {
       key: 'minecraft', resolved: true, title: 'Safety alert cleared',
       message: 'The bot reconnected after the nearby-player alert was handled.'
@@ -10880,7 +10900,7 @@ function createBot() {
     recordFarmAnnotation('bot_disconnected', 'Bot kicked', { reason: normalizeStatusReason(reason), kicked: true }).catch(() => {});
     const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
-    reportNotification('bot_kicked', {
+    reportConnectionLoss('bot_kicked', {
       key: 'minecraft', title: 'Bot was kicked',
       message: reasonText || 'The Minecraft server kicked the bot.',
       metadata: { reason: reasonText || null }

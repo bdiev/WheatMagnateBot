@@ -60,7 +60,20 @@ function fakeBot({ inventory = [], chest = [], hopper = [] } = {}) {
   bot.dug = [];
   bot.blockAt = blockAt;
   bot.canDigBlock = () => true;
-  bot.equip = async entry => { bot.heldItem = entry; };
+  // Like mineflayer, an item from the inventory goes into the hotbar: the
+  // first empty slot, or it swaps with the first one
+  bot.equip = async entry => {
+    let slot = entry.slot;
+    if (slot < 36) {
+      const hotbar = [36, 37, 38, 39, 40, 41, 42, 43, 44];
+      const target = hotbar.find(index => !bot.slots[index]) ?? 36;
+      const other = bot.slots[target];
+      bot.slots[target] = { ...bot.slots[slot], slot: target };
+      bot.slots[slot] = other ? { ...other, slot } : null;
+      slot = target;
+    }
+    bot.heldItem = bot.slots[slot];
+  };
   bot.dig = async block => {
     bot.dug.push(`${block.position.x},${block.position.y},${block.position.z}`);
     bot.setBlock(block.position.x, block.position.y, block.position.z, 'air');

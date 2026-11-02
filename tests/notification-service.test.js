@@ -251,4 +251,15 @@ async function run() {
   console.log('NotificationService tests passed.');
 }
 
-run().catch(err => { console.error(err); process.exitCode = 1; });
+async function verifySilentResolve() {
+  const deliveries = [];
+  const repository = new MemoryNotificationRepository([rule({ event_type: "bot_kicked", threshold: null, delivery_channels: ["discord"] })]);
+  const service = new NotificationService({ repository, discordSender: async notification => deliveries.push(notification) });
+  await service.report("bot_kicked", { key: "minecraft", title: "Bot was kicked", message: "Kicked" });
+  const result = await service.report("bot_kicked", { key: "minecraft", resolved: true, silent: true });
+  assert.equal(result.silent, true);
+  assert.equal(await repository.getActive("bot_kicked", "minecraft"), null, "a silent resolve still closes the alert");
+  assert.equal(deliveries.length, 1, "and sends no message of its own");
+}
+
+run().then(verifySilentResolve).catch(err => { console.error(err); process.exitCode = 1; });
