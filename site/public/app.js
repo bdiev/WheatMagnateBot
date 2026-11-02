@@ -12007,6 +12007,7 @@ const STONE_MINER_PHASES = {
   waiting: 'Waiting for stone to grow',
   restocking: 'Taking a pickaxe or food',
   depositing: 'Filling the hopper',
+  hopper_full: 'Hopper full · watching it, mining resumes once it drains',
   eating: 'Eating',
   returning: 'Walking back to the generator',
   retrying: 'Retrying'
@@ -12028,7 +12029,6 @@ function renderStoneMinerControl(miner) {
   else if (miner.enabled) text = `${STONE_MINER_PHASES[miner.phase] || 'Starting'}.`;
   else text = blocks ? 'Stopped.' : 'Learn the generator blocks first.';
   if (miner?.lastErrorMessage && miner.enabled) text = miner.lastErrorMessage;
-  if (miner?.stopReason && !miner.enabled) text = miner.stopReason;
   status.textContent = text;
   status.title = text;
   if (learnStatus) {
@@ -12120,7 +12120,7 @@ function renderStoneMiner(payload = {}) {
   const minerState = miner.learning ? 'learning' : miner.running ? 'mining' : miner.enabled ? 'waiting' : 'stopped';
   const tab = $('#tab-stone-miner');
   if (tab) tab.dataset.minerState = minerState;
-  $('#stoneMinerState').textContent = minerState === 'stopped' && miner.stopReason
+  $('#stoneMinerState').textContent = miner.hopperFull && miner.enabled
     ? 'Hopper Full'
     : { learning: 'Learning', mining: 'Mining', waiting: 'Waiting', stopped: 'Stopped' }[minerState];
   $('#stoneMinerUpdated').textContent = `last update: ${formatDate(miner.observedAt)}`;

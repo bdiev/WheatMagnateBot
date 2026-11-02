@@ -3820,7 +3820,7 @@ async function getStoneMinerStats(currentUser, url) {
       sessionMined: toInt(miner.sessionMined),
       sessionStartedAt: miner.sessionStartedAt || null,
       lastErrorMessage: miner.lastErrorMessage || null,
-      stopReason: miner.stopReason || null,
+      hopperFull: Boolean(miner.hopperFull),
       observedAt: scoped?.observedAt || defaultBotResult.rows[0]?.observed_at || null
     },
     totalMined: toInt(totalsResult.rows[0]?.total),

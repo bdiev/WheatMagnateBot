@@ -15,10 +15,10 @@
  *      chest or barrel) and a fresh one is taken from it; food is taken from
  *      it too when the bot has none
  *   4. Once the bot carries a stack of mined stone, it is put into the hopper
- *      in front of it; when the hopper stays full without draining, the
- *      miner turns itself off
+ *      in front of it; when it is full, the bot opens it and watches it, and
+ *      mines on once a couple of items have left it, also after a restart
  *
- * Apart from a full hopper it never stops on its own: every error is retried.
+ * It never stops on its own: every error is retried.
  */
 
 const fs = require('node:fs');
@@ -56,8 +56,12 @@ const DEPOSIT_FROM_COUNT = 64;
 const HOPPER_INTERVAL_MS = 5 * 60_000;
 const HOPPER_URGENT_INTERVAL_MS = 26_000;
 const HOPPER_URGENT_FREE_SLOTS = 3;
-// Full for this long without draining: everything after the hopper is full
-const HOPPER_STALL_MS = 30_000;
+// A full hopper is watched with its window open; mining resumes once this
+// many items have left it. The window is reopened every minute, so the bot
+// still eats and keeps its spot
+const HOPPER_DRAINED_ITEMS = 2;
+const HOPPER_WATCH_MS = 60_000;
+const HOPPER_POLL_MS = 250;
 const REGROW_WAIT_MS = 500;
 // A generator block grows back within a couple of seconds; one that looks
 // empty for longer may only look so to the bot
@@ -157,11 +161,12 @@ function isSafeFood(bot, item) {
 function createStoneMiner({
   stateFile = null, log = () => {}, onChange = () => {}, onMined = () => {}, onPickaxeRetired = () => {},
   hopperIntervalMs = HOPPER_INTERVAL_MS, hopperUrgentIntervalMs = HOPPER_URGENT_INTERVAL_MS,
-  hopperStallMs = HOPPER_STALL_MS, staleEmptyMs = STALE_EMPTY_MS
+  hopperPollMs = HOPPER_POLL_MS, staleEmptyMs = STALE_EMPTY_MS
 } = {}) {
   const saved = loadState();
   const desired = {
-    enabled: Boolean(saved.enabled),
+    // Older versions turned the miner off on a full hopper; it watches it now
+    enabled: Boolean(saved.enabled || saved.stopReason),
     blocks: Array.isArray(saved.blocks) ? saved.blocks.filter(validPosition).slice(0, MAX_LINE_LENGTH) : [],
     anchor: validPosition(saved.anchor) ? saved.anchor : null
   };
@@ -183,9 +188,12 @@ function createStoneMiner({
   let lastSavedAt = 0;
   let regrowWaiters = [];
   let lastHopperVisitAt = 0;
-  let hopperFullSince = null;
   let nextFoodCheckAt = 0;
-  let stopReason = saved.stopReason || null;
+  // The hopper the bot found full, with the most items seen in it; saved, so
+  // the bot watches it again after a restart
+  let hopperFull = saved.hopperFull || saved.stopReason
+    ? { total: Math.max(0, Number(saved.hopperFull?.total) || 0) }
+    : null;
   // What the barrel and the hopper held when the bot last opened them
   let barrelSeen = null;
   let hopperSeen = null;
@@ -214,7 +222,7 @@ function createStoneMiner({
     try {
       fs.mkdirSync(path.dirname(stateFile), { recursive: true });
       fs.writeFileSync(stateFile, JSON.stringify({
-        ...desired, totalMined, stopReason,
+        ...desired, totalMined, hopperFull,
         pickaxes: [...pickaxeBlocks].map(([slot, tracked]) => ({ slot, ...tracked }))
       }, null, 2), 'utf8');
     } catch (error) {
@@ -236,7 +244,7 @@ function createStoneMiner({
       sessionStartedAt,
       totalMined,
       lastErrorMessage,
-      stopReason,
+      hopperFull: Boolean(hopperFull),
       barrel: barrelSeen && { ...barrelSeen },
       hopper: hopperSeen && { ...hopperSeen }
     };
@@ -422,8 +430,7 @@ function createStoneMiner({
     learning = false;
     desired.enabled = true;
     lastErrorMessage = null;
-    stopReason = null;
-    hopperFullSince = null;
+    hopperFull = null;
     saveState();
     if (bot?.entity && !running) startLoop();
     return getStatus();
@@ -431,7 +438,7 @@ function createStoneMiner({
 
   function stop() {
     desired.enabled = false;
-    stopReason = null;
+    hopperFull = null;
     learning = false;
     haltLoop();
     saveState();
@@ -498,6 +505,11 @@ function createStoneMiner({
   // One pass: keep the bot in place and supplied, then mine one grown block
   async function runStep(current, generation) {
     await returnToAnchor(current);
+    if (hopperFull) {
+      await eatIfHungry(current);
+      await watchHopper(current, generation);
+      return false;
+    }
     if (lineCheckDue) extendLine(current);
     await depositMinedStone(current);
     await ensureSupplies(current);
@@ -646,8 +658,7 @@ function createStoneMiner({
   }
 
   // From a full stack on, the mined stone goes into the hopper in front of the
-  // bot. A hopper that stays full without draining means everything after it
-  // is full too, and the miner turns itself off
+  // bot. One that takes nothing more is watched until it drains
   async function depositMinedStone(current) {
     const carried = current.inventory.items()
       .filter(item => MINED_ITEMS.has(item.name))
@@ -678,17 +689,42 @@ function createStoneMiner({
       try { current.closeWindow(window); } catch {}
     }
 
-    if (moved || contents.room > 0) {
-      hopperFullSince = null;
-      return;
-    }
-    if (!hopperFullSince || contents.total < hopperFullSince.total) {
-      hopperFullSince = { at: Date.now(), total: contents.total };
-      log('[Stone Miner] The hopper is full; checking whether it drains.');
-      return;
-    }
-    if (Date.now() - hopperFullSince.at >= hopperStallMs) {
-      stopBecause(`The hopper stayed full for ${Math.round(hopperStallMs / 1000)} s: mining stopped.`);
+    if (moved || contents.room > 0) return;
+    hopperFull = { total: contents.total };
+    log('[Stone Miner] The hopper is full; watching it until it drains.');
+    saveState();
+    notifyChange();
+  }
+
+  // The bot stands looking into the open hopper; once a couple of items have
+  // left it, mining resumes
+  async function watchHopper(current, generation) {
+    const hopper = findHopper(current);
+    if (!hopper) throw new Error('The hopper is full, but no hopper is within reach to watch.');
+    phase = 'hopper_full';
+    const window = await openWindow(current, hopper, 'The hopper did not open.');
+    try {
+      const until = Date.now() + HOPPER_WATCH_MS;
+      while (isCurrent(generation, current) && current.currentWindow === window && Date.now() < until) {
+        const { total } = hopperContents(window);
+        if (!hopperSeen || hopperSeen.items !== total) {
+          hopperSeen = { items: total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
+          notifyChange();
+        }
+        // Items put in by someone else raise the mark
+        if (total > hopperFull.total) hopperFull.total = total;
+        if (total <= hopperFull.total - HOPPER_DRAINED_ITEMS) {
+          log('[Stone Miner] The hopper drains again; mining resumes.');
+          hopperFull = null;
+          lastHopperVisitAt = Date.now();
+          saveState();
+          notifyChange();
+          return;
+        }
+        await sleep(hopperPollMs);
+      }
+    } finally {
+      try { if (current.currentWindow === window) current.closeWindow(window); } catch {}
     }
   }
 
@@ -709,16 +745,6 @@ function createStoneMiner({
       if (MINED_ITEMS.has(item.name)) room += Math.max(0, (item.stackSize || 64) - item.count);
     }
     return { room, total };
-  }
-
-  function stopBecause(reason) {
-    log(`[Stone Miner] ${reason}`);
-    desired.enabled = false;
-    stopReason = reason;
-    hopperFullSince = null;
-    haltLoop();
-    saveState();
-    notifyChange();
   }
 
   async function openWindow(current, block, timeoutMessage) {

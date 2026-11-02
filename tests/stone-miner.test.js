@@ -105,6 +105,7 @@ function fakeBot({ inventory = [], chest = [], hopper = [] } = {}) {
       return null;
     };
     bot.window = window;
+    bot.currentWindow = window;
     return window;
   };
   // Dragging with the cursor is refused by the server while a container is
@@ -136,6 +137,7 @@ function fakeBot({ inventory = [], chest = [], hopper = [] } = {}) {
   };
   // Closing writes the window's inventory part back to the bot
   bot.closeWindow = window => {
+    if (bot.currentWindow === window) bot.currentWindow = null;
     const size = window.inventoryStart;
     window.contents.length = 0;
     window.slots.slice(0, size).forEach(entry => entry && window.contents.push(entry));
@@ -331,7 +333,7 @@ async function testOpensTheHopperOnceEveryFiveMinutes() {
   miner.dispose();
 }
 
-async function testStopsWhenTheHopperStaysFull() {
+async function testWatchesAFullHopperUntilItDrains() {
   fs.rmSync(stateFile, { force: true });
   const inventory = [
     item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 }), item('bread', 37),
@@ -339,23 +341,38 @@ async function testStopsWhenTheHopperStaysFull() {
   ];
   const hopper = [0, 1, 2, 3, 4].map(slot => item('cobblestone', slot, { count: 64 }));
   const { bot } = fakeBot({ inventory, hopper });
-  const miner = createStoneMiner({ stateFile, hopperIntervalMs: 20, hopperUrgentIntervalMs: 20, hopperStallMs: 80 });
+  const miner = createStoneMiner({ stateFile, hopperIntervalMs: 20, hopperUrgentIntervalMs: 20, hopperPollMs: 10 });
   miner.attachBot(bot);
   miner.setLearning(true);
   bot.setBlock(1, 65, 0, 'cobblestone');
   bot.setBlock(1, 65, 0, 'air');
-  await until(() => !miner.getStatus().enabled, 'a hopper that does not drain stops the miner');
-  const status = miner.getStatus();
-  assert.match(status.stopReason, /hopper/i);
-  assert.equal(status.running, false);
-  assert.equal(createStoneMiner({ stateFile }).getStatus().stopReason, status.stopReason, 'the reason survives a restart');
+  await until(() => miner.getStatus().phase === 'hopper_full' && bot.currentWindow?.contents === hopper,
+    'a full hopper is opened and watched');
+  assert.equal(miner.getStatus().enabled, true, 'a full hopper does not turn the miner off');
+  assert.equal(miner.getStatus().hopperFull, true);
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  await wait(100);
+  assert.equal(bot.dug.length, 0, 'it does not mine while the hopper is full');
 
-  hopper.length = 0;
-  miner.start();
-  assert.equal(miner.getStatus().stopReason, null, 'starting again clears the reason');
-  await until(() => hopper.length === 1, 'an emptied hopper takes the stone again');
-  assert.equal(miner.getStatus().enabled, true);
+  // After a redeploy it goes back to watching the hopper
   miner.dispose();
+  const restarted = createStoneMiner({ stateFile, hopperIntervalMs: 60_000, hopperPollMs: 10 });
+  assert.equal(restarted.getStatus().hopperFull, true, 'the full hopper survives a restart');
+  restarted.onSpawn(bot);
+  await until(() => restarted.getStatus().phase === 'hopper_full' && bot.currentWindow, 'the hopper is opened again');
+  bot.currentWindow.slots[0].count -= 1;
+  await wait(100);
+  assert.equal(bot.dug.length, 0, 'one item gone is not enough');
+  bot.currentWindow.slots[1].count -= 1;
+  await until(() => bot.dug.length === 1, 'mining resumes once two items have left the hopper');
+  assert.equal(restarted.getStatus().hopperFull, false);
+  restarted.dispose();
+
+  // A miner an older version turned off on a full hopper watches it now
+  fs.writeFileSync(stateFile, JSON.stringify({ enabled: false, stopReason: 'The hopper stayed full for 30 s: mining stopped.' }));
+  const older = createStoneMiner({ stateFile }).getStatus();
+  assert.equal(older.enabled, true);
+  assert.equal(older.hopperFull, true);
 }
 
 async function testTakesPickaxesFromTheBarrelBelow() {
@@ -487,7 +504,7 @@ async function testDigsBlocksThatLookEmptyTooLong() {
   await testFillsTheHopperFromAStack();
   await testKeepsThePickaxeInHand();
   await testOpensTheHopperOnceEveryFiveMinutes();
-  await testStopsWhenTheHopperStaysFull();
+  await testWatchesAFullHopperUntilItDrains();
   await testTakesPickaxesFromTheBarrelBelow();
   await testKeepsRetryingWithoutPickaxe();
   fs.rmSync(stateFile, { force: true });

@@ -43,4 +43,9 @@ assert.match(app, /now - \(state\.stoneMinerRateShownAt \|\| 0\) >= 60_000\) \{[
   'Rate changes at most once a minute');
 assert.match(html, /blocks in the last 60 minutes/);
 
+// A full hopper keeps the miner on: the bot watches it until it drains
+assert.match(app, /hopper_full: 'Hopper full · watching it/);
+assert.match(app, /miner\.hopperFull && miner\.enabled\s*\? 'Hopper Full'/);
+assert.match(server, /hopperFull: Boolean\(miner\.hopperFull\)/);
+
 console.log('Stone Miner UI tests passed.');
