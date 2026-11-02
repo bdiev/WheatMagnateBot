@@ -137,7 +137,7 @@ function fakeBot({ inventory = [], chest = [], hopper = [] } = {}) {
 async function testLearnsTheLineInFrontFromOneBrokenBlock() {
   fs.rmSync(stateFile, { force: true });
   const { bot } = fakeBot();
-  const miner = createStoneMiner({ stateFile });
+  const miner = createStoneMiner({ lineSettleMs: 0, stateFile });
   miner.attachBot(bot);
   bot.setBlock(1, 65, 0, 'cobblestone');
   bot.setBlock(1, 65, 0, 'air');
@@ -159,11 +159,11 @@ async function testLearnsTheLineInFrontFromOneBrokenBlock() {
   assert.equal(status.learning, false);
   assert.equal(status.enabled, true, 'learning starts the miner');
 
-  const restored = createStoneMiner({ stateFile });
+  const restored = createStoneMiner({ lineSettleMs: 0, stateFile });
   assert.equal(restored.getStatus().blockCount, 5, 'the learned line survives a restart');
   miner.dispose();
 
-  const side = createStoneMiner({ stateFile: null });
+  const side = createStoneMiner({ lineSettleMs: 0, stateFile: null });
   side.attachBot(bot);
   side.setLearning(true);
   bot.setBlock(1, 64, -2, 'stone');
@@ -182,6 +182,7 @@ async function testMinesGrownBlocksAndSwapsWornPickaxe() {
   const mined = [];
   const retired = [];
   const miner = createStoneMiner({
+    lineSettleMs: 0,
     stateFile,
     onMined: block => mined.push(block.name),
     onPickaxeRetired: pickaxe => retired.push(pickaxe)
@@ -231,7 +232,7 @@ async function testFillsTheHopperFromAStack() {
   const inventory = [pickaxe, item('bread', 37), item('torch', 34), item('cobblestone', 9, { count: 40 })];
   const hopper = [item('cobblestone', 0, { count: 64 }), item('cobblestone', 1, { count: 64 })];
   const { bot } = fakeBot({ inventory, hopper });
-  const miner = createStoneMiner({ stateFile });
+  const miner = createStoneMiner({ lineSettleMs: 0, stateFile });
   miner.attachBot(bot);
   miner.setLearning(true);
   bot.setBlock(1, 65, 0, 'cobblestone');
@@ -270,7 +271,7 @@ async function testKeepsThePickaxeInHand() {
     bot.heldItem.durabilityUsed += 1;
     return dig(block);
   };
-  const miner = createStoneMiner({ stateFile: null });
+  const miner = createStoneMiner({ lineSettleMs: 0, stateFile: null });
   miner.attachBot(bot);
   miner.setLearning(true);
   bot.setBlock(1, 65, 0, 'cobblestone');
@@ -290,7 +291,7 @@ async function testOpensTheHopperOnceEveryFiveMinutes() {
     item('cobblestone', 9, { count: 64 })
   ];
   const { bot } = fakeBot({ inventory });
-  const miner = createStoneMiner({ stateFile: null, hopperUrgentIntervalMs: 20 });
+  const miner = createStoneMiner({ lineSettleMs: 0, stateFile: null, hopperUrgentIntervalMs: 20 });
   miner.attachBot(bot);
   miner.setLearning(true);
   bot.setBlock(1, 65, 0, 'cobblestone');
@@ -318,7 +319,7 @@ async function testStopsWhenTheHopperStaysFull() {
   ];
   const hopper = [0, 1, 2, 3, 4].map(slot => item('cobblestone', slot, { count: 64 }));
   const { bot } = fakeBot({ inventory, hopper });
-  const miner = createStoneMiner({ stateFile, hopperIntervalMs: 20, hopperUrgentIntervalMs: 20, hopperStallMs: 80 });
+  const miner = createStoneMiner({ lineSettleMs: 0, stateFile, hopperIntervalMs: 20, hopperUrgentIntervalMs: 20, hopperStallMs: 80 });
   miner.attachBot(bot);
   miner.setLearning(true);
   bot.setBlock(1, 65, 0, 'cobblestone');
@@ -327,7 +328,7 @@ async function testStopsWhenTheHopperStaysFull() {
   const status = miner.getStatus();
   assert.match(status.stopReason, /hopper/i);
   assert.equal(status.running, false);
-  assert.equal(createStoneMiner({ stateFile }).getStatus().stopReason, status.stopReason, 'the reason survives a restart');
+  assert.equal(createStoneMiner({ lineSettleMs: 0, stateFile }).getStatus().stopReason, status.stopReason, 'the reason survives a restart');
 
   hopper.length = 0;
   miner.start();
@@ -341,7 +342,7 @@ async function testTakesPickaxesFromTheBarrelBelow() {
   fs.rmSync(stateFile, { force: true });
   const barrel = [item('diamond_pickaxe', 0, { maxDurability: 1561, durabilityUsed: 0 })];
   const { bot } = fakeBot({ inventory: [item('bread', 37)], chest: barrel });
-  const miner = createStoneMiner({ stateFile });
+  const miner = createStoneMiner({ lineSettleMs: 0, stateFile });
   miner.attachBot(bot);
   miner.setLearning(true);
   bot.setBlock(1, 65, 0, 'cobblestone');
@@ -356,7 +357,7 @@ async function testTakesPickaxesFromTheBarrelBelow() {
 async function testKeepsRetryingWithoutPickaxe() {
   fs.rmSync(stateFile, { force: true });
   const { bot } = fakeBot({ inventory: [item('bread', 37)] });
-  const miner = createStoneMiner({ stateFile });
+  const miner = createStoneMiner({ lineSettleMs: 0, stateFile });
   miner.attachBot(bot);
   miner.setLearning(true);
   bot.setBlock(1, 65, 0, 'cobblestone');
@@ -369,7 +370,7 @@ async function testKeepsRetryingWithoutPickaxe() {
   assert.equal(miner.getStatus().running, false, 'leaving the game stops the loop');
   assert.equal(miner.getStatus().enabled, true, 'but it starts again after the next spawn');
   miner.dispose();
-  assert.throws(() => createStoneMiner({ stateFile: null }).start(), /no blocks/);
+  assert.throws(() => createStoneMiner({ lineSettleMs: 0, stateFile: null }).start(), /no blocks/);
 }
 
 async function testExtendsALineLearnedByAnOlderVersion() {
@@ -380,18 +381,46 @@ async function testExtendsALineLearnedByAnOlderVersion() {
   const pickaxe = item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 });
   const { bot, world } = fakeBot({ inventory: [pickaxe, item('bread', 37)], chest: [item('bread', 0)] });
   for (let x = 1; x <= 5; x += 1) world.set(`${x},65,0`, 'stone');
-  const miner = createStoneMiner({ stateFile });
+  const miner = createStoneMiner({ lineSettleMs: 0, stateFile });
   miner.attachBot(bot);
   miner.onSpawn(bot);
   await until(() => bot.dug.length === 5, 'every block in reach is mined, not only the saved one');
   assert.deepEqual(bot.dug, [1, 2, 3, 4, 5].map(x => `${x},65,0`), 'nearest first');
-  assert.equal(createStoneMiner({ stateFile }).getStatus().blockCount, 5, 'the extended line is saved');
+  assert.equal(createStoneMiner({ lineSettleMs: 0, stateFile }).getStatus().blockCount, 5, 'the extended line is saved');
+  miner.dispose();
+}
+
+async function testWaitsForTheLineToGrowBeforeMining() {
+  fs.rmSync(stateFile, { force: true });
+  const pickaxe = item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 });
+  const { bot } = fakeBot({ inventory: [pickaxe, item('bread', 37)], chest: [item('bread', 0)] });
+  const miner = createStoneMiner({ stateFile: null, lineSettleMs: 150 });
+  miner.attachBot(bot);
+  miner.setLearning(true);
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  bot.setBlock(1, 65, 0, 'air');
+  await until(() => miner.getStatus().phase === 'waiting', 'the miner waits for stone');
+
+  // Mining the first block at once would stop the rest of the line growing
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  await wait(80);
+  bot.setBlock(2, 65, 0, 'cobblestone');
+  await wait(80);
+  bot.setBlock(3, 65, 0, 'cobblestone');
+  await wait(80);
+  assert.equal(bot.dug.length, 0, 'nothing is mined while the line is still growing');
+  await until(() => bot.dug.length === 3, 'a line that stopped growing is mined in one pass');
+  assert.deepEqual(bot.dug, ['1,65,0', '2,65,0', '3,65,0'], 'nearest first');
+
+  for (let x = 1; x <= 5; x += 1) bot.setBlock(x, 65, 0, 'stone');
+  await until(() => bot.dug.length === 8, 'a full line is mined without waiting');
   miner.dispose();
 }
 
 (async () => {
   await testLearnsTheLineInFrontFromOneBrokenBlock();
   await testExtendsALineLearnedByAnOlderVersion();
+  await testWaitsForTheLineToGrowBeforeMining();
   await testMinesGrownBlocksAndSwapsWornPickaxe();
   await testFillsTheHopperFromAStack();
   await testKeepsThePickaxeInHand();
