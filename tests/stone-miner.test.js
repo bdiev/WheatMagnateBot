@@ -6,7 +6,11 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { createStoneMiner } = require('../features/stoneMiner');
+const { createStoneMiner: createMiner } = require('../features/stoneMiner');
+
+// Most tests supply fully loaded windows. Delay loading explicitly in the
+// snapshot regression test instead of adding a real server wait to every test.
+const createStoneMiner = options => createMiner({ hopperSettleMs: 0, ...options });
 
 const stateFile = path.join(os.tmpdir(), `stone-miner-test-${process.pid}.json`);
 
@@ -272,6 +276,8 @@ async function testFillsTheHopperFromAStack() {
   await until(() => miner.getStatus().hopperFull, 'it fills the hopper');
   await wait(100);
   assert.equal(bot.dug.length, 1, 'with a stack left over and the hopper full it does not mine');
+  assert.equal(bot.currentWindow?.contents, hopper, 'the full hopper stays open while waiting');
+  miner.stop(); // Flush the fake window back to the inventory before inspecting it.
   assert.equal(hopper.length, 5, 'the hopper gets as many stacks as it has room for');
   assert.equal(bot.inventory.items().filter(entry => entry.name === 'cobblestone').length, 2,
     'what did not fit waits for the next try');
@@ -589,7 +595,58 @@ async function testWaitsForRoomForTheCarriedStoneType() {
   }
 }
 
+async function testWaitsForDelayedHopperContentsAndPublishesThem() {
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('cobblestone', slot, { count: 64 }));
+  const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)], hopper });
+  const open = bot.openContainer;
+  let updates = [];
+  let timer;
+  bot.openContainer = async block => {
+    const window = await open(block);
+    if (block.name === 'hopper') {
+      const contents = window.slots.slice(0, 5);
+      window.slots.fill(null, 0, 5);
+      timer = setTimeout(() => contents.forEach((entry, slot) => { window.slots[slot] = entry; }), 80);
+    }
+    return window;
+  };
+  const miner = createStoneMiner({
+    stateFile: null, hopperSettleMs: 150, hopperPollMs: 10,
+    onChange: status => updates.push(status)
+  });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    bot.setBlock(1, 65, 0, 'stone');
+    await until(() => miner.getStatus().phase === 'hopper_full' && bot.currentWindow,
+      'delayed full hopper is kept open');
+    await wait(100);
+    assert.equal(bot.dug.length, 0, 'mining waits for actual hopper contents');
+    assert.deepEqual([miner.getStatus().hopper.items, miner.getStatus().hopper.capacity], [320, 320]);
+    assert.ok(updates.some(status => status.hopperFull && status.hopper?.items === 320),
+      'the website receives the full hopper snapshot');
+    assert.equal(bot.opened.filter(name => name === 'hopper').length, 1, 'the full window stays open');
+    bot.currentWindow.slots[0].count -= 1;
+    await until(() => bot.dug.length === 1, 'mining resumes after a slot has room');
+    assert.ok(updates.some(status => !status.hopperFull && status.hopper?.items === 319),
+      'the website receives the drained hopper snapshot');
+    miner.stop();
+
+    hopper[0].count = 20;
+    updates = [];
+    miner.start();
+    await until(() => updates.some(status => status.hopper?.items === 276),
+      'a non-full hopper also publishes its latest contents');
+  } finally {
+    clearTimeout(timer);
+    miner.dispose();
+  }
+}
+
 (async () => {
+  await testWaitsForDelayedHopperContentsAndPublishesThem();
   await testClearStopsMiningAndLearning();
   await testStaleRecoveryLeavesOtherBlocksAlone();
   await testWaitsForRoomForTheCarriedStoneType();

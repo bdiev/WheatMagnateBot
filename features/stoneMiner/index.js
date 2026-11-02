@@ -161,7 +161,8 @@ function isSafeFood(bot, item) {
 
 function createStoneMiner({
   stateFile = null, log = () => {}, onChange = () => {}, onMined = () => {}, onPickaxeRetired = () => {},
-  hopperIntervalMs = HOPPER_INTERVAL_MS, hopperIdleIntervalMs = HOPPER_IDLE_INTERVAL_MS, hopperPollMs = HOPPER_POLL_MS, staleEmptyMs = STALE_EMPTY_MS
+  hopperIntervalMs = HOPPER_INTERVAL_MS, hopperIdleIntervalMs = HOPPER_IDLE_INTERVAL_MS, hopperPollMs = HOPPER_POLL_MS,
+  hopperSettleMs = 1_000, staleEmptyMs = STALE_EMPTY_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -517,12 +518,11 @@ function createStoneMiner({
       return false;
     }
     if (lineCheckDue) extendLine(current);
-    await depositMinedStone(current);
-    // A hopper found full is fed from the next pass on, without a block mined first
-    if (hopperFull) return false;
     await ensureSupplies(current);
     await eatIfHungry(current);
     if (!isCurrent(generation, current)) return false;
+    await depositMinedStone(current, generation);
+    if (!isCurrent(generation, current) || hopperFull) return false;
 
     trackEmptyBlocks(current);
     const grown = findGrownBlock(current);
@@ -668,7 +668,7 @@ function createStoneMiner({
   // A full stack, or any stone five minutes after the last visit, goes into the
   // hopper in front of the bot; after a start it is opened at once, stone or not.
   // One found full stops mining until it drains
-  async function depositMinedStone(current) {
+  async function depositMinedStone(current, generation) {
     const carried = current.inventory.items()
       .filter(item => MINED_ITEMS.has(item.name))
       .reduce((sum, item) => sum + item.count, 0);
@@ -677,10 +677,10 @@ function createStoneMiner({
       if (Date.now() - lastHopperVisitAt
         < (carried >= DEPOSIT_FROM_COUNT ? hopperIntervalMs : hopperIdleIntervalMs)) return;
     }
-    hopperCheckDue = false;
-    lastHopperVisitAt = Date.now();
     const hopper = findHopper(current);
     if (!hopper) {
+      hopperCheckDue = false;
+      lastHopperVisitAt = Date.now();
       log('[Stone Miner] No hopper within reach for the mined stone.');
       return;
     }
@@ -696,26 +696,31 @@ function createStoneMiner({
       }
       contents = hopperContents(window, carriedStoneNames(window));
       left = windowStone(window);
+      hopperCheckDue = false;
+      lastHopperVisitAt = Date.now();
       hopperSeen = { items: contents.total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
+      if (contents.room === 0) {
+        hopperFull = { total: contents.total };
+        log(`[Stone Miner] The hopper is full with ${left} stone left; not mining until it drains.`);
+        saveState();
+      }
+      notifyChange();
+      // Keep this very window open: closing and reopening it can discard a
+      // delayed slot update and briefly report an empty hopper again.
+      if (hopperFull) await watchHopper(current, generation, window);
     } finally {
-      try { current.closeWindow(window); } catch {}
+      try { if (current.currentWindow === window) current.closeWindow(window); } catch {}
     }
-
-    if (contents.room > 0) return;
-    hopperFull = { total: contents.total };
-    log(`[Stone Miner] The hopper is full with ${left} stone left; not mining until it drains.`);
-    saveState();
-    notifyChange();
   }
 
   // The bot stands looking into the open hopper and puts a stack in whenever
   // one fits; once the hopper has room and less than a stack is left, mining
   // resumes
-  async function watchHopper(current, generation) {
-    const hopper = findHopper(current);
-    if (!hopper) throw new Error('The hopper is full, but no hopper is within reach to watch.');
+  async function watchHopper(current, generation, openedWindow = null) {
+    const hopper = openedWindow ? null : findHopper(current);
+    if (!openedWindow && !hopper) throw new Error('The hopper is full, but no hopper is within reach to watch.');
     phase = 'hopper_full';
-    const window = await openWindow(current, hopper, 'The hopper did not open.');
+    const window = openedWindow || await openWindow(current, hopper, 'The hopper did not open.');
     hopperCheckDue = false;
     try {
       const until = Date.now() + HOPPER_WATCH_MS;
@@ -776,9 +781,38 @@ function createStoneMiner({
     try { current.stopDigging?.(); } catch {}
     await current.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
     const window = await withTimeout(current.openContainer(block), CONTAINER_TIMEOUT_MS, timeoutMessage);
-    // The slots may come a moment after the window itself
-    await waitFor(() => window.slots.slice(window.inventoryStart, window.inventoryEnd).some(Boolean), 1_000);
+    if (block.name === 'hopper') {
+      try {
+        await waitForHopperContents(current, window);
+      } catch (error) {
+        try { if (current.currentWindow === window) current.closeWindow(window); } catch {}
+        throw error;
+      }
+    } else {
+      // The slots may come a moment after the window itself.
+      await waitFor(() => window.slots.slice(window.inventoryStart, window.inventoryEnd).some(Boolean), 1_000);
+    }
     return window;
+  }
+
+  async function waitForHopperContents(current, window) {
+    // Some servers send the player's inventory before populating the hopper.
+    // Seeing a pickaxe in the window does not mean its container slots are ready.
+    const started = Date.now();
+    let changedAt = started;
+    let snapshot = '';
+    while (Date.now() - started < CONTAINER_TIMEOUT_MS) {
+      if (current.currentWindow !== window) throw new Error('The hopper closed before its contents loaded.');
+      const next = JSON.stringify(window.slots.slice(0, window.inventoryStart)
+        .map(item => item && [item.name, item.count]));
+      if (next !== snapshot) {
+        snapshot = next;
+        changedAt = Date.now();
+      }
+      if (Date.now() - started >= hopperSettleMs && Date.now() - changedAt >= Math.min(100, hopperSettleMs)) return;
+      await sleep(25);
+    }
+    throw new Error('The hopper contents did not settle; mining remains paused.');
   }
 
   // Shift-click moves a stack between the container and the inventory in one
