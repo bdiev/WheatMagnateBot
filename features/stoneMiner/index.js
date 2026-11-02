@@ -8,8 +8,7 @@
  *      the bot gives the direction and height: every block on that line in
  *      front of the bot that it can reach (about five) is remembered, with
  *      the spot the bot stands on, and mining starts at once
- *   2. Mine: once the line is full or has stopped growing, every block of it
- *      holding stone is mined in one pass, nearest first
+ *   2. Mine: each of those blocks holding stone is mined, nearest first
  *   3. Worn pickaxes go into the barrel the bot stands on (or the nearest
  *      chest or barrel) and a fresh one is taken from it; food is taken from
  *      it too when the bot has none
@@ -58,9 +57,6 @@ const HOPPER_URGENT_FREE_SLOTS = 3;
 // Full for this long without draining: everything after the hopper is full
 const HOPPER_STALL_MS = 30_000;
 const REGROW_WAIT_MS = 500;
-// Lava spreads a block every 1.5 s: a line that has not grown for longer is
-// as full as it gets
-const LINE_SETTLE_MS = 2_000;
 const DIG_TIMEOUT_MS = 10_000;
 const CONTAINER_TIMEOUT_MS = 5_000;
 const RETRY_DELAY_MS = 2_000;
@@ -156,7 +152,7 @@ function isSafeFood(bot, item) {
 function createStoneMiner({
   stateFile = null, log = () => {}, onChange = () => {}, onMined = () => {}, onPickaxeRetired = () => {},
   hopperIntervalMs = HOPPER_INTERVAL_MS, hopperUrgentIntervalMs = HOPPER_URGENT_INTERVAL_MS,
-  hopperStallMs = HOPPER_STALL_MS, lineSettleMs = LINE_SETTLE_MS
+  hopperStallMs = HOPPER_STALL_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -188,9 +184,6 @@ function createStoneMiner({
   let barrelCheckDue = true;
   let lineCheckDue = true;
   let lastLineView = null;
-  // The blocks of the pass being mined, and when the line last grew
-  let minePass = new Set();
-  let lineFill = null;
 
   function validPosition(pos) {
     return pos && [pos.x, pos.y, pos.z].every(Number.isInteger);
@@ -360,6 +353,13 @@ function createStoneMiner({
     detachBot();
     bot = nextBot || null;
     bot?.on?.('blockUpdate', onBlockUpdate);
+    // The miner starts on the bot's own spawn too: the account's spawn hooks
+    // run one after another, and one failing before it left it switched off
+    bot?.on?.('spawn', onBotSpawn);
+  }
+
+  function onBotSpawn() {
+    if (desired.enabled && !running && bot?.entity) startLoop();
   }
 
   // The bot left: the loop stops, but an enabled miner comes back on spawn
@@ -367,6 +367,7 @@ function createStoneMiner({
     haltLoop();
     learning = false;
     bot?.removeListener?.('blockUpdate', onBlockUpdate);
+    bot?.removeListener?.('spawn', onBotSpawn);
     bot = null;
   }
 
@@ -447,8 +448,6 @@ function createStoneMiner({
     // A first look into the barrel, so the site knows its pickaxes
     barrelCheckDue = true;
     lineCheckDue = true;
-    minePass.clear();
-    lineFill = null;
     log('[Stone Miner] Started.');
     loop(generation).catch(error => log(`[Stone Miner] Loop crashed: ${error.message}`));
   }
@@ -490,14 +489,13 @@ function createStoneMiner({
     await eatIfHungry(current);
     if (!isCurrent(generation, current)) return false;
 
-    const target = findTarget(current);
+    const target = findGrownBlock(current);
     if (!target) {
       phase = 'waiting';
       logLineView(current);
       return false;
     }
     lastLineView = null;
-    minePass.delete(positionKey(target.position));
     phase = 'mining';
     // The pickaxe in hand is kept until it wears out: picking the least worn
     // one each block swapped identical pickaxes back and forth
@@ -518,30 +516,9 @@ function createStoneMiner({
     return true;
   }
 
-  // Mining the first block at once restarts the flow, so the rest of the line
-  // never grows: the bot waits until the line is full or stops growing, then
-  // mines everything grown in one pass, nearest first
-  function findTarget(current) {
-    const grown = findGrownBlocks(current);
-    const inPass = grown.find(block => minePass.has(positionKey(block.position)));
-    if (inPass) return inPass;
-    minePass.clear();
-    if (!grown.length) {
-      lineFill = null;
-      return null;
-    }
-    const now = Date.now();
-    if (!lineFill || grown.length > lineFill.count) lineFill = { count: grown.length, at: now };
-    if (grown.length < desired.blocks.length && now - lineFill.at < lineSettleMs) return null;
-    lineFill = null;
-    minePass = new Set(grown.map(block => positionKey(block.position)));
-    return grown[0];
-  }
-
-  function findGrownBlocks(current) {
+  function findGrownBlock(current) {
     const eye = current.entity.position.offset(0, current.entity.height || 1.62, 0);
     let outOfReach = 0;
-    const grown = [];
     for (const pos of desired.blocks) {
       const block = current.blockAt(new Vec3(pos.x, pos.y, pos.z));
       if (!isStoneBlock(block)) continue;
@@ -550,12 +527,12 @@ function createStoneMiner({
         continue;
       }
       if (current.canDigBlock?.(block) === false) continue;
-      grown.push(block);
+      return block;
     }
     if (outOfReach && outOfReach === desired.blocks.length) {
       throw new Error('The generator blocks are out of reach.');
     }
-    return grown;
+    return null;
   }
 
   // What the bot sees on each learned block while it waits, logged when it
