@@ -6,6 +6,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
+const WorldSync = require('prismarine-world/src/worldsync');
 const { createStoneMiner: createMiner } = require('../features/stoneMiner');
 
 // Most tests supply fully loaded windows. Delay loading explicitly in the
@@ -705,6 +706,57 @@ async function testOpensHopperAtItsVisibleSurface() {
   }
 }
 
+async function testContainerRayReachesBeyondOneBlock() {
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('cobblestone', slot, { count: 64 }));
+  const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)], hopper });
+  // Use the installed raycasting implementation. Both containers are more
+  // than one block from the eye; a normalized vector must not shorten range.
+  bot.world = new WorldSync(null);
+  bot.world.getBlock = position => {
+    const block = bot.blockAt(position);
+    return { ...block, shapes: block.name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  bot.activateBlock = async block => bot.emit('windowOpen', await bot.openContainer(block));
+  const miner = createStoneMiner({ stateFile: null, hopperPollMs: 10 });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    await until(() => miner.getStatus().phase === 'hopper_full', 'the ray reaches both real container surfaces');
+    assert.deepEqual(bot.opened.slice(0, 2), ['barrel', 'hopper']);
+    assert.equal(miner.getStatus().hopper.items, 320);
+    assert.equal(miner.getStatus().lastErrorMessage, null);
+    assert.equal(bot.dug.length, 0);
+  } finally {
+    miner.dispose();
+  }
+}
+
+async function testBarrelFailureDoesNotHideFullHopper() {
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('stone', slot, { count: 64 }));
+  const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)], hopper });
+  bot.world = {
+    raycast: (eye, direction) => direction.x < 0
+      ? { name: 'hopper', position: new Vec3(-1, 64, 0), face: 5, intersect: new Vec3(0, 64.75, 0.5) }
+      : null
+  };
+  bot.activateBlock = async block => bot.emit('windowOpen', await bot.openContainer(block));
+  const miner = createStoneMiner({ stateFile: null, hopperPollMs: 10 });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    await until(() => miner.getStatus().phase === 'hopper_full', 'a barrel error does not block watching the full hopper');
+    assert.equal(miner.getStatus().hopper.items, 320);
+    assert.equal(bot.currentWindow.contents, hopper);
+    assert.equal(bot.dug.length, 0);
+  } finally {
+    miner.dispose();
+  }
+}
+
 async function testFailedOpenDoesNotLeakListeners() {
   const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)] });
   let rejectHopper = true;
@@ -745,6 +797,8 @@ async function testFailedOpenDoesNotLeakListeners() {
 }
 
 (async () => {
+  await testContainerRayReachesBeyondOneBlock();
+  await testBarrelFailureDoesNotHideFullHopper();
   await testOpensHopperAtItsVisibleSurface();
   await testFailedOpenDoesNotLeakListeners();
   await testReportsHopperEvenWhenSuppliesAreMissing();

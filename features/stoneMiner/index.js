@@ -521,9 +521,8 @@ function createStoneMiner({
       try {
         await ensureSupplies(current);
       } catch (error) {
-        if (error.code !== 'STONE_MINER_SUPPLY') throw error;
-        // A missing pickaxe must not prevent observing the hopper or waiting
-        // for it to drain. Report the supply error before any mining resumes.
+        // A restocking failure must not prevent observing the hopper or
+        // waiting for it to drain. Report it before any mining resumes.
         suppliesError = error;
       }
     }
@@ -823,7 +822,8 @@ function createStoneMiner({
       new Vec3(0, 0, 1), new Vec3(-1, 0, 0), new Vec3(1, 0, 0)
     ];
     if (current.world?.raycast) {
-      const hit = current.world.raycast(eye, delta.normalize(), delta.norm() + 0.05);
+      // Vec3.normalize() mutates delta and would reduce the range to 1.05.
+      const hit = current.world.raycast(eye, delta.unit(), delta.norm() + 0.05);
       if (!hit?.position?.equals(block.position) || !faces[hit.face] || !hit.intersect) {
         throw new Error(`Cannot open ${block.name} at ${positionKey(block.position)}: `
           + `line of sight hits ${hit?.name || 'no block'}${hit?.position ? ` at ${positionKey(hit.position)}` : ''}.`);
