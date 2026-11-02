@@ -12127,13 +12127,9 @@ function renderStoneMiner(payload = {}) {
   setRollingNumber('#stoneMinerTotal', payload.totalMined || 0);
   setRollingNumber('#stoneMinerToday', payload.todayMined || 0);
   $('#stoneMinerTodayTimezone').textContent = `${payload.timezone || 'local'} calendar day`;
-  const startedAt = Date.parse(miner.sessionStartedAt || '');
-  const hours = Number.isFinite(startedAt) ? (Date.now() - startedAt) / 3_600_000 : 0;
-  const rate = miner.running && hours > 0 ? Math.round((miner.sessionMined || 0) / Math.max(hours, 1 / 60)) : 0;
-  $('#stoneMinerRate').textContent = `${formatNumber(rate)}/h`;
-  $('#stoneMinerSession').textContent = miner.running
-    ? `${formatNumber(miner.sessionMined || 0)} this session`
-    : 'current session average';
+  // Blocks in the last 60 minutes: a session average jumped after every
+  // start and redeploy
+  $('#stoneMinerRate').textContent = `${formatNumber(payload.lastHourMined || 0)}/h`;
   const pickaxes = payload.pickaxes || {};
   $('#stoneMinerPickaxeAverage').textContent = pickaxes.averageBlocks == null ? '-' : formatNumber(pickaxes.averageBlocks);
   $('#stoneMinerRetiredPickaxes').textContent = pickaxes.retired

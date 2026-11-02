@@ -27,4 +27,19 @@ assert.match(app, /if \(tab === 'stone-miner'\) loadStoneMiner\(\)/);
 assert.match(server, /url\.pathname === '\/api\/stone-miner' && req\.method === 'GET'/);
 assert.match(server, /NAVIGATION_SECTION_ORDER = Object\.freeze\(\[[^\]]*'obsidian', 'stone-miner'/);
 
+// Rate is the last 60 minutes from the stored hours, not a session average
+const lastHourSource = server.match(/function stoneMinerLastHour[\s\S]*?\n}\n/)[0];
+const toInt = value => Number.parseInt(value, 10) || 0;
+const stoneMinerLastHour = new Function('toInt', `${lastHourSource}; return stoneMinerLastHour;`)(toInt);
+const hourStart = Date.parse('2026-11-02T12:00:00Z');
+const hourRows = [
+  { bucket: new Date(hourStart - 3_600_000), blocks: '600' },
+  { bucket: new Date(hourStart), blocks: '150' }
+];
+assert.equal(stoneMinerLastHour(hourRows, hourStart + 15 * 60_000), 600,
+  'a quarter into the hour: three quarters of the previous hour plus this one');
+assert.equal(stoneMinerLastHour([], hourStart), 0);
+assert.match(app, /\$\('#stoneMinerRate'\)\.textContent = `\$\{formatNumber\(payload\.lastHourMined/);
+assert.match(html, /blocks in the last 60 minutes/);
+
 console.log('Stone Miner UI tests passed.');

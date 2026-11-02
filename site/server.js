@@ -3672,6 +3672,17 @@ const STONE_MINER_FOODS = ['bread', 'apple', 'beef', 'steak', 'porkchop', 'mutto
 
 // Where the learned line runs from the bot: a compass side (or up/down) and
 // whether it is at head or feet height
+// Blocks mined in the last 60 minutes: the current hour so far plus the part
+// of the previous hour the window still covers. Built from the stored hours,
+// it survives restarts and moves smoothly, unlike a per-session average
+function stoneMinerLastHour(rows, now = Date.now()) {
+  const current = rows.at(-1);
+  if (!current) return 0;
+  const elapsed = Math.min(1, Math.max(0, (now - new Date(current.bucket).getTime()) / 3_600_000));
+  const previous = rows.at(-2);
+  return Math.round(toInt(current.blocks) + (previous ? toInt(previous.blocks) * (1 - elapsed) : 0));
+}
+
 function stoneMinerDirection(anchor, blocks) {
   const first = blocks[0];
   if (!anchor || !first) return null;
@@ -3814,6 +3825,7 @@ async function getStoneMinerStats(currentUser, url) {
     },
     totalMined: toInt(totalsResult.rows[0]?.total),
     todayMined: toInt(totalsResult.rows[0]?.today),
+    lastHourMined: stoneMinerLastHour(hourlyResult.rows),
     pickaxes: {
       retired: toInt(pickaxes.retired),
       averaged: toInt(pickaxes.averaged),
