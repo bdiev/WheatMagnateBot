@@ -49,13 +49,12 @@ const DIG_REACH = 5.1;
 const MAX_LINE_LENGTH = 8;
 const EAT_BELOW_FOOD = 18;
 const DEPOSIT_FROM_COUNT = 64;
-// Opening the hopper stops mining, so it is opened once every five minutes.
-// It passes on only 2.5 items a second, slower than the bot mines, so stone
-// piles up in the inventory; with three free slots or fewer the bot opens it
-// sooner, once a stack could have drained
-const HOPPER_INTERVAL_MS = 5 * 60_000;
-const HOPPER_URGENT_INTERVAL_MS = 26_000;
-const HOPPER_URGENT_FREE_SLOTS = 3;
+// A full stack goes into the hopper at once, but at most once in the time the
+// hopper takes to pass a stack on (2.5 items a second): one that took only part
+// of it is not opened again after every block. Less than a stack goes in five
+// minutes after the last visit
+const HOPPER_INTERVAL_MS = 26_000;
+const HOPPER_IDLE_INTERVAL_MS = 5 * 60_000;
 // A full hopper is watched with its window open; mining resumes once this
 // many items have left it. The window is reopened every minute, so the bot
 // still eats and keeps its spot
@@ -160,8 +159,7 @@ function isSafeFood(bot, item) {
 
 function createStoneMiner({
   stateFile = null, log = () => {}, onChange = () => {}, onMined = () => {}, onPickaxeRetired = () => {},
-  hopperIntervalMs = HOPPER_INTERVAL_MS, hopperUrgentIntervalMs = HOPPER_URGENT_INTERVAL_MS,
-  hopperPollMs = HOPPER_POLL_MS, staleEmptyMs = STALE_EMPTY_MS
+  hopperIntervalMs = HOPPER_INTERVAL_MS, hopperIdleIntervalMs = HOPPER_IDLE_INTERVAL_MS, hopperPollMs = HOPPER_POLL_MS, staleEmptyMs = STALE_EMPTY_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -188,6 +186,8 @@ function createStoneMiner({
   let lastSavedAt = 0;
   let regrowWaiters = [];
   let lastHopperVisitAt = 0;
+  // Less than a stack waits five minutes from the start too
+  const createdAt = Date.now();
   let nextFoodCheckAt = 0;
   // The hopper the bot found full, with the most items seen in it; saved, so
   // the bot watches it again after a restart
@@ -657,16 +657,16 @@ function createStoneMiner({
       .find(Boolean) || null;
   }
 
-  // From a full stack on, the mined stone goes into the hopper in front of the
-  // bot. One that takes nothing more is watched until it drains
+  // A full stack, or any stone five minutes after the last visit, goes into the
+  // hopper in front of the bot. One that takes nothing more is watched until it drains
   async function depositMinedStone(current) {
     const carried = current.inventory.items()
       .filter(item => MINED_ITEMS.has(item.name))
       .reduce((sum, item) => sum + item.count, 0);
-    if (carried < DEPOSIT_FROM_COUNT) return;
-    const urgent = current.inventory.emptySlotCount() <= HOPPER_URGENT_FREE_SLOTS;
-    const sinceVisit = Date.now() - lastHopperVisitAt;
-    if (sinceVisit < (urgent ? hopperUrgentIntervalMs : hopperIntervalMs)) return;
+    if (!carried) return;
+    if (carried >= DEPOSIT_FROM_COUNT
+      ? Date.now() - lastHopperVisitAt < hopperIntervalMs
+      : Date.now() - (lastHopperVisitAt || createdAt) < hopperIdleIntervalMs) return;
     lastHopperVisitAt = Date.now();
     const hopper = findHopper(current);
     if (!hopper) {

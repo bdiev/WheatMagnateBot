@@ -306,14 +306,14 @@ async function testKeepsThePickaxeInHand() {
   miner.dispose();
 }
 
-async function testOpensTheHopperOnceEveryFiveMinutes() {
+async function testPutsEveryStackIntoTheHopper() {
   fs.rmSync(stateFile, { force: true });
   const inventory = [
     item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 }), item('bread', 37),
     item('cobblestone', 9, { count: 64 })
   ];
   const { bot } = fakeBot({ inventory });
-  const miner = createStoneMiner({ stateFile: null, hopperUrgentIntervalMs: 20 });
+  const miner = createStoneMiner({ stateFile: null, hopperIntervalMs: 200, hopperIdleIntervalMs: 800 });
   miner.attachBot(bot);
   miner.setLearning(true);
   bot.setBlock(1, 65, 0, 'cobblestone');
@@ -323,13 +323,13 @@ async function testOpensTheHopperOnceEveryFiveMinutes() {
   bot.slots[10] = item('cobblestone', 10, { count: 64 });
   bot.setBlock(1, 65, 0, 'cobblestone');
   await until(() => bot.dug.length === 1, 'it mines');
-  await wait(100);
-  assert.equal(bot.opened.filter(name => name === 'hopper').length, 1, 'the next stack waits for the five minutes');
+  assert.equal(bot.opened.filter(name => name === 'hopper').length, 1, 'the hopper is not opened again at once');
+  await until(() => bot.opened.filter(name => name === 'hopper').length === 2, 'the next stack goes in once the hopper could pass one on');
 
-  for (let slot = 11; slot <= 44; slot += 1) if (!bot.slots[slot]) bot.slots[slot] = item('cobblestone', slot, { count: 64 });
-  bot.slots[44] = null;
-  bot.setBlock(1, 65, 0, 'cobblestone');
-  await until(() => bot.opened.filter(name => name === 'hopper').length === 2, 'a nearly full inventory opens it sooner');
+  bot.slots[11] = item('cobblestone', 11, { count: 10 });
+  await wait(400);
+  assert.equal(bot.opened.filter(name => name === 'hopper').length, 2, 'less than a stack waits');
+  await until(() => bot.opened.filter(name => name === 'hopper').length === 3, 'less than a stack goes in five minutes after the last visit');
   miner.dispose();
 }
 
@@ -341,7 +341,7 @@ async function testWatchesAFullHopperUntilItDrains() {
   ];
   const hopper = [0, 1, 2, 3, 4].map(slot => item('cobblestone', slot, { count: 64 }));
   const { bot } = fakeBot({ inventory, hopper });
-  const miner = createStoneMiner({ stateFile, hopperIntervalMs: 20, hopperUrgentIntervalMs: 20, hopperPollMs: 10 });
+  const miner = createStoneMiner({ stateFile, hopperIntervalMs: 20, hopperPollMs: 10 });
   miner.attachBot(bot);
   miner.setLearning(true);
   bot.setBlock(1, 65, 0, 'cobblestone');
@@ -503,7 +503,7 @@ async function testDigsBlocksThatLookEmptyTooLong() {
   await testMinesGrownBlocksAndSwapsWornPickaxe();
   await testFillsTheHopperFromAStack();
   await testKeepsThePickaxeInHand();
-  await testOpensTheHopperOnceEveryFiveMinutes();
+  await testPutsEveryStackIntoTheHopper();
   await testWatchesAFullHopperUntilItDrains();
   await testTakesPickaxesFromTheBarrelBelow();
   await testKeepsRetryingWithoutPickaxe();

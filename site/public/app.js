@@ -12100,8 +12100,14 @@ function renderStoneMinerGenerator(payload) {
   barrelPickaxes.title = barrel?.at ? `checked ${formatDate(barrel.at)}` : '';
   const food = carried ? formatNumber(carried.food || 0) : '-';
   $('#stoneMinerFood').textContent = barrel ? `${food} · ${formatNumber(barrel.food || 0)} in barrel` : food;
-  $('#stoneMinerCarried').textContent = carried ? `${formatNumber(Math.min(carried.stone || 0, 9999))} / 64` : '-';
-  setMinerMeter('#stoneMinerCarriedBar', carried ? ((carried.stone || 0) / 64) * 100 : 0, 'stack');
+  // Stone piles up past a stack while the hopper is full; the bar is the share
+  // of the 36 inventory slots it fills
+  const stone = carried?.stone || 0;
+  const stacks = Math.ceil(stone / 64);
+  $('#stoneMinerCarried').textContent = carried
+    ? `${formatNumber(stone)}${stacks > 1 ? ` · ${formatNumber(stacks)} stacks` : ''}`
+    : '-';
+  setMinerMeter('#stoneMinerCarriedBar', carried ? (stone / (36 * 64)) * 100 : 0, 'stack');
   const hopper = payload.hopper;
   const hopperText = $('#stoneMinerHopper');
   hopperText.textContent = hopper ? `${formatNumber(hopper.items)} / ${formatNumber(hopper.capacity)}` : 'not filled yet';
