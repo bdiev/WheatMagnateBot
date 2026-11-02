@@ -162,7 +162,7 @@ function isSafeFood(bot, item) {
 function createStoneMiner({
   stateFile = null, log = () => {}, onChange = () => {}, onMined = () => {}, onPickaxeRetired = () => {},
   hopperIntervalMs = HOPPER_INTERVAL_MS, hopperIdleIntervalMs = HOPPER_IDLE_INTERVAL_MS, hopperPollMs = HOPPER_POLL_MS,
-  hopperSettleMs = 1_000, staleEmptyMs = STALE_EMPTY_MS
+  hopperSettleMs = 1_000, containerTimeoutMs = CONTAINER_TIMEOUT_MS, staleEmptyMs = STALE_EMPTY_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -188,6 +188,7 @@ function createStoneMiner({
   let loopGeneration = 0;
   let lastSavedAt = 0;
   let regrowWaiters = [];
+  const openingCancels = new Set();
   let lastHopperVisitAt = 0;
   let nextFoodCheckAt = 0;
   // The hopper the bot found full, with the most items seen in it; saved, so
@@ -459,6 +460,7 @@ function createStoneMiner({
 
   function haltLoop() {
     loopGeneration += 1;
+    for (const cancel of openingCancels) cancel();
     if (running) {
       try { bot?.stopDigging?.(); } catch {}
       try { bot?.closeWindow?.(bot.currentWindow); } catch {}
@@ -792,8 +794,13 @@ function createStoneMiner({
 
   async function openWindow(current, block, timeoutMessage) {
     try { current.stopDigging?.(); } catch {}
+    current.setControlState?.('sneak', false);
+    if (current.currentWindow) current.closeWindow(current.currentWindow);
     await current.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
-    const window = await withTimeout(current.openContainer(block), CONTAINER_TIMEOUT_MS, timeoutMessage);
+    if (current.waitForTicks) await current.waitForTicks(2);
+    const { direction, cursor } = containerInteraction(current, block);
+    const detail = `${timeoutMessage} Target: ${block.name} at ${positionKey(block.position)}, face ${positionKey(direction)}.`;
+    const window = await openContainerWindow(current, block, direction, cursor, detail);
     if (block.name === 'hopper') {
       try {
         await waitForHopperContents(current, window);
@@ -806,6 +813,68 @@ function createStoneMiner({
       await waitFor(() => window.slots.slice(window.inventoryStart, window.inventoryEnd).some(Boolean), 1_000);
     }
     return window;
+  }
+
+  function containerInteraction(current, block) {
+    const eye = current.entity.position.offset(0, current.entity.eyeHeight || 1.62, 0);
+    const delta = block.position.offset(0.5, 0.5, 0.5).minus(eye);
+    const faces = [
+      new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(0, 0, -1),
+      new Vec3(0, 0, 1), new Vec3(-1, 0, 0), new Vec3(1, 0, 0)
+    ];
+    if (current.world?.raycast) {
+      const hit = current.world.raycast(eye, delta.normalize(), delta.norm() + 0.05);
+      if (!hit?.position?.equals(block.position) || !faces[hit.face] || !hit.intersect) {
+        throw new Error(`Cannot open ${block.name} at ${positionKey(block.position)}: `
+          + `line of sight hits ${hit?.name || 'no block'}${hit?.position ? ` at ${positionKey(hit.position)}` : ''}.`);
+      }
+      return { direction: faces[hit.face], cursor: hit.intersect.minus(block.position) };
+    }
+    const offset = eye.minus(block.position.offset(0.5, 0.5, 0.5));
+    const axis = ['x', 'y', 'z'].sort((a, b) => Math.abs(offset[b]) - Math.abs(offset[a]))[0];
+    const direction = new Vec3(0, 0, 0);
+    direction[axis] = Math.sign(offset[axis]) || 1;
+    return { direction, cursor: new Vec3(0.5, 0.5, 0.5).plus(direction.scaled(0.5)) };
+  }
+
+  async function openContainerWindow(current, block, direction, cursor, message) {
+    // Subscribe before clicking, and remove this exact listener on timeout.
+    // Mineflayer's openContainer leaves its windowOpen promise pending if the
+    // server refuses the click; racing that promise against a timer leaks it.
+    if (typeof current.activateBlock !== 'function') {
+      return withTimeout(current.openContainer(block, direction, cursor), containerTimeoutMs, message);
+    }
+    let onOpen;
+    let cancel;
+    let cancelled = false;
+    let unexpected = '';
+    const opening = new Promise((resolve, reject) => {
+      onOpen = window => {
+        if (block.name === 'hopper' && window.inventoryStart !== 5) {
+          unexpected = ` Received ${window.type || 'another window'} with ${window.inventoryStart} container slots.`;
+          return;
+        }
+        resolve(window);
+      };
+      cancel = () => {
+        cancelled = true;
+        reject(new Error('Container opening cancelled.'));
+      };
+      openingCancels.add(cancel);
+      current.on('windowOpen', onOpen);
+      Promise.resolve().then(() => {
+        if (cancelled) return;
+        return current.activateBlock(block, direction, cursor);
+      }).catch(reject);
+    });
+    try {
+      return await withTimeout(opening, containerTimeoutMs, message);
+    } catch (error) {
+      throw new Error(error.message + unexpected);
+    } finally {
+      current.removeListener('windowOpen', onOpen);
+      openingCancels.delete(cancel);
+    }
   }
 
   async function waitForHopperContents(current, window) {

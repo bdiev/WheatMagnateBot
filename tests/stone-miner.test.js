@@ -668,7 +668,85 @@ async function testReportsHopperEvenWhenSuppliesAreMissing() {
   }
 }
 
+async function testOpensHopperAtItsVisibleSurface() {
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('cobblestone', slot, { count: 64 }));
+  const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)], hopper });
+  let sneaking = true;
+  bot.setControlState = (control, enabled) => { if (control === 'sneak') sneaking = enabled; };
+  bot.world = {
+    raycast: (eye, direction) => direction.x < 0
+      ? { name: 'hopper', position: new Vec3(-1, 64, 0), face: 5, intersect: new Vec3(0, 64.75, 0.5) }
+      : { name: 'barrel', position: new Vec3(0, 63, 0), face: 1, intersect: new Vec3(0.5, 64, 0.5) }
+  };
+  let hopperClicks = 0;
+  bot.activateBlock = async (block, direction, cursor) => {
+    if (block.name === 'hopper') {
+      assert.equal(sneaking, false);
+      assert.deepEqual(direction, new Vec3(1, 0, 0), 'use the visible east face instead of the default top face');
+      assert.deepEqual(cursor, new Vec3(1, 0.75, 0.5), 'use the surface intersection instead of the block centre');
+      hopperClicks += 1;
+    }
+    bot.emit('windowOpen', await bot.openContainer(block));
+  };
+  const miner = createStoneMiner({ stateFile: null, hopperPollMs: 10 });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    bot.setBlock(1, 65, 0, 'stone');
+    await until(() => miner.getStatus().phase === 'hopper_full', 'a strict server accepts the surface click');
+    assert.equal(hopperClicks, 1);
+    assert.equal(miner.getStatus().hopper.items, 320);
+    assert.equal(bot.dug.length, 0);
+    assert.equal(bot.listenerCount('windowOpen'), 0, 'successful opening removes its listener');
+  } finally {
+    miner.dispose();
+  }
+}
+
+async function testFailedOpenDoesNotLeakListeners() {
+  const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)] });
+  let rejectHopper = true;
+  bot.activateBlock = async block => {
+    if (block.name === 'hopper' && rejectHopper) {
+      bot.emit('windowOpen', { type: 'minecraft:generic_9x3', inventoryStart: 27 });
+      return;
+    }
+    bot.emit('windowOpen', await bot.openContainer(block));
+  };
+  const miner = createStoneMiner({ stateFile: null, containerTimeoutMs: 30 });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    await until(() => miner.getStatus().lastErrorMessage, 'a refused click times out');
+    assert.match(miner.getStatus().lastErrorMessage, /hopper did not open.*-1,64,0/);
+    assert.match(miner.getStatus().lastErrorMessage, /Received minecraft:generic_9x3/, 'an unrelated window is not accepted as the hopper');
+    assert.equal(bot.listenerCount('windowOpen'), 0, 'a failed opening removes its listener');
+    assert.equal(miner.getStatus().hopper, null, 'failure does not invent an empty hopper snapshot');
+    assert.equal(bot.dug.length, 0);
+    miner.stop();
+    rejectHopper = false;
+    miner.start();
+    await until(() => miner.getStatus().hopper?.items === 0, 'the next opening works without stale listeners');
+    assert.equal(bot.listenerCount('windowOpen'), 0);
+    miner.stop();
+    bot.activateBlock = async () => {};
+    miner.start();
+    await until(() => bot.listenerCount('windowOpen') === 1, 'a new opening is pending');
+    miner.stop();
+    await wait();
+    assert.equal(bot.listenerCount('windowOpen'), 0, 'stopping cancels a pending opening immediately');
+  } finally {
+    miner.dispose();
+  }
+}
+
 (async () => {
+  await testOpensHopperAtItsVisibleSurface();
+  await testFailedOpenDoesNotLeakListeners();
   await testReportsHopperEvenWhenSuppliesAreMissing();
   await testWaitsForDelayedHopperContentsAndPublishesThem();
   await testClearStopsMiningAndLearning();
