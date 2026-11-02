@@ -197,7 +197,10 @@ function createStoneMiner({
     : null;
   // What the barrel and the hopper held when the bot last opened them
   let barrelSeen = null;
-  let hopperSeen = null;
+  let hopperSeen = saved.hopper && Number.isFinite(saved.hopper.items) && saved.hopper.items >= 0
+    && Number.isFinite(saved.hopper.capacity) && saved.hopper.capacity > 0
+    ? { items: saved.hopper.items, capacity: saved.hopper.capacity, at: saved.hopper.at || null }
+    : null;
   let barrelCheckDue = true;
   let hopperCheckDue = true;
   let lineCheckDue = true;
@@ -224,7 +227,7 @@ function createStoneMiner({
     try {
       fs.mkdirSync(path.dirname(stateFile), { recursive: true });
       fs.writeFileSync(stateFile, JSON.stringify({
-        ...desired, totalMined, hopperFull,
+        ...desired, totalMined, hopperFull, hopper: hopperSeen,
         pickaxes: [...pickaxeBlocks].map(([slot, tracked]) => ({ slot, ...tracked }))
       }, null, 2), 'utf8');
     } catch (error) {
@@ -450,7 +453,7 @@ function createStoneMiner({
   }
 
   function dispose() {
-    if (totalMined) saveState();
+    saveState();
     detachBot();
   }
 
@@ -511,18 +514,27 @@ function createStoneMiner({
   // One pass: keep the bot in place and supplied, then mine one grown block
   async function runStep(current, generation) {
     await returnToAnchor(current);
+    let suppliesError = null;
+    if (!hopperFull || barrelCheckDue) {
+      try {
+        await ensureSupplies(current);
+      } catch (error) {
+        if (error.code !== 'STONE_MINER_SUPPLY') throw error;
+        // A missing pickaxe must not prevent observing the hopper or waiting
+        // for it to drain. Report the supply error before any mining resumes.
+        suppliesError = error;
+      }
+    }
+    await eatIfHungry(current);
+    if (!isCurrent(generation, current)) return false;
     if (hopperFull) {
-      if (barrelCheckDue) await ensureSupplies(current);
-      await eatIfHungry(current);
       await watchHopper(current, generation);
       return false;
     }
     if (lineCheckDue) extendLine(current);
-    await ensureSupplies(current);
-    await eatIfHungry(current);
-    if (!isCurrent(generation, current)) return false;
     await depositMinedStone(current, generation);
     if (!isCurrent(generation, current) || hopperFull) return false;
+    if (suppliesError) throw suppliesError;
 
     trackEmptyBlocks(current);
     const grown = findGrownBlock(current);
@@ -702,8 +714,8 @@ function createStoneMiner({
       if (contents.room === 0) {
         hopperFull = { total: contents.total };
         log(`[Stone Miner] The hopper is full with ${left} stone left; not mining until it drains.`);
-        saveState();
       }
+      saveState();
       notifyChange();
       // Keep this very window open: closing and reopening it can discard a
       // delayed slot update and briefly report an empty hopper again.
@@ -728,6 +740,7 @@ function createStoneMiner({
         const contents = hopperContents(window, carriedStoneNames(window));
         if (!hopperSeen || hopperSeen.items !== contents.total) {
           hopperSeen = { items: contents.total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
+          if (Date.now() - lastSavedAt > SAVE_EVERY_MS) saveState();
           notifyChange();
         }
         if (contents.room > 0 && windowStone(window) < DEPOSIT_FROM_COUNT) {

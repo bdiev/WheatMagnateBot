@@ -12110,8 +12110,8 @@ function renderStoneMinerGenerator(payload) {
   setMinerMeter('#stoneMinerCarriedBar', carried ? (stone / (36 * 64)) * 100 : 0, 'stack');
   const hopper = payload.hopper;
   const hopperText = $('#stoneMinerHopper');
-  hopperText.textContent = hopper ? `${formatNumber(hopper.items)} / ${formatNumber(hopper.capacity)}` : 'not filled yet';
-  hopperText.title = hopper?.at ? `checked ${formatDate(hopper.at)}` : '';
+  hopperText.textContent = hopper ? `${formatNumber(hopper.items)} / ${formatNumber(hopper.capacity)}` : 'not checked yet';
+  hopperText.title = hopper?.at ? `checked ${formatDate(hopper.at)}` : 'Waiting for the bot to read the hopper contents.';
   const hopperPercent = hopper?.capacity ? (hopper.items / hopper.capacity) * 100 : 0;
   setMinerMeter('#stoneMinerHopperBar', hopperPercent, hopperPercent >= 100 ? 'low' : 'stack');
 }

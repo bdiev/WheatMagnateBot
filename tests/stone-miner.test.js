@@ -645,7 +645,31 @@ async function testWaitsForDelayedHopperContentsAndPublishesThem() {
   }
 }
 
+async function testReportsHopperEvenWhenSuppliesAreMissing() {
+  fs.rmSync(stateFile, { force: true });
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('cobblestone', slot, { count: 64 }));
+  const { bot } = fakeBot({ inventory: [item('bread', 37)], hopper });
+  const miner = createStoneMiner({ stateFile, hopperPollMs: 10 });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    await until(() => miner.getStatus().hopper?.items === 320 && bot.currentWindow?.contents === hopper,
+      'a missing pickaxe does not hide the full hopper from the website');
+    assert.equal(bot.dug.length, 0);
+    const snapshot = miner.getStatus().hopper;
+    const restored = createStoneMiner({ stateFile });
+    assert.deepEqual(restored.getStatus().hopper, snapshot, 'the last observation survives a restart');
+    restored.dispose();
+  } finally {
+    miner.dispose();
+    fs.rmSync(stateFile, { force: true });
+  }
+}
+
 (async () => {
+  await testReportsHopperEvenWhenSuppliesAreMissing();
   await testWaitsForDelayedHopperContentsAndPublishesThem();
   await testClearStopsMiningAndLearning();
   await testStaleRecoveryLeavesOtherBlocksAlone();
