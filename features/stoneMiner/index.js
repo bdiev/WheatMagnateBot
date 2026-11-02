@@ -8,7 +8,9 @@
  *      the bot gives the direction and height: every block on that line in
  *      front of the bot that it can reach (about five) is remembered, with
  *      the spot the bot stands on, and mining starts at once
- *   2. Mine: each of those blocks holding stone is mined, nearest first
+ *   2. Mine: each of those blocks holding stone is mined, nearest first; one
+ *      that has looked empty for a while is dug anyway, since the bot's view
+ *      of it may be stale
  *   3. Worn pickaxes go into the barrel the bot stands on (or the nearest
  *      chest or barrel) and a fresh one is taken from it; food is taken from
  *      it too when the bot has none
@@ -57,6 +59,9 @@ const HOPPER_URGENT_FREE_SLOTS = 3;
 // Full for this long without draining: everything after the hopper is full
 const HOPPER_STALL_MS = 30_000;
 const REGROW_WAIT_MS = 500;
+// A generator block grows back within a couple of seconds; one that looks
+// empty for longer may only look so to the bot
+const STALE_EMPTY_MS = 5_000;
 const DIG_TIMEOUT_MS = 10_000;
 const CONTAINER_TIMEOUT_MS = 5_000;
 const RETRY_DELAY_MS = 2_000;
@@ -152,7 +157,7 @@ function isSafeFood(bot, item) {
 function createStoneMiner({
   stateFile = null, log = () => {}, onChange = () => {}, onMined = () => {}, onPickaxeRetired = () => {},
   hopperIntervalMs = HOPPER_INTERVAL_MS, hopperUrgentIntervalMs = HOPPER_URGENT_INTERVAL_MS,
-  hopperStallMs = HOPPER_STALL_MS
+  hopperStallMs = HOPPER_STALL_MS, staleEmptyMs = STALE_EMPTY_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -184,6 +189,9 @@ function createStoneMiner({
   let barrelCheckDue = true;
   let lineCheckDue = true;
   let lastLineView = null;
+  // Since when each learned block has looked empty, and the stone mined last
+  const emptySince = new Map();
+  let lastMinedName = 'cobblestone';
 
   function validPosition(pos) {
     return pos && [pos.x, pos.y, pos.z].every(Number.isInteger);
@@ -448,6 +456,7 @@ function createStoneMiner({
     // A first look into the barrel, so the site knows its pickaxes
     barrelCheckDue = true;
     lineCheckDue = true;
+    emptySince.clear();
     log('[Stone Miner] Started.');
     loop(generation).catch(error => log(`[Stone Miner] Loop crashed: ${error.message}`));
   }
@@ -489,7 +498,9 @@ function createStoneMiner({
     await eatIfHungry(current);
     if (!isCurrent(generation, current)) return false;
 
-    const target = findGrownBlock(current);
+    trackEmptyBlocks(current);
+    const grown = findGrownBlock(current);
+    const target = grown || findStaleBlock(current);
     if (!target) {
       phase = 'waiting';
       logLineView(current);
@@ -506,6 +517,9 @@ function createStoneMiner({
     if (!pickaxe) throw supplyError('No usable pickaxe.');
     if (current.heldItem?.slot !== pickaxe.slot) await current.equip(pickaxe, 'hand');
     await withTimeout(current.dig(target, true), DIG_TIMEOUT_MS, 'Mining took too long.');
+    // Whether a stale block held stone shows only when it grows back
+    if (!grown) return true;
+    lastMinedName = target.name;
     sessionMined += 1;
     totalMined += 1;
     const tracked = pickaxeBlocks.get(pickaxe.slot) || { blocks: 0, fromFresh: false };
@@ -533,6 +547,46 @@ function createStoneMiner({
       throw new Error('The generator blocks are out of reach.');
     }
     return null;
+  }
+
+  // mineflayer marks a block broken by itself when its dig timer runs out, so
+  // a dig the server refused (a nearer block grew back in the way) leaves
+  // stone the bot sees as air for good. A block of the line that has looked
+  // empty for longer than a regrow takes is dug anyway, once in a while
+  function trackEmptyBlocks(current) {
+    const now = Date.now();
+    for (const pos of desired.blocks) {
+      const key = positionKey(pos);
+      if (isStoneBlock(current.blockAt(new Vec3(pos.x, pos.y, pos.z)))) emptySince.delete(key);
+      else if (!emptySince.has(key)) emptySince.set(key, now);
+    }
+  }
+
+  function findStaleBlock(current) {
+    const now = Date.now();
+    const eye = current.entity.position.offset(0, current.entity.height || 1.62, 0);
+    for (const pos of desired.blocks) {
+      const key = positionKey(pos);
+      const block = current.blockAt(new Vec3(pos.x, pos.y, pos.z));
+      if (!block || now - (emptySince.get(key) ?? now) < staleEmptyMs) continue;
+      if (eye.distanceTo(block.position.offset(0.5, 0.5, 0.5)) > DIG_REACH) continue;
+      emptySince.set(key, now);
+      return asStone(current, block);
+    }
+    return null;
+  }
+
+  // The block as the stone last mined here, so the dig lasts as long as the
+  // server needs for it
+  function asStone(current, block) {
+    const data = current.registry?.blocksByName?.[lastMinedName] || current.registry?.blocksByName?.cobblestone;
+    const Block = block.constructor;
+    if (data && typeof Block?.fromStateId === 'function') {
+      const stone = Block.fromStateId(data.defaultState, 0);
+      stone.position = block.position;
+      return stone;
+    }
+    return { ...block, name: data?.name || lastMinedName };
   }
 
   // What the bot sees on each learned block while it waits, logged when it

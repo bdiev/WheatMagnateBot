@@ -429,11 +429,39 @@ async function testStartsOnTheBotSpawnByItself() {
   miner.dispose();
 }
 
+async function testDigsBlocksThatLookEmptyTooLong() {
+  fs.rmSync(stateFile, { force: true });
+  const pickaxe = item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 });
+  const { bot } = fakeBot({ inventory: [pickaxe, item('bread', 37)], chest: [item('bread', 0)] });
+  const miner = createStoneMiner({ stateFile: null, staleEmptyMs: 100 });
+  miner.attachBot(bot);
+  miner.setLearning(true);
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  bot.setBlock(1, 65, 0, 'air');
+
+  // The bot sees air at 3,65,0, but the server still holds stone there and
+  // sends it back when the bot digs it
+  const dig = bot.dig;
+  let corrected = false;
+  bot.dig = async block => {
+    await dig(block);
+    if (block.position.x === 3 && !corrected) {
+      corrected = true;
+      bot.setBlock(3, 65, 0, 'stone');
+    }
+  };
+  await until(() => [1, 2, 3, 4, 5].every(x => bot.dug.includes(`${x},65,0`)), 'every block that looks empty too long is dug');
+  await until(() => miner.getStatus().sessionMined === 1, 'the stone the server sent back is mined');
+  assert.equal(bot.dug.filter(key => key === '3,65,0').length >= 2, true);
+  miner.dispose();
+}
+
 (async () => {
   await testLearnsTheLineInFrontFromOneBrokenBlock();
   await testExtendsALineLearnedByAnOlderVersion();
   await testMinesAnyGrownBlockAtOnce();
   await testStartsOnTheBotSpawnByItself();
+  await testDigsBlocksThatLookEmptyTooLong();
   await testMinesGrownBlocksAndSwapsWornPickaxe();
   await testFillsTheHopperFromAStack();
   await testKeepsThePickaxeInHand();
