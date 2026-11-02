@@ -521,7 +521,78 @@ async function testDigsBlocksThatLookEmptyTooLong() {
   miner.dispose();
 }
 
+async function testClearStopsMiningAndLearning() {
+  const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)] });
+  const miner = createStoneMiner({ stateFile });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    await until(() => miner.getStatus().phase === 'waiting', 'ready before clearing');
+    const cleared = miner.clearBlocks();
+    assert.equal(cleared.enabled, false, 'forgetting the line disables mining');
+    assert.equal(cleared.running, false);
+    assert.equal(cleared.blockCount, 0);
+    assert.equal(cleared.anchor, null);
+    assert.equal(createStoneMiner({ stateFile }).getStatus().enabled, false, 'clearing survives restart');
+    miner.setLearning(true);
+    miner.clearBlocks();
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    assert.equal(miner.getStatus().learning, false, 'clearing also cancels learning');
+    assert.equal(miner.getStatus().blockCount, 0);
+  } finally {
+    miner.dispose();
+  }
+}
+
+async function testStaleRecoveryLeavesOtherBlocksAlone() {
+  const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)] });
+  const miner = createStoneMiner({ stateFile: null, staleEmptyMs: 30 });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    bot.setBlock(2, 65, 0, 'chest');
+    bot.setBlock(3, 65, 0, 'dirt');
+    await until(() => bot.dug.includes('4,65,0'), 'stale air recovery runs');
+    assert.ok(!bot.dug.includes('2,65,0'), 'recovery must not dig a chest');
+    assert.ok(!bot.dug.includes('3,65,0'), 'recovery must not dig dirt');
+  } finally {
+    miner.dispose();
+  }
+}
+
+async function testWaitsForRoomForTheCarriedStoneType() {
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('stone', slot, { count: 32 }));
+  const { bot } = fakeBot({
+    inventory: [item('iron_pickaxe', 36), item('bread', 37), item('cobblestone', 9, { count: 64 })],
+    hopper
+  });
+  const miner = createStoneMiner({ stateFile: null, hopperPollMs: 10 });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'cobblestone');
+    bot.setBlock(1, 65, 0, 'air');
+    bot.setBlock(1, 65, 0, 'cobblestone');
+    await until(() => miner.getStatus().phase === 'hopper_full' && bot.currentWindow?.contents === hopper,
+      'partial stacks of another material cannot accept cobblestone');
+    assert.equal(bot.dug.length, 0);
+    bot.currentWindow.slots[0] = null;
+    await until(() => bot.dug.length === 1, 'an empty slot accepts the carried stack');
+    assert.ok(!bot.inventory.items().some(entry => entry.name === 'cobblestone'));
+  } finally {
+    miner.dispose();
+  }
+}
+
 (async () => {
+  await testClearStopsMiningAndLearning();
+  await testStaleRecoveryLeavesOtherBlocksAlone();
+  await testWaitsForRoomForTheCarriedStoneType();
   await testLearnsTheLineInFrontFromOneBrokenBlock();
   await testExtendsALineLearnedByAnOlderVersion();
   await testMinesAnyGrownBlockAtOnce();

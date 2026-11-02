@@ -418,8 +418,10 @@ function createStoneMiner({
   }
 
   function clearBlocks() {
+    stop();
     desired.blocks = [];
     desired.anchor = null;
+    emptySince.clear();
     saveState();
     return getStatus();
   }
@@ -596,7 +598,7 @@ function createStoneMiner({
     const now = Date.now();
     for (const pos of desired.blocks) {
       const key = positionKey(pos);
-      if (isStoneBlock(current.blockAt(new Vec3(pos.x, pos.y, pos.z)))) emptySince.delete(key);
+      if (!isAir(current.blockAt(new Vec3(pos.x, pos.y, pos.z)))) emptySince.delete(key);
       else if (!emptySince.has(key)) emptySince.set(key, now);
     }
   }
@@ -607,7 +609,7 @@ function createStoneMiner({
     for (const pos of desired.blocks) {
       const key = positionKey(pos);
       const block = current.blockAt(new Vec3(pos.x, pos.y, pos.z));
-      if (!block || now - (emptySince.get(key) ?? now) < staleEmptyMs) continue;
+      if (!block || !isAir(block) || now - (emptySince.get(key) ?? now) < staleEmptyMs) continue;
       if (eye.distanceTo(block.position.offset(0.5, 0.5, 0.5)) > DIG_REACH) continue;
       emptySince.set(key, now);
       return asStone(current, block);
@@ -689,10 +691,10 @@ function createStoneMiner({
     try {
       const start = window.inventoryStart;
       for (const stack of window.slots.slice(start, window.inventoryEnd).filter(item => item && MINED_ITEMS.has(item.name))) {
-        if (!hopperRoom(window)) break;
+        if (hopperContents(window, new Set([stack.name])).room === 0) continue;
         await shiftClick(current, window, stack.slot);
       }
-      contents = hopperContents(window);
+      contents = hopperContents(window, carriedStoneNames(window));
       left = windowStone(window);
       hopperSeen = { items: contents.total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
     } finally {
@@ -718,7 +720,7 @@ function createStoneMiner({
     try {
       const until = Date.now() + HOPPER_WATCH_MS;
       while (isCurrent(generation, current) && current.currentWindow === window && Date.now() < until) {
-        const contents = hopperContents(window);
+        const contents = hopperContents(window, carriedStoneNames(window));
         if (!hopperSeen || hopperSeen.items !== contents.total) {
           hopperSeen = { items: contents.total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
           notifyChange();
@@ -731,12 +733,10 @@ function createStoneMiner({
           notifyChange();
           return;
         }
-        if (contents.room >= DEPOSIT_FROM_COUNT) {
-          const stack = window.slots.slice(window.inventoryStart, window.inventoryEnd)
-            .find(item => item && MINED_ITEMS.has(item.name));
-          if (stack) await shiftClick(current, window, stack.slot);
-          continue;
-        }
+        const stack = window.slots.slice(window.inventoryStart, window.inventoryEnd)
+          .find(item => item && MINED_ITEMS.has(item.name)
+            && hopperContents(window, new Set([item.name])).room >= item.count);
+        if (stack && await shiftClick(current, window, stack.slot)) continue;
         await sleep(hopperPollMs);
       }
     } finally {
@@ -751,12 +751,14 @@ function createStoneMiner({
       .reduce((sum, item) => sum + item.count, 0);
   }
 
-  function hopperRoom(window) {
-    return hopperContents(window).room > 0;
+  function carriedStoneNames(window) {
+    const names = new Set(window.slots.slice(window.inventoryStart, window.inventoryEnd)
+      .filter(item => item && MINED_ITEMS.has(item.name)).map(item => item.name));
+    return names.size ? names : MINED_ITEMS;
   }
 
   // Room for more stone and the items already in the hopper
-  function hopperContents(window) {
+  function hopperContents(window, acceptedNames = MINED_ITEMS) {
     let room = 0;
     let total = 0;
     for (const item of window.slots.slice(0, window.inventoryStart)) {
@@ -765,7 +767,7 @@ function createStoneMiner({
         continue;
       }
       total += item.count;
-      if (MINED_ITEMS.has(item.name)) room += Math.max(0, (item.stackSize || 64) - item.count);
+      if (acceptedNames.has(item.name)) room += Math.max(0, (item.stackSize || 64) - item.count);
     }
     return { room, total };
   }
