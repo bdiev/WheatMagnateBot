@@ -12007,7 +12007,7 @@ const STONE_MINER_PHASES = {
   waiting: 'Waiting for stone to grow',
   restocking: 'Taking a pickaxe or food',
   depositing: 'Filling the hopper',
-  hopper_full: 'Hopper full · watching it, feeding it the carried stone before mining again',
+  hopper_full: 'Hopper full · watching it, mining resumes once it has room',
   eating: 'Eating',
   returning: 'Walking back to the generator',
   retrying: 'Retrying'

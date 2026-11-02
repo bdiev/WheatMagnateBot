@@ -262,7 +262,8 @@ async function testFillsTheHopperFromAStack() {
   miner.start();
   bot.setBlock(1, 65, 0, 'cobblestone');
   await until(() => bot.dug.length === 1, 'it mines');
-  assert.equal(bot.opened.includes('hopper'), false, 'less than a stack stays with the bot');
+  assert.ok(bot.opened.includes('hopper'), 'the hopper is checked after a start, even with less than a stack');
+  assert.ok(bot.opened.includes('barrel'), 'and so is the barrel');
   miner.stop();
 
   for (const slot of [10, 11, 12, 13]) bot.slots[slot] = item('cobblestone', slot, { count: 64 });
@@ -335,6 +336,27 @@ async function testPutsEveryStackIntoTheHopper() {
   miner.dispose();
 }
 
+async function testDoesNotStartMiningIntoAFullHopper() {
+  fs.rmSync(stateFile, { force: true });
+  const inventory = [item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 }), item('bread', 37)];
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('cobblestone', slot, { count: 64 }));
+  const { bot } = fakeBot({ inventory, hopper });
+  const miner = createStoneMiner({ stateFile: null, hopperPollMs: 10 });
+  miner.attachBot(bot);
+  miner.setLearning(true);
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  bot.setBlock(1, 65, 0, 'air');
+  miner.start();
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  await until(() => miner.getStatus().phase === 'hopper_full' && bot.currentWindow?.contents === hopper,
+    'the hopper checked after the start is full');
+  await wait(100);
+  assert.equal(bot.dug.length, 0, 'it does not mine into a full hopper, even with no stone carried');
+  bot.currentWindow.slots[0].count -= 1;
+  await until(() => bot.dug.length === 1, 'mining starts once the hopper has room');
+  miner.dispose();
+}
+
 async function testWatchesAFullHopperUntilItDrains() {
   fs.rmSync(stateFile, { force: true });
   const inventory = [
@@ -360,8 +382,10 @@ async function testWatchesAFullHopperUntilItDrains() {
   miner.dispose();
   const restarted = createStoneMiner({ stateFile, hopperIntervalMs: 60_000, hopperPollMs: 10 });
   assert.equal(restarted.getStatus().hopperFull, true, 'the full hopper survives a restart');
+  bot.opened.length = 0;
   restarted.onSpawn(bot);
   await until(() => restarted.getStatus().phase === 'hopper_full' && bot.currentWindow, 'the hopper is opened again');
+  assert.ok(bot.opened.includes('barrel'), 'the barrel is checked after a restart with the hopper full too');
   bot.currentWindow.slots[0].count -= 2;
   await wait(100);
   assert.equal(bot.dug.length, 0, 'with a stack still carried a couple of items gone is not enough');
@@ -390,7 +414,7 @@ async function testTakesPickaxesFromTheBarrelBelow() {
   miner.start();
   bot.setBlock(1, 65, 0, 'cobblestone');
   await until(() => bot.dug.length === 1, 'it mines with the pickaxe from the barrel');
-  assert.equal(bot.opened[0], 'barrel', 'the barrel the bot stands on is used before the chest nearby');
+  assert.equal(bot.opened.filter(name => name !== 'hopper')[0], 'barrel', 'the barrel the bot stands on is used before the chest nearby');
   miner.dispose();
 }
 
@@ -508,6 +532,7 @@ async function testDigsBlocksThatLookEmptyTooLong() {
   await testKeepsThePickaxeInHand();
   await testPutsEveryStackIntoTheHopper();
   await testWatchesAFullHopperUntilItDrains();
+  await testDoesNotStartMiningIntoAFullHopper();
   await testTakesPickaxesFromTheBarrelBelow();
   await testKeepsRetryingWithoutPickaxe();
   fs.rmSync(stateFile, { force: true });

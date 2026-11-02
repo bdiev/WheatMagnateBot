@@ -55,10 +55,11 @@ const DEPOSIT_FROM_COUNT = 64;
 // minutes after the last visit
 const HOPPER_INTERVAL_MS = 26_000;
 const HOPPER_IDLE_INTERVAL_MS = 5 * 60_000;
-// The bot mines faster than the hopper passes stone on, so with a stack or more
-// left over and the hopper full it stops mining and watches the hopper with its
-// window open, putting in a stack whenever one fits, until less than a stack is
-// left. The window is reopened every minute, so the bot still eats and keeps
+// The bot mines faster than the hopper passes stone on, and mined stone has
+// nowhere else to go: with the hopper full (seen on any visit, the one after a
+// start too) it stops mining and watches the hopper with its window open,
+// putting in a stack whenever one fits, until it has room and less than a stack
+// is left. The window is reopened every minute, so the bot still eats and keeps
 // its spot
 const HOPPER_WATCH_MS = 60_000;
 const HOPPER_POLL_MS = 250;
@@ -187,8 +188,6 @@ function createStoneMiner({
   let lastSavedAt = 0;
   let regrowWaiters = [];
   let lastHopperVisitAt = 0;
-  // Less than a stack waits five minutes from the start too
-  const createdAt = Date.now();
   let nextFoodCheckAt = 0;
   // The hopper the bot found full, with the most items seen in it; saved, so
   // the bot watches it again after a restart
@@ -199,6 +198,7 @@ function createStoneMiner({
   let barrelSeen = null;
   let hopperSeen = null;
   let barrelCheckDue = true;
+  let hopperCheckDue = true;
   let lineCheckDue = true;
   // Since when each learned block has looked empty, and the stone mined last
   const emptySince = new Map();
@@ -467,8 +467,10 @@ function createStoneMiner({
     running = true;
     sessionMined = 0;
     sessionStartedAt = new Date().toISOString();
-    // A first look into the barrel, so the site knows its pickaxes
+    // A first look into the barrel and the hopper, so the site knows what
+    // they hold
     barrelCheckDue = true;
+    hopperCheckDue = true;
     lineCheckDue = true;
     emptySince.clear();
     log('[Stone Miner] Started.');
@@ -507,6 +509,7 @@ function createStoneMiner({
   async function runStep(current, generation) {
     await returnToAnchor(current);
     if (hopperFull) {
+      if (barrelCheckDue) await ensureSupplies(current);
       await eatIfHungry(current);
       await watchHopper(current, generation);
       return false;
@@ -661,15 +664,18 @@ function createStoneMiner({
   }
 
   // A full stack, or any stone five minutes after the last visit, goes into the
-  // hopper in front of the bot. One that takes nothing more is watched until it drains
+  // hopper in front of the bot; after a start it is opened at once, stone or not.
+  // One found full stops mining until it drains
   async function depositMinedStone(current) {
     const carried = current.inventory.items()
       .filter(item => MINED_ITEMS.has(item.name))
       .reduce((sum, item) => sum + item.count, 0);
-    if (!carried) return;
-    if (carried >= DEPOSIT_FROM_COUNT
-      ? Date.now() - lastHopperVisitAt < hopperIntervalMs
-      : Date.now() - (lastHopperVisitAt || createdAt) < hopperIdleIntervalMs) return;
+    if (!hopperCheckDue) {
+      if (!carried) return;
+      if (Date.now() - lastHopperVisitAt
+        < (carried >= DEPOSIT_FROM_COUNT ? hopperIntervalMs : hopperIdleIntervalMs)) return;
+    }
+    hopperCheckDue = false;
     lastHopperVisitAt = Date.now();
     const hopper = findHopper(current);
     if (!hopper) {
@@ -693,20 +699,22 @@ function createStoneMiner({
       try { current.closeWindow(window); } catch {}
     }
 
-    if (contents.room > 0 || left < DEPOSIT_FROM_COUNT) return;
+    if (contents.room > 0) return;
     hopperFull = { total: contents.total };
-    log('[Stone Miner] The hopper is full; feeding it until less than a stack is left.');
+    log(`[Stone Miner] The hopper is full with ${left} stone left; not mining until it drains.`);
     saveState();
     notifyChange();
   }
 
   // The bot stands looking into the open hopper and puts a stack in whenever
-  // one fits; once less than a stack is left, mining resumes
+  // one fits; once the hopper has room and less than a stack is left, mining
+  // resumes
   async function watchHopper(current, generation) {
     const hopper = findHopper(current);
     if (!hopper) throw new Error('The hopper is full, but no hopper is within reach to watch.');
     phase = 'hopper_full';
     const window = await openWindow(current, hopper, 'The hopper did not open.');
+    hopperCheckDue = false;
     try {
       const until = Date.now() + HOPPER_WATCH_MS;
       while (isCurrent(generation, current) && current.currentWindow === window && Date.now() < until) {
@@ -715,8 +723,8 @@ function createStoneMiner({
           hopperSeen = { items: contents.total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
           notifyChange();
         }
-        if (windowStone(window) < DEPOSIT_FROM_COUNT) {
-          log('[Stone Miner] Less than a stack is left; mining resumes.');
+        if (contents.room > 0 && windowStone(window) < DEPOSIT_FROM_COUNT) {
+          log('[Stone Miner] The hopper has room again; mining resumes.');
           hopperFull = null;
           lastHopperVisitAt = Date.now();
           saveState();
