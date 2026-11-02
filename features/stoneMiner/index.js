@@ -55,10 +55,11 @@ const DEPOSIT_FROM_COUNT = 64;
 // minutes after the last visit
 const HOPPER_INTERVAL_MS = 26_000;
 const HOPPER_IDLE_INTERVAL_MS = 5 * 60_000;
-// A full hopper is watched with its window open; mining resumes once this
-// many items have left it. The window is reopened every minute, so the bot
-// still eats and keeps its spot
-const HOPPER_DRAINED_ITEMS = 2;
+// The bot mines faster than the hopper passes stone on, so with a stack or more
+// left over and the hopper full it stops mining and watches the hopper with its
+// window open, putting in a stack whenever one fits, until less than a stack is
+// left. The window is reopened every minute, so the bot still eats and keeps
+// its spot
 const HOPPER_WATCH_MS = 60_000;
 const HOPPER_POLL_MS = 250;
 const REGROW_WAIT_MS = 500;
@@ -675,29 +676,30 @@ function createStoneMiner({
     }
     phase = 'depositing';
     const window = await openWindow(current, hopper, 'The hopper did not open.');
-    let moved = false;
     let contents;
+    let left;
     try {
       const start = window.inventoryStart;
       for (const stack of window.slots.slice(start, window.inventoryEnd).filter(item => item && MINED_ITEMS.has(item.name))) {
         if (!hopperRoom(window)) break;
-        if (await shiftClick(current, window, stack.slot)) moved = true;
+        await shiftClick(current, window, stack.slot);
       }
       contents = hopperContents(window);
+      left = windowStone(window);
       hopperSeen = { items: contents.total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
     } finally {
       try { current.closeWindow(window); } catch {}
     }
 
-    if (moved || contents.room > 0) return;
+    if (contents.room > 0 || left < DEPOSIT_FROM_COUNT) return;
     hopperFull = { total: contents.total };
-    log('[Stone Miner] The hopper is full; watching it until it drains.');
+    log('[Stone Miner] The hopper is full; feeding it until less than a stack is left.');
     saveState();
     notifyChange();
   }
 
-  // The bot stands looking into the open hopper; once a couple of items have
-  // left it, mining resumes
+  // The bot stands looking into the open hopper and puts a stack in whenever
+  // one fits; once less than a stack is left, mining resumes
   async function watchHopper(current, generation) {
     const hopper = findHopper(current);
     if (!hopper) throw new Error('The hopper is full, but no hopper is within reach to watch.');
@@ -706,26 +708,37 @@ function createStoneMiner({
     try {
       const until = Date.now() + HOPPER_WATCH_MS;
       while (isCurrent(generation, current) && current.currentWindow === window && Date.now() < until) {
-        const { total } = hopperContents(window);
-        if (!hopperSeen || hopperSeen.items !== total) {
-          hopperSeen = { items: total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
+        const contents = hopperContents(window);
+        if (!hopperSeen || hopperSeen.items !== contents.total) {
+          hopperSeen = { items: contents.total, capacity: window.inventoryStart * 64, at: new Date().toISOString() };
           notifyChange();
         }
-        // Items put in by someone else raise the mark
-        if (total > hopperFull.total) hopperFull.total = total;
-        if (total <= hopperFull.total - HOPPER_DRAINED_ITEMS) {
-          log('[Stone Miner] The hopper drains again; mining resumes.');
+        if (windowStone(window) < DEPOSIT_FROM_COUNT) {
+          log('[Stone Miner] Less than a stack is left; mining resumes.');
           hopperFull = null;
           lastHopperVisitAt = Date.now();
           saveState();
           notifyChange();
           return;
         }
+        if (contents.room >= DEPOSIT_FROM_COUNT) {
+          const stack = window.slots.slice(window.inventoryStart, window.inventoryEnd)
+            .find(item => item && MINED_ITEMS.has(item.name));
+          if (stack) await shiftClick(current, window, stack.slot);
+          continue;
+        }
         await sleep(hopperPollMs);
       }
     } finally {
       try { if (current.currentWindow === window) current.closeWindow(window); } catch {}
     }
+  }
+
+  // The stone in the inventory part of an open window
+  function windowStone(window) {
+    return window.slots.slice(window.inventoryStart, window.inventoryEnd)
+      .filter(item => item && MINED_ITEMS.has(item.name))
+      .reduce((sum, item) => sum + item.count, 0);
   }
 
   function hopperRoom(window) {

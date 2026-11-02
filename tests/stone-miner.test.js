@@ -360,11 +360,12 @@ async function testWatchesAFullHopperUntilItDrains() {
   assert.equal(restarted.getStatus().hopperFull, true, 'the full hopper survives a restart');
   restarted.onSpawn(bot);
   await until(() => restarted.getStatus().phase === 'hopper_full' && bot.currentWindow, 'the hopper is opened again');
-  bot.currentWindow.slots[0].count -= 1;
+  bot.currentWindow.slots[0].count -= 2;
   await wait(100);
-  assert.equal(bot.dug.length, 0, 'one item gone is not enough');
-  bot.currentWindow.slots[1].count -= 1;
-  await until(() => bot.dug.length === 1, 'mining resumes once two items have left the hopper');
+  assert.equal(bot.dug.length, 0, 'with a stack still carried a couple of items gone is not enough');
+  bot.currentWindow.slots[1] = null;
+  await until(() => bot.dug.length === 1, 'the stack goes in once it fits, and mining resumes');
+  assert.equal(bot.inventory.items().filter(entry => entry.name === 'cobblestone').length, 0, 'the stack went into the hopper');
   assert.equal(restarted.getStatus().hopperFull, false);
   restarted.dispose();
 
