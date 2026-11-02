@@ -223,19 +223,27 @@ async function testMinesGrownBlocksAndSwapsWornPickaxe() {
   assert.equal(barrel.pickaxes, 0, 'the site sees what is left in the barrel');
   assert.equal(barrel.wornPickaxes, 1);
 
-  // The fresh pickaxe wears out after two blocks and is swapped for the next one
+  // A redeploy in the middle of the pickaxe's life keeps its count
+  miner.dispose();
+  const restarted = createStoneMiner({ stateFile, onPickaxeRetired: pickaxe => retired.push(pickaxe) });
+  restarted.attachBot(bot);
+  restarted.onSpawn(bot);
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  await until(() => bot.dug.length === 3, 'the restarted miner mines on');
+
+  // The fresh pickaxe wears out after three blocks and is swapped for the next one
   bot.slots[bot.heldItem.slot].durabilityUsed = 1555;
   chest.push(item('diamond_pickaxe', 5, { maxDurability: 1561, durabilityUsed: 0 }));
   bot.setBlock(1, 65, 0, 'cobblestone');
-  await until(() => bot.dug.length === 3, 'it mines on with the next pickaxe');
-  assert.deepEqual(retired, [{ name: 'diamond_pickaxe', blocksMined: 2, countInAverage: true }],
-    'a pickaxe taken fresh and worn out here counts in the average');
+  await until(() => bot.dug.length === 4, 'it mines on with the next pickaxe');
+  assert.deepEqual(retired, [{ name: 'diamond_pickaxe', blocksMined: 3, countInAverage: true }],
+    'a pickaxe taken fresh and worn out here counts in the average, across a restart');
 
-  miner.stop();
+  restarted.stop();
   bot.setBlock(1, 65, 0, 'cobblestone');
   await wait(100);
-  assert.equal(bot.dug.length, 3, 'a stopped miner does not mine');
-  miner.dispose();
+  assert.equal(bot.dug.length, 4, 'a stopped miner does not mine');
+  restarted.dispose();
 }
 
 async function testFillsTheHopperFromAStack() {

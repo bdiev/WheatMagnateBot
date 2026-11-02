@@ -12128,8 +12128,14 @@ function renderStoneMiner(payload = {}) {
   setRollingNumber('#stoneMinerToday', payload.todayMined || 0);
   $('#stoneMinerTodayTimezone').textContent = `${payload.timezone || 'local'} calendar day`;
   // Blocks in the last 60 minutes: a session average jumped after every
-  // start and redeploy
-  $('#stoneMinerRate').textContent = `${formatNumber(payload.lastHourMined || 0)}/h`;
+  // start and redeploy. The tab reloads every few seconds and the window
+  // moves with every block, so the card changes once a minute
+  const now = Date.now();
+  if (state.stoneMinerRateAccount !== state.activeAccountId || now - (state.stoneMinerRateShownAt || 0) >= 60_000) {
+    state.stoneMinerRateAccount = state.activeAccountId;
+    state.stoneMinerRateShownAt = now;
+    $('#stoneMinerRate').textContent = `${formatNumber(payload.lastHourMined || 0)}/h`;
+  }
   const pickaxes = payload.pickaxes || {};
   $('#stoneMinerPickaxeAverage').textContent = pickaxes.averageBlocks == null ? '-' : formatNumber(pickaxes.averageBlocks);
   $('#stoneMinerRetiredPickaxes').textContent = pickaxes.retired

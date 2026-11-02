@@ -169,8 +169,11 @@ function createStoneMiner({
   let sessionMined = 0;
   let sessionStartedAt = null;
   // Blocks mined by the pickaxe in each inventory slot; fromFresh when it was
-  // taken from the chest here, so its whole life is counted
-  const pickaxeBlocks = new Map();
+  // taken from the chest here, so its whole life is counted. Saved with the
+  // state: a pickaxe lasts hours, longer than the time between redeploys
+  const pickaxeBlocks = new Map((Array.isArray(saved.pickaxes) ? saved.pickaxes : [])
+    .filter(entry => Number.isInteger(entry?.slot) && Number(entry.blocks) >= 0)
+    .map(entry => [entry.slot, { blocks: Number(entry.blocks), fromFresh: Boolean(entry.fromFresh) }]));
   let bot = null;
   let learning = false;
   let running = false;
@@ -210,7 +213,10 @@ function createStoneMiner({
     if (!stateFile) return;
     try {
       fs.mkdirSync(path.dirname(stateFile), { recursive: true });
-      fs.writeFileSync(stateFile, JSON.stringify({ ...desired, totalMined, stopReason }, null, 2), 'utf8');
+      fs.writeFileSync(stateFile, JSON.stringify({
+        ...desired, totalMined, stopReason,
+        pickaxes: [...pickaxeBlocks].map(([slot, tracked]) => ({ slot, ...tracked }))
+      }, null, 2), 'utf8');
     } catch (error) {
       log(`[Stone Miner] Could not save state: ${error.message}`);
     }
@@ -327,6 +333,7 @@ function createStoneMiner({
   function retirePickaxe(item, inventorySlot) {
     const tracked = pickaxeBlocks.get(inventorySlot) || { blocks: 0, fromFresh: false };
     pickaxeBlocks.delete(inventorySlot);
+    saveState();
     // One the bot came with already worn says nothing about pickaxe life
     if (!tracked.blocks) return;
     report(onPickaxeRetired, { name: item.name, blocksMined: tracked.blocks, countInAverage: tracked.fromFresh });
@@ -826,7 +833,10 @@ function createStoneMiner({
 
     const fresh = current.inventory.items().find(item =>
       isPickaxe(item) && isPickaxeUsable(current, item) && !usableBefore.has(item.slot));
-    if (fresh) pickaxeBlocks.set(fresh.slot, { blocks: 0, fromFresh: true });
+    if (fresh) {
+      pickaxeBlocks.set(fresh.slot, { blocks: 0, fromFresh: true });
+      saveState();
+    }
     if (!findBestUsablePickaxe(current, current.inventory.items())) {
       throw supplyError('No usable pickaxe in the bot inventory or the barrel.');
     }

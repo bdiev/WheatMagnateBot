@@ -39,7 +39,8 @@ const hourRows = [
 assert.equal(stoneMinerLastHour(hourRows, hourStart + 15 * 60_000), 600,
   'a quarter into the hour: three quarters of the previous hour plus this one');
 assert.equal(stoneMinerLastHour([], hourStart), 0);
-assert.match(app, /\$\('#stoneMinerRate'\)\.textContent = `\$\{formatNumber\(payload\.lastHourMined/);
+assert.match(app, /now - \(state\.stoneMinerRateShownAt \|\| 0\) >= 60_000\) \{[\s\S]{0,200}\$\('#stoneMinerRate'\)\.textContent = `\$\{formatNumber\(payload\.lastHourMined/,
+  'Rate changes at most once a minute');
 assert.match(html, /blocks in the last 60 minutes/);
 
 console.log('Stone Miner UI tests passed.');
