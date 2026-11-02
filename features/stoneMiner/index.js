@@ -24,6 +24,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Vec3 } = require('vec3');
+const { nextInteractionSequence } = require('../obsidianFarm/interaction-sequence');
 
 const STONE_BLOCKS = new Set([
   'stone', 'cobblestone', 'mossy_cobblestone', 'granite', 'diorite', 'andesite',
@@ -795,9 +796,9 @@ function createStoneMiner({
     try { current.stopDigging?.(); } catch {}
     current.setControlState?.('sneak', false);
     if (current.currentWindow) current.closeWindow(current.currentWindow);
-    await current.lookAt(block.position.offset(0.5, 0.5, 0.5), true);
-    if (current.waitForTicks) await current.waitForTicks(2);
     const { direction, cursor } = containerInteraction(current, block);
+    await current.lookAt(block.position.plus(cursor), true);
+    if (current.waitForTicks) await current.waitForTicks(2);
     const detail = `${timeoutMessage} Target: ${block.name} at ${positionKey(block.position)}, face ${positionKey(direction)}.`;
     const window = await openContainerWindow(current, block, direction, cursor, detail);
     if (block.name === 'hopper') {
@@ -816,19 +817,37 @@ function createStoneMiner({
 
   function containerInteraction(current, block) {
     const eye = current.entity.position.offset(0, current.entity.eyeHeight || 1.62, 0);
-    const delta = block.position.offset(0.5, 0.5, 0.5).minus(eye);
     const faces = [
       new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(0, 0, -1),
       new Vec3(0, 0, 1), new Vec3(-1, 0, 0), new Vec3(1, 0, 0)
     ];
     if (current.world?.raycast) {
-      // Vec3.normalize() mutates delta and would reduce the range to 1.05.
-      const hit = current.world.raycast(eye, delta.unit(), delta.norm() + 0.05);
-      if (!hit?.position?.equals(block.position) || !faces[hit.face] || !hit.intersect) {
-        throw new Error(`Cannot open ${block.name} at ${positionKey(block.position)}: `
-          + `line of sight hits ${hit?.name || 'no block'}${hit?.position ? ` at ${positionKey(hit.position)}` : ''}.`);
+      // The centre may be covered while a side is accessible (a hopper under
+      // generator stone). Try surfaces of the actual collision boxes as well.
+      const points = [new Vec3(0.5, 0.5, 0.5)];
+      const shapes = block.shapes?.length ? block.shapes : [[0, 0, 0, 1, 1, 1]];
+      for (const shape of shapes) {
+        const middle = new Vec3((shape[0] + shape[3]) / 2, (shape[1] + shape[4]) / 2, (shape[2] + shape[5]) / 2);
+        for (let axis = 0; axis < 3; axis += 1) {
+          for (const high of [false, true]) {
+            const point = middle.clone();
+            point[['x', 'y', 'z'][axis]] = high ? shape[axis + 3] - 0.001 : shape[axis] + 0.001;
+            points.push(point);
+          }
+        }
       }
-      return { direction: faces[hit.face], cursor: hit.intersect.minus(block.position) };
+      let firstHit;
+      for (const point of points) {
+        const delta = block.position.plus(point).minus(eye);
+        if (delta.norm() > STORAGE_REACH) continue;
+        const hit = current.world.raycast(eye, delta.unit(), delta.norm() + 0.05);
+        if (firstHit === undefined) firstHit = hit;
+        if (hit?.position?.equals(block.position) && faces[hit.face] && hit.intersect) {
+          return { direction: faces[hit.face], cursor: hit.intersect.minus(block.position) };
+        }
+      }
+      throw new Error(`Cannot open ${block.name} at ${positionKey(block.position)}: no visible surface; `
+        + `centre ray hits ${firstHit?.name || 'no block'}${firstHit?.position ? ` at ${positionKey(firstHit.position)}` : ''}.`);
     }
     const offset = eye.minus(block.position.offset(0.5, 0.5, 0.5));
     const axis = ['x', 'y', 'z'].sort((a, b) => Math.abs(offset[b]) - Math.abs(offset[a]))[0];
@@ -864,6 +883,8 @@ function createStoneMiner({
       current.on('windowOpen', onOpen);
       Promise.resolve().then(() => {
         if (cancelled) return;
+        // activateBlock turns towards the centre again, undoing surface aim.
+        if (sendContainerClick(current, block, direction, cursor)) return;
         return current.activateBlock(block, direction, cursor);
       }).catch(reject);
     });
@@ -875,6 +896,37 @@ function createStoneMiner({
       current.removeListener('windowOpen', onOpen);
       openingCancels.delete(cancel);
     }
+  }
+
+  function sendContainerClick(current, block, direction, cursor) {
+    if (!current._client?.write || typeof current.supportFeature !== 'function') return false;
+    const face = direction.y < 0 ? 0 : direction.y > 0 ? 1
+      : direction.z < 0 ? 2 : direction.z > 0 ? 3 : direction.x < 0 ? 4 : 5;
+    const packet = {
+      location: block.position, direction: face, hand: 0,
+      cursorX: cursor.x, cursorY: cursor.y, cursorZ: cursor.z
+    };
+    if (current.supportFeature('blockPlaceHasHeldItem')) {
+      const Item = require('prismarine-item')(current.registry);
+      delete packet.hand;
+      packet.heldItem = Item.toNotch(current.heldItem);
+      packet.cursorX = Math.floor(cursor.x * 16);
+      packet.cursorY = Math.floor(cursor.y * 16);
+      packet.cursorZ = Math.floor(cursor.z * 16);
+    } else if (current.supportFeature('blockPlaceHasHandAndIntCursor')) {
+      packet.cursorX = Math.floor(cursor.x * 16);
+      packet.cursorY = Math.floor(cursor.y * 16);
+      packet.cursorZ = Math.floor(cursor.z * 16);
+    } else if (current.supportFeature('blockPlaceHasInsideBlock')) {
+      packet.insideBlock = false;
+      packet.sequence = nextInteractionSequence(current);
+      packet.worldBorderHit = false;
+    } else if (!current.supportFeature('blockPlaceHasHandAndFloatCursor')) {
+      return false;
+    }
+    current._client.write('block_place', packet);
+    current.swingArm?.();
+    return true;
   }
 
   async function waitForHopperContents(current, window) {

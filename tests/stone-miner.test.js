@@ -733,6 +733,58 @@ async function testContainerRayReachesBeyondOneBlock() {
   }
 }
 
+async function testOpensSideOfHopperUnderStone() {
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('stone', slot, { count: 64 }));
+  const { bot, world } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)], hopper });
+  world.set('-1,65,0', 'stone'); // Stone covers the hopper at foot height.
+  const data = require('minecraft-data')('1.20.4');
+  const Block = require('prismarine-block')('1.20.4');
+  const hopperShapes = Block.fromStateId(data.blocksByName.hopper.defaultState, 0).shapes;
+  const blockAt = bot.blockAt;
+  bot.blockAt = position => {
+    const block = blockAt(position);
+    return { ...block, shapes: block.name === 'hopper' ? hopperShapes : block.name === 'air' ? [] : [[0, 0, 0, 1, 1, 1]] };
+  };
+  bot.world = new WorldSync(null);
+  bot.world.getBlock = position => bot.blockAt(position);
+  const eye = bot.entity.position.offset(0, 1.62, 0);
+  const centre = new Vec3(-0.5, 64.5, 0.5).minus(eye);
+  assert.equal(bot.world.raycast(eye, centre.unit(), centre.norm() + 0.05).name, 'stone',
+    'the centre is obstructed in this regression setup');
+  let aimedAt;
+  let hopperClicks = 0;
+  const openings = [];
+  bot.lookAt = async target => { aimedAt = target; };
+  bot.supportFeature = name => name === 'blockPlaceHasInsideBlock';
+  bot._client = { write: (name, packet) => {
+    assert.equal(name, 'block_place');
+    const delta = aimedAt.minus(eye);
+    const hit = bot.world.raycast(eye, delta.unit(), delta.norm() + 0.05);
+    assert.ok(hit?.position.equals(packet.location), 'rotation must point at the clicked container, not the covered centre');
+    assert.equal(packet.direction, hit.face);
+    if (hit.name === 'hopper') {
+      hopperClicks += 1;
+      assert.equal(packet.direction, 5, 'use the exposed side below the covering stone');
+    }
+    openings.push(bot.openContainer(hit).then(window => bot.emit('windowOpen', window)));
+  } };
+  bot.activateBlock = async () => { throw new Error('activateBlock would turn back towards the obstructed centre'); };
+  const miner = createStoneMiner({ stateFile: null, hopperPollMs: 10 });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    await until(() => miner.getStatus().phase === 'hopper_full', 'the hopper opens through its exposed side');
+    await Promise.all(openings);
+    assert.equal(hopperClicks, 1);
+    assert.equal(miner.getStatus().hopper.items, 320);
+    assert.equal(bot.dug.length, 0, 'the covering stone is not broken to reach the hopper');
+  } finally {
+    miner.dispose();
+  }
+}
+
 async function testBarrelFailureDoesNotHideFullHopper() {
   const hopper = [0, 1, 2, 3, 4].map(slot => item('stone', slot, { count: 64 }));
   const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)], hopper });
@@ -797,6 +849,7 @@ async function testFailedOpenDoesNotLeakListeners() {
 }
 
 (async () => {
+  await testOpensSideOfHopperUnderStone();
   await testContainerRayReachesBeyondOneBlock();
   await testBarrelFailureDoesNotHideFullHopper();
   await testOpensHopperAtItsVisibleSurface();
