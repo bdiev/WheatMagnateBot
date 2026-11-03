@@ -89,6 +89,8 @@ public final class BaseClues {
         NAMED_MOB("named mob", 3, 15, false),
         VILLAGER_AWAY("villager", 5, 20, false),
         STASIS_PEARL("stasis pearl", 8, 16, false),
+        // Told from the designs structures generate with by Area Explorer, which leaves those out
+        BANNER("player banner", 3, 12, false),
         // Generated structures have some of these too
         DOUBLE_CHEST("double chest", 3, 30, true),
         BARREL("barrel", 1, 15, true),

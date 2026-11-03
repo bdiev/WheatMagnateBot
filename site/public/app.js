@@ -7140,7 +7140,7 @@ const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
   'End Portal': 'ender_eye', 'Nether Portal': 'obsidian', Spawner: 'spawner', 'Trial Chamber': 'trial_key',
   'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Placed Shulker Box': 'shulker_box',
   'Shulker Box': 'shulker_box',
-  'Thrown Pearl': 'ender_pearl', 'Site Markers': 'white_banner'
+  'Thrown Pearl': 'ender_pearl', 'Site Markers': 'white_banner', Banner: 'white_banner'
 });
 // A marker made on the site's map is a banner of its colour: Xaero's 16 colours, as the nearest dye
 const AREA_EXPLORER_BANNER_DYES = Object.freeze({
@@ -7170,6 +7170,8 @@ function areaExplorerFindIcon(find) {
     key = itemIdForName(find.name).replace('_wall_', '_');
   }
   else if (find.kind === 'MARKER' && find.color !== undefined) key = `${AREA_EXPLORER_BANNER_DYES[find.color] || 'white'}_banner`;
+  // A player's banner shows its colour: its details start "Light Blue Banner: ..."
+  else if (find.kind === 'MARKER' && find.name === 'Banner') key = itemIdForName(String(find.details || 'White Banner').split(':')[0]);
   else if (find.kind === 'MARKER') key = AREA_EXPLORER_MARKER_ICONS[find.name] || normalizeItemIconKey(find.name);
   return { src: areaExplorerIconUrl(key) || fallback, fallback };
 }

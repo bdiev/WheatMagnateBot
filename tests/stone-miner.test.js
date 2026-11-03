@@ -785,6 +785,35 @@ async function testOpensSideOfHopperUnderStone() {
   }
 }
 
+async function testBreaksBlockOnTopOfAHopperThatDoesNotOpen() {
+  const hopper = [0, 1, 2, 3, 4].map(slot => item('stone', slot, { count: 64 }));
+  const { bot, world } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)], hopper });
+  world.set('-1,65,0', 'dirt');
+  // While the dirt is there every ray towards the hopper ends in it
+  bot.world = {
+    raycast: (eye, direction) => direction.x >= 0
+      ? { name: 'barrel', position: new Vec3(0, 63, 0), face: 1, intersect: new Vec3(0.5, 64, 0.5) }
+      : bot.blockAt(new Vec3(-1, 65, 0)).name === 'dirt'
+        ? { name: 'dirt', position: new Vec3(-1, 65, 0), face: 5, intersect: new Vec3(0, 65.5, 0.5) }
+        : { name: 'hopper', position: new Vec3(-1, 64, 0), face: 1, intersect: new Vec3(-0.5, 65, 0.5) }
+  };
+  bot.activateBlock = async block => bot.emit('windowOpen', await bot.openContainer(block));
+  const miner = createStoneMiner({ stateFile: null, hopperPollMs: 10 });
+  try {
+    miner.attachBot(bot);
+    miner.setLearning(true);
+    bot.setBlock(1, 65, 0, 'stone');
+    bot.setBlock(1, 65, 0, 'air');
+    await until(() => miner.getStatus().phase === 'hopper_full', 'the hopper opens once the block above is broken');
+    assert.deepEqual(bot.dug, ['-1,65,0'], 'only the block on top of the hopper is broken');
+    assert.equal(bot.heldItem?.name, 'iron_pickaxe');
+    assert.equal(miner.getStatus().hopper.items, 320);
+    assert.equal(miner.getStatus().lastErrorMessage, null);
+  } finally {
+    miner.dispose();
+  }
+}
+
 async function testBarrelFailureDoesNotHideFullHopper() {
   const hopper = [0, 1, 2, 3, 4].map(slot => item('stone', slot, { count: 64 }));
   const { bot } = fakeBot({ inventory: [item('iron_pickaxe', 36), item('bread', 37)], hopper });
@@ -850,6 +879,7 @@ async function testFailedOpenDoesNotLeakListeners() {
 
 (async () => {
   await testOpensSideOfHopperUnderStone();
+  await testBreaksBlockOnTopOfAHopperThatDoesNotOpen();
   await testContainerRayReachesBeyondOneBlock();
   await testBarrelFailureDoesNotHideFullHopper();
   await testOpensHopperAtItsVisibleSurface();

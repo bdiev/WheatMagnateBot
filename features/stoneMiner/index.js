@@ -16,7 +16,8 @@
  *      it too when the bot has none
  *   4. Once the bot carries a stack of mined stone, it is put into the hopper
  *      in front of it; when it is full, the bot opens it and watches it, and
- *      mines on once a couple of items have left it, also after a restart
+ *      mines on once a couple of items have left it, also after a restart.
+ *      A block on top of a hopper that does not open is broken
  *
  * It never stops on its own: every error is retried.
  */
@@ -699,7 +700,7 @@ function createStoneMiner({
       return;
     }
     phase = 'depositing';
-    const window = await openWindow(current, hopper, 'The hopper did not open.');
+    const window = await openHopper(current, generation, hopper);
     let contents;
     let left;
     try {
@@ -734,7 +735,7 @@ function createStoneMiner({
     const hopper = openedWindow ? null : findHopper(current);
     if (!openedWindow && !hopper) throw new Error('The hopper is full, but no hopper is within reach to watch.');
     phase = 'hopper_full';
-    const window = openedWindow || await openWindow(current, hopper, 'The hopper did not open.');
+    const window = openedWindow || await openHopper(current, generation, hopper);
     hopperCheckDue = false;
     try {
       const until = Date.now() + HOPPER_WATCH_MS;
@@ -792,15 +793,50 @@ function createStoneMiner({
     return { room, total };
   }
 
+  // A block on top of the hopper can leave it no surface the bot can click,
+  // or the server may not open it under one: that block is broken and the
+  // hopper opened again
+  async function openHopper(current, generation, hopper) {
+    try {
+      return await openWindow(current, hopper, 'The hopper did not open.');
+    } catch (error) {
+      if (!error.notOpened || !isCurrent(generation, current)) throw error;
+      const above = current.blockAt(hopper.position.offset(0, 1, 0));
+      if (!canBreakAboveHopper(current, above)) throw error;
+      log(`[Stone Miner] The hopper did not open; breaking the ${above.name} on top of it.`);
+      const held = current.heldItem;
+      const pickaxe = isPickaxe(held) && isPickaxeUsable(current, held)
+        ? held
+        : findBestUsablePickaxe(current, current.inventory.items());
+      if (pickaxe && current.heldItem?.slot !== pickaxe.slot) await equipPickaxe(current, pickaxe);
+      await withTimeout(current.dig(above, true), DIG_TIMEOUT_MS, 'Breaking the block above the hopper took too long.');
+      if (!isCurrent(generation, current)) throw error;
+      return openWindow(current, current.blockAt(hopper.position) || hopper, 'The hopper did not open.');
+    }
+  }
+
+  function canBreakAboveHopper(current, block) {
+    if (isAir(block) || STORAGE_BLOCKS.has(block.name) || block.name === 'hopper') return false;
+    if (current.canDigBlock?.(block) === false) return false;
+    const eye = current.entity.position.offset(0, current.entity.height || 1.62, 0);
+    return eye.distanceTo(block.position.offset(0.5, 0.5, 0.5)) <= DIG_REACH;
+  }
+
   async function openWindow(current, block, timeoutMessage) {
     try { current.stopDigging?.(); } catch {}
     current.setControlState?.('sneak', false);
     if (current.currentWindow) current.closeWindow(current.currentWindow);
-    const { direction, cursor } = containerInteraction(current, block);
-    await current.lookAt(block.position.plus(cursor), true);
-    if (current.waitForTicks) await current.waitForTicks(2);
-    const detail = `${timeoutMessage} Target: ${block.name} at ${positionKey(block.position)}, face ${positionKey(direction)}.`;
-    const window = await openContainerWindow(current, block, direction, cursor, detail);
+    let window;
+    try {
+      const { direction, cursor } = containerInteraction(current, block);
+      await current.lookAt(block.position.plus(cursor), true);
+      if (current.waitForTicks) await current.waitForTicks(2);
+      const detail = `${timeoutMessage} Target: ${block.name} at ${positionKey(block.position)}, face ${positionKey(direction)}.`;
+      window = await openContainerWindow(current, block, direction, cursor, detail);
+    } catch (error) {
+      // Unlike contents that never load, the window itself did not open
+      throw Object.assign(error, { notOpened: true });
+    }
     if (block.name === 'hopper') {
       try {
         await waitForHopperContents(current, window);

@@ -39,6 +39,7 @@ public final class ExplorerRegressionTest {
         sectorReachAndEta();
         steadyEta();
         findNames();
+        playerBanners();
         itemFindsByEntity();
         diagnosticsFiles();
         siteCommandsStore();
@@ -49,6 +50,22 @@ public final class ExplorerRegressionTest {
         sessionRefreshReasons();
         mapCacheFiles();
         System.out.println("Explorer regressions passed (deferred coverage, reach stability, mid-strip widths, fresh chunks, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
+    }
+
+    /** The banners structures generate with are no find; any other design, a plain one of another colour too, is. */
+    private static void playerBanners() {
+        require(Banners.generated("magenta", List.of("triangle_top:black", "triangle_bottom:black")), "An End City banner is generated");
+        require(Banners.generated("gray", List.of()) && Banners.generated("black", List.of()) && Banners.generated("brown", List.of()),
+            "Plain gray, black and brown banners are generated");
+        require(Banners.generated("light_gray", List.of("flower:white")), "A Woodland Mansion bedroom banner is generated");
+        require(Banners.generated("white", List.of("rhombus:cyan", "stripe_bottom:light_gray", "stripe_center:gray", "border:light_gray",
+            "stripe_middle:black", "half_horizontal:light_gray", "circle:light_gray", "border:black")), "The Ominous Banner is generated");
+        require(!Banners.generated("magenta", List.of("triangle_top:black")), "Part of a generated design is a player's");
+        require(!Banners.generated("light_gray", List.of("flower:black")), "Another colour on a generated design is a player's");
+        require(!Banners.generated("red", List.of()), "A plain banner of another colour is a player's");
+        require(Banners.describe("light_blue", List.of("creeper:black", "border:white")).equals("Light Blue Banner: black creeper, white border"),
+            "A banner reads as its colour and layers");
+        require(Banners.describe("red", List.of()).equals("Red Banner: plain"), "A plain banner says so");
     }
 
     /** A kept map picture reads back as written; blank maps aren't kept; only "<id>.map" files count. */

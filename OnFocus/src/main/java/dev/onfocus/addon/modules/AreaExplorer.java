@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import dev.onfocus.addon.ModuleLog;
 import dev.onfocus.addon.OnFocusAddon;
 import dev.onfocus.addon.explore.BaseClues;
+import dev.onfocus.addon.explore.Banners;
 import dev.onfocus.addon.explore.ChunkGrid;
 import dev.onfocus.addon.explore.DeferredChunks;
 import dev.onfocus.addon.explore.WithheldChunks;
@@ -84,11 +85,13 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.Dimension;
 import meteordevelopment.orbit.EventHandler;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.block.AbstractBannerBlock;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ChestBlock;
 import net.minecraft.block.ShulkerBoxBlock;
+import net.minecraft.block.entity.BannerBlockEntity;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.SignBlockEntity;
 import net.minecraft.block.entity.SignText;
@@ -600,7 +603,8 @@ public class AreaExplorer extends Module {
 
     /**
      * What the auto markers look for: the waypoint name, the group it goes in, its look, and the blocks
-     * that give it away. An End Portal is its frame or the portal itself: some have had the frame broken off. Default colours are Xaero's own, a different one per group: Xaero only has 16.
+     * that give it away. An End Portal is its frame or the portal itself: some have had the frame broken off. A banner only
+     * when a player made it: the designs structures generate with aren't marked. Default colours are Xaero's own, a different one per group: Xaero only has 16.
      */
     private enum Marker {
         END_PORTAL("End Portal", "End Portals", "diamond", new SettingColor(85, 255, 85), true, b -> b == Blocks.END_PORTAL_FRAME || b == Blocks.END_PORTAL),
@@ -610,7 +614,8 @@ public class AreaExplorer extends Module {
         ANCIENT_CITY("Ancient City", "Ancient Cities", "skull", new SettingColor(0, 170, 170), false, b -> b == Blocks.REINFORCED_DEEPSLATE),
         END_CITY("End City", "End Cities", "star", new SettingColor(85, 85, 255), false, b -> b == Blocks.PURPUR_BLOCK || b == Blocks.PURPUR_PILLAR),
         END_GATEWAY("End Gateway", "End Gateways", "circle", new SettingColor(0, 170, 0), false, b -> b == Blocks.END_GATEWAY),
-        SHULKER(FindsArchive.PLACED_SHULKER, "Shulker Boxes", "square", new SettingColor(255, 85, 255), false, b -> b instanceof ShulkerBoxBlock);
+        SHULKER(FindsArchive.PLACED_SHULKER, "Shulker Boxes", "square", new SettingColor(255, 85, 255), false, b -> b instanceof ShulkerBoxBlock),
+        BANNER("Banner", "Banners", "triangle", new SettingColor(85, 255, 255), true, b -> b instanceof AbstractBannerBlock);
 
         final String title, group, icon;
         final SettingColor color;
@@ -3743,6 +3748,7 @@ public class AreaExplorer extends Module {
         Map<Block, BaseClues.Clue> clues = bases ? BaseClues.blockClues(mc.world.getRegistryKey()) : Map.of();
         BaseClues.Chunk baseChunk = new BaseClues.Chunk();
         Map<String, BlockPos> found = new HashMap<>();
+        String bannerDesign = null;
         ChunkSection[] sections = chunk.getSectionArray();
         int baseX = chunk.getPos().getStartX(), baseZ = chunk.getPos().getStartZ();
         for (int i = 0; i < sections.length; i++) {
@@ -3753,6 +3759,7 @@ public class AreaExplorer extends Module {
             // The palette says cheaply whether a section has any of the blocks at all
             if (!section.hasAny(state -> wanted.containsKey(state.getBlock())
                 || (bases && (clues.containsKey(state.getBlock()) || state.getBlock() instanceof ChestBlock
+                    || state.getBlock() instanceof AbstractBannerBlock
                     || BaseClues.isVillagePath(state) || BaseClues.isChamberCopper(state))))) continue;
             int baseY = ChunkSectionPos.getBlockCoord(chunk.sectionIndexToCoord(i));
             for (int y = 0; y < 16; y++) {
@@ -3762,8 +3769,20 @@ public class AreaExplorer extends Module {
                         if (!playerPlaced.isEmpty() && playerPlaced.contains(BlockPos.asLong(baseX + x, baseY + y, baseZ + z))) continue;
                         BlockState state = section.getBlockState(x, y, z);
                         String name = wanted.get(state.getBlock());
-                        if (name != null) found.putIfAbsent(name, new BlockPos(baseX + x, baseY + y, baseZ + z));
+                        boolean banner = Marker.BANNER.title.equals(name);
+                        // A banner a structure put up is no find, and gives no base away
+                        String design = (banner || bases) && state.getBlock() instanceof AbstractBannerBlock
+                            ? playerBannerDesign(chunk, new BlockPos(baseX + x, baseY + y, baseZ + z)) : null;
+                        if (banner && design == null) name = null;
+                        if (name != null && !found.containsKey(name)) {
+                            found.put(name, new BlockPos(baseX + x, baseY + y, baseZ + z));
+                            if (banner) bannerDesign = design;
+                        }
                         if (!bases) continue;
+                        if (design != null) {
+                            baseChunk.addBlock(BaseClues.Clue.BANNER, baseX + x, baseY + y, baseZ + z);
+                            continue;
+                        }
                         BaseClues.Clue clue = clues.get(state.getBlock());
                         // One half of each pair, so a double chest counts once; single chests say nothing
                         if (clue == null && state.getBlock() instanceof ChestBlock && state.get(ChestBlock.CHEST_TYPE) == ChestType.LEFT) {
@@ -3776,7 +3795,8 @@ public class AreaExplorer extends Module {
                 }
             }
         }
-        found.forEach(this::placeMarker);
+        String design = bannerDesign;
+        found.forEach((name, pos) -> placeMarker(name, pos, Marker.BANNER.title.equals(name) && design != null ? design : ""));
 
         if (!bases) return;
         long key = chunk.getPos().toLong();
@@ -3883,7 +3903,22 @@ public class AreaExplorer extends Module {
             name, 0, "", "score " + points + ": " + score.summary()));
     }
 
-    private void placeMarker(String name, BlockPos pos) {
+    /**
+     * "Red Banner: black creeper, white border" for a banner a player made; null for one a structure
+     * generates with, or one whose design isn't loaded.
+     */
+    private static String playerBannerDesign(WorldChunk chunk, BlockPos pos) {
+        if (!(chunk.getBlockEntity(pos) instanceof BannerBlockEntity banner)) return null;
+        String base = banner.getColorForState().asString();
+        List<String> layers = new ArrayList<>();
+        for (var layer : banner.getPatterns().layers()) {
+            String pattern = layer.pattern().getKey().map(key -> key.getValue().getPath()).orElse("pattern");
+            layers.add(pattern + ":" + layer.color().asString());
+        }
+        return Banners.generated(base, layers) ? null : Banners.describe(base, layers);
+    }
+
+    private void placeMarker(String name, BlockPos pos, String details) {
         for (XaeroWaypoints.Spot spot : existingMarkers()) {
             // One placed before the shulker box's was renamed is the same marker
             String spotName = FindsArchive.markerName(FindsArchive.Kind.MARKER, spot.name());
@@ -3899,7 +3934,7 @@ public class AreaExplorer extends Module {
         if (!added) return;
         report("Marked (highlight)%s(default) at (highlight)%d, %d, %d(default).", name, pos.getX(), pos.getY(), pos.getZ());
         // Into the all-finds file too, and so to the site
-        archiveFind(new FindsArchive.Find(FindsArchive.Kind.MARKER, pos.getX(), pos.getY(), pos.getZ(), LocalDateTime.now(), name, 0, "", ""));
+        archiveFind(new FindsArchive.Find(FindsArchive.Kind.MARKER, pos.getX(), pos.getY(), pos.getZ(), LocalDateTime.now(), name, 0, "", details));
     }
 
     /** Servers whose earlier markers were taken from Xaero's waypoints this session. */
