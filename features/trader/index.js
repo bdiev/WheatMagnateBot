@@ -1426,18 +1426,34 @@ function createTrader({
     sourceStock.set(positionKey(pos), stock);
   }
 
-  // Whole stacks, until enough is taken, the trip is full, or only the reserved
-  // slots are free
+  // How much of what is still needed a chest holds
+  function usefulIn(pos, left) {
+    const stock = sourceStock.get(positionKey(pos));
+    if (!stock) return 0;
+    let useful = 0;
+    for (const [name, count] of left) if (count > 0) useful += Math.min(count, stock.get(name) || 0);
+    return useful;
+  }
+
+  // Whole stacks, the chest holding the most of what is needed first, then the
+  // next fullest, until enough is taken, the trip is full, or only the reserved
+  // slots are free. With more than one source they are looked into first, as
+  // hoppers may have filled them since
   async function takeFromSources(context, needed) {
     const { current } = context;
     const left = new Map(needed);
     let stacks = 0;
     lastTakenFrom = [];
+    if (desired.sources.length > 1) await readSources(context);
     phase = 'restocking';
-    for (const pos of desired.sources) {
-      if (stacks >= MAX_STACKS_PER_TRIP || ![...left.values()].some(count => count > 0)) break;
-      const stock = sourceStock.get(positionKey(pos));
-      if (!stock || ![...left.keys()].some(name => left.get(name) > 0 && stock.get(name) > 0)) continue;
+    const visited = new Set();
+    while (context.active() && stacks < MAX_STACKS_PER_TRIP && [...left.values()].some(count => count > 0)) {
+      // Ties keep the order of the setup
+      const pos = desired.sources
+        .filter(source => !visited.has(source) && usefulIn(source, left) > 0)
+        .sort((a, b) => usefulIn(b, left) - usefulIn(a, left))[0];
+      if (!pos) break;
+      visited.add(pos);
       const window = await openContainer(context, pos, 'A source chest');
       try {
         for (const stack of window.slots.slice(0, window.inventoryStart)) {

@@ -839,52 +839,37 @@ async function main() {
     trader.dispose();
   });
 
-  await test('sources are used in priority order, moving on when the first runs out', async () => {
+  await test('the fullest source chest is used first, then the next fullest', async () => {
     const second = { x: 0, y: 64, z: -2 };
-    const villager = { trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 10 })] };
-    const bot = fakeBot({ source: [stack('paper', 64)], villagers: [villager] });
-    const secondItems = [stack('paper', 5)];
-    bot.setBlock(second, 'chest');
-    bot.setChestSize(second, 27, secondItems);
+    const third = { x: 0, y: 66, z: -2 };
+    const villager = { trades: [rawTrade('stone', 1, 'emerald', 1, { maximumNbTradeUses: 450 })] };
+    const bot = fakeBot({ source: [stack('stone', 5)], villagers: [villager] });
+    const secondItems = [stack('stone', 64), stack('stone', 64), stack('stone', 64)];
+    const thirdItems = [stack('stone', 64)];
+    for (const [pos, items] of [[second, secondItems], [third, thirdItems]]) {
+      bot.setBlock(pos, 'chest');
+      bot.setChestSize(pos, 27, items);
+    }
+    const taken = [];
+    const click = bot.clickWindow;
+    bot.clickWindow = async (slot, button, mode) => {
+      const window = bot.currentWindow;
+      if (window.stored && slot < window.inventoryStart) {
+        taken.push(window.stored === secondItems ? 'second' : window.stored === thirdItems ? 'third' : 'first');
+      }
+      return click(slot, button, mode);
+    };
     const trader = createTrader({ idleIntervalMs: 60_000 });
     trader.attachBot(bot);
     await trader.scan();
-    assert.equal(trader.getStatus().containers.length, 3);
-    trader.configure({ sources: [second, SOURCE], output: OUTPUT });
-    assert.deepEqual(trader.getStatus().sources, [second, SOURCE], 'the order is kept');
-
-    const count = items => items.filter(Boolean).reduce((sum, entry) => sum + entry.count, 0);
+    trader.configure({ sources: [SOURCE, third, second], output: OUTPUT });
+    // A hopper fills the third one after the bot last looked: it is looked into again
+    for (let added = 0; added < 5; added += 1) thirdItems[thirdItems.findIndex(entry => !entry)] = stack('stone', 64);
     trader.start();
-    await until(() => villager.trades[0].nbTradeUses === 10 && trader.getStatus().phase === 'waiting', 'ten trades');
-    // The first chest ran out, the rest came from the next one and went back there
-    assert.equal(count(secondItems), 0);
-    assert.deepEqual(bot.sourceItems().map(entry => [entry.name, entry.count]), [['paper', 59]]);
-    trader.stop({ flush: false });
-    await wait(40);
-
-    // The other way round, the first chest has plenty: the second is left alone
-    const other = { trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 3 })] };
-    const bot2 = fakeBot({ source: [stack('paper', 64)], villagers: [other] });
-    const untouched = [stack('paper', 5)];
-    bot2.setBlock(second, 'chest');
-    bot2.setChestSize(second, 27, untouched);
-    const taken = [];
-    const click = bot2.clickWindow;
-    bot2.clickWindow = async (slot, button, mode) => {
-      const window = bot2.currentWindow;
-      if (window.stored && slot < window.inventoryStart) taken.push(window.stored === untouched ? 'second' : 'first');
-      return click(slot, button, mode);
-    };
-    const trader2 = createTrader({ idleIntervalMs: 60_000 });
-    trader2.attachBot(bot2);
-    await trader2.scan();
-    trader2.configure({ sources: [SOURCE, second], output: OUTPUT });
-    trader2.start();
-    await until(() => other.trades[0].nbTradeUses === 3, 'three trades');
-    assert.ok(taken.length > 0);
-    assert.ok(taken.every(entry => entry === 'first'), `took from ${taken}`);
-    assert.equal(count(untouched), 5);
-    trader2.dispose();
+    await until(() => villager.trades[0].nbTradeUses === 450 && trader.getStatus().phase !== 'restocking', 'all sold', 4000);
+    const firstVisit = [...new Set(taken)];
+    assert.deepEqual(firstVisit.slice(0, 2), ['third', 'second'], `fullest first: ${taken}`);
+    assert.equal(taken.filter(entry => entry === 'first').length, 0, 'the nearly empty one was not needed');
     trader.dispose();
   });
 
