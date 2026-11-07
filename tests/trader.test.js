@@ -10,7 +10,7 @@ const registry = require('prismarine-registry')('1.21.4');
 const Item = require('prismarine-item')(registry);
 const { createTrader: create, parseOffers, usesFromStock, tradeKey } = require('../features/trader');
 
-const fast = { settleMs: 0, idleIntervalMs: 40, retryDelayMs: 10, supplyRetryDelayMs: 10, merchantTimeoutMs: 60, containerTimeoutMs: 60 };
+const fast = { settleMs: 0, idleIntervalMs: 40, retryDelayMs: 10, supplyRetryDelayMs: 10, merchantTimeoutMs: 60, containerTimeoutMs: 60, villagerWatchGapMs: 2, watchBackoffMs: 5 };
 const createTrader = options => create({ ...fast, ...options });
 
 const SOURCE = { x: 2, y: 64, z: 0 };
@@ -548,6 +548,74 @@ async function main() {
     trader.dispose();
   });
 
+  await test('while waiting it asks the villagers in turn and trades as soon as one has restocked', async () => {
+    const slow = { uuid: 'slow', at: [1.5, 64, 0.5], trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 2 })] };
+    const quick = { uuid: 'quick', at: [0.5, 64, 2.1], trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 2 })] };
+    const { bot, trader } = await ready({ source: [stack('paper', 20)], villagers: [slow, quick] }, { idleIntervalMs: 60_000 });
+    const opens = { slow: 0, quick: 0 };
+    const activateEntity = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      opens[entity.uuid] += 1;
+      return activateEntity(entity);
+    };
+    trader.start();
+    await until(() => slow.trades[0].nbTradeUses === 2 && quick.trades[0].nbTradeUses === 2 && trader.getStatus().phase === 'waiting', 'sold out');
+    opens.slow = 0;
+    opens.quick = 0;
+    await until(() => opens.slow >= 5 && opens.quick >= 5, 'both asked in turn');
+    assert.ok(Math.abs(opens.slow - opens.quick) <= 1, `in turn: ${opens.slow} and ${opens.quick}`);
+    assert.equal(bot.currentWindow?.type === 'minecraft:merchant' ? 1 : 0, bot.currentWindow ? 1 : 0, 'only villagers are opened');
+    quick.trades[0].nbTradeUses = 0;
+    await until(() => quick.trades[0].nbTradeUses === 2, 'the restocked villager trades long before the five minutes');
+    assert.equal(slow.trades[0].nbTradeUses, 2);
+    trader.dispose();
+  });
+
+  await test('with nothing in the sources it does not bother the villagers', async () => {
+    const villager = { trades: [rawTrade('paper', 1, 'emerald', 1)] };
+    const { bot, trader } = await ready({ villagers: [villager] }, { idleIntervalMs: 60_000 });
+    let opens = 0;
+    const activateEntity = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      opens += 1;
+      return activateEntity(entity);
+    };
+    trader.start();
+    await until(() => trader.getStatus().phase === 'waiting', 'waiting');
+    const afterRound = opens;
+    await wait(60);
+    assert.equal(opens, afterRound);
+    trader.configure({ tradeChoices: {} });
+    await until(() => opens > afterRound, 'a new setup starts a new round');
+    trader.dispose();
+  });
+
+  await test('a restock the round cannot use is not retried in a tight loop', async () => {
+    const villager = { trades: [rawTrade('paper', 1, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('paper', 20)], villagers: [villager] }, { idleIntervalMs: 60_000, watchBackoffMs: 60_000 });
+    const write = bot._client.write;
+    bot._client.write = (name, data) => {
+      if (name !== 'select_trade') write(name, data);
+    };
+    let opens = 0;
+    const activateEntity = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      opens += 1;
+      return activateEntity(entity);
+    };
+    const realSetTimeout = global.setTimeout;
+    global.setTimeout = (fn, ms, ...rest) => realSetTimeout(fn, ms === 2000 ? 1 : ms, ...rest);
+    try {
+      trader.start();
+      await wait(300);
+    } finally {
+      global.setTimeout = realSetTimeout;
+    }
+    assert.ok(opens <= 8, `opened ${opens} times`);
+    assert.equal(trader.getStatus().enabled, true);
+    trader.dispose();
+  });
+
   await test('one trip takes 18 stacks, keeps 9 slots free, and serves every villager in one go', async () => {
     const at = [[2.5, 64, 0.5], [-1.5, 64, 0.5], [0.5, 64, 2.5], [0.5, 64, -1.5], [1.5, 64, 1.5]];
     const villagers = at.map(position => ({ at: position, trades: [rawTrade('stone', 20, 'emerald', 1)] }));
@@ -653,6 +721,8 @@ async function main() {
     await until(() => awake.trades[0].nbTradeUses === 3, 'the awake villager');
     await until(() => trader.getStatus().phase === 'waiting', 'waiting');
     assert.equal(asleep.trades[0].nbTradeUses, 0);
+    trader.stop({ flush: false });
+    await wait(80);
     assert.equal(bot._client.listenerCount('trade_list'), 0);
     assert.equal(bot.listenerCount('windowOpen'), 0);
     assert.equal(trader.getStatus().lastErrorMessage, null);

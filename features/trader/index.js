@@ -18,8 +18,9 @@
  *      blocks and the results of other trades go into the output chest. Fewer
  *      than nine emeralds wait in the inventory for the next round, and go into
  *      the output chest when the trader is turned off
- *   4. With nothing to trade it looks again every five minutes, since villagers
- *      restock on their own
+ *   4. With nothing to trade it opens the villagers one after another, since each
+ *      restocks at its own time, and starts a new round as soon as one has a trade
+ *      the sources can pay for. The chests are read again every five minutes
  *
  * Chests and villagers are only ever used with shift-clicks. The server refused
  * cursor drags in chests, and mineflayer's bot.trade carries the result on the
@@ -63,6 +64,10 @@ const CRAFT_TIMEOUT_PER_CRAFT_MS = 10_000;
 const CLICK_TIMEOUT_MS = 5_000;
 const SLOT_READY_TIMEOUT_MS = 2_000;
 const IDLE_INTERVAL_MS = 5 * 60_000;
+// Between two villagers while waiting for restocks: twelve of them take 12 s
+const VILLAGER_WATCH_GAP_MS = 1_000;
+// A restock seen, but the round after it made no trade: not again right away
+const WATCH_BACKOFF_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
 const SUPPLY_RETRY_DELAY_MS = 30_000;
 const VILLAGER_COOLDOWN_MS = 60_000;
@@ -172,7 +177,8 @@ function createTrader({
   stateFile = null, log = () => {}, onChange = () => {},
   containerTimeoutMs = CONTAINER_TIMEOUT_MS, merchantTimeoutMs = MERCHANT_TIMEOUT_MS,
   idleIntervalMs = IDLE_INTERVAL_MS, retryDelayMs = RETRY_DELAY_MS, supplyRetryDelayMs = SUPPLY_RETRY_DELAY_MS,
-  villagerCooldownMs = VILLAGER_COOLDOWN_MS, settleMs = SETTLE_MS
+  villagerCooldownMs = VILLAGER_COOLDOWN_MS, settleMs = SETTLE_MS,
+  villagerWatchGapMs = VILLAGER_WATCH_GAP_MS, watchBackoffMs = WATCH_BACKOFF_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -211,6 +217,8 @@ function createTrader({
   const quietVillagers = new Set();
   // Off for the connection once a server refused the fast craft
   let dragCraftWorks = true;
+  // Goes up with every new setup, which ends the wait for restocks
+  let settingsVersion = 0;
   // What the source chests held when last opened, by position
   const sourceStock = new Map();
 
@@ -429,6 +437,7 @@ function createTrader({
       if (!desired.sources.some(pos => positionKey(pos) === key)) sourceStock.delete(key);
     }
     saveState();
+    settingsVersion += 1;
     wakeIdleWaiters();
     return getStatus();
   }
@@ -604,15 +613,19 @@ function createTrader({
   async function loop(generation, current) {
     const context = { current, active: () => isCurrent(generation, current) };
     await flushing;
+    let restockSeen = false;
     while (context.active()) {
       try {
         const worked = await runRound(context);
         clearError();
+        const fruitless = restockSeen && !worked;
+        restockSeen = false;
         if (worked || !context.active()) continue;
         phase = 'waiting';
         nextCheckAt = new Date(Date.now() + idleIntervalMs).toISOString();
         notifyChange();
-        await waitIdle(idleIntervalMs);
+        if (fruitless) await waitIdle(watchBackoffMs);
+        restockSeen = await watchForRestock(context);
         nextCheckAt = null;
       } catch (error) {
         if (!context.active()) break;
@@ -662,25 +675,9 @@ function createTrader({
     const plan = [];
     for (const entity of villagers) {
       if (!context.active()) return false;
-      const id = villagerId(entity);
-      if (Date.now() < (villagerRetryAt.get(id) || 0)) continue;
-      let offers;
-      try {
-        const opened = await openMerchant(context, entity);
-        offers = opened.offers;
-        closeWindow(current, opened.window);
-      } catch (error) {
-        if (!context.active()) return false;
-        villagerRetryAt.set(id, Date.now() + villagerCooldownMs);
-        // A villager sleeps all night: once, not every minute
-        if (!quietVillagers.has(id)) {
-          quietVillagers.add(id);
-          log(`[Trader] Villager ${id} did not open: ${error.message}`);
-        }
-        continue;
-      }
-      villagerRetryAt.delete(id);
-      quietVillagers.delete(id);
+      const offers = await surveyVillager(context, entity);
+      if (!context.active()) return false;
+      if (!offers) continue;
       for (const offer of offers) {
         if (!isEnabled(offer.key, offer.outputItem.name)) continue;
         const uses = usesFromStock(offer, stock);
@@ -700,6 +697,71 @@ function createTrader({
       await tidyInventory(context);
     }
     return worked;
+  }
+
+  // Opens a villager only to read its offers; null when it is resting or refused
+  async function surveyVillager(context, entity) {
+    const { current } = context;
+    const id = villagerId(entity);
+    if (Date.now() < (villagerRetryAt.get(id) || 0)) return null;
+    try {
+      const { window, offers } = await openMerchant(context, entity);
+      closeWindow(current, window);
+      villagerRetryAt.delete(id);
+      quietVillagers.delete(id);
+      return offers;
+    } catch (error) {
+      if (!context.active()) return null;
+      villagerRetryAt.set(id, Date.now() + villagerCooldownMs);
+      // A villager sleeps all night: once, not every minute
+      if (!quietVillagers.has(id)) {
+        quietVillagers.add(id);
+        log(`[Trader] Villager ${id} did not open: ${error.message}`);
+      }
+      return null;
+    }
+  }
+
+  // Whether any enabled trade could be paid for from what the sources held
+  function stockCoversAnOffer() {
+    const stock = totalStock();
+    return enabledOffers().some(offer => offer.plain !== false && offer.price1 > 0
+      && (stock.get(offer.input1) || 0) >= offer.price1
+      && (!offer.input2 || (stock.get(offer.input2) || 0) >= offer.price2));
+  }
+
+  // Waits by asking the villagers in turn, as each restocks at its own time. True
+  // when one has a trade to make; false when it is time to read the chests again
+  // or the setup changed. With nothing to pay with there is nobody to ask
+  async function watchForRestock(context) {
+    const { current } = context;
+    const deadline = Date.now() + idleIntervalMs;
+    const version = settingsVersion;
+    const watching = () => context.active() && version === settingsVersion && Date.now() < deadline;
+    const pause = ms => waitIdle(Math.max(0, Math.min(ms, deadline - Date.now())));
+    while (watching()) {
+      assertOnSpot(current);
+      if (!stockCoversAnOffer()) {
+        await pause(idleIntervalMs);
+        continue;
+      }
+      const villagers = reachableVillagers(current)
+        .filter(entity => Date.now() >= (villagerRetryAt.get(villagerId(entity)) || 0));
+      if (!villagers.length) await pause(villagerWatchGapMs);
+      for (const entity of villagers) {
+        if (!watching()) return false;
+        const offers = await surveyVillager(context, entity);
+        if (!context.active()) return false;
+        const stock = totalStock();
+        const ready = (offers || []).find(offer => isEnabled(offer.key, offer.outputItem.name) && usesFromStock(offer, stock) > 0);
+        if (ready) {
+          log(`[Trader] Villager ${villagerId(entity)} has ${ready.key} again.`);
+          return true;
+        }
+        await pause(villagerWatchGapMs);
+      }
+    }
+    return false;
   }
 
   function offerCosts(offer, uses) {
