@@ -12197,6 +12197,11 @@ function traderChestRoles(trader) {
   return roles;
 }
 
+// The source chests in priority order: the order the roles were added in
+function traderSourceKeys(roles) {
+  return Object.keys(roles).filter(key => roles[key] === 'source');
+}
+
 function traderTradeEnabled(offer) {
   const choice = state.traderDraft?.choices?.[offer.key];
   return typeof choice === 'boolean' ? choice : Boolean(offer.enabled);
@@ -12208,18 +12213,35 @@ function renderTraderSetup(trader) {
   const options = key => [['', 'Not used'], ['source', 'Source'], ['output', 'Output']]
     .map(([value, label]) => `<option value="${value}"${(roles[key] || '') === value ? ' selected' : ''}>${label}</option>`)
     .join('');
+  // Sources first, in the order the bot takes from them
+  const sourceKeys = traderSourceKeys(roles);
+  const rank = container => {
+    const key = traderPositionKey(container);
+    const place = sourceKeys.indexOf(key);
+    return place >= 0 ? place : sourceKeys.length + (roles[key] === 'output' ? 0 : 1);
+  };
   renderStable('#traderContainers', containers.length
-    ? containers.map(container => {
+    ? [...containers].sort((a, b) => rank(a) - rank(b)).map(container => {
       const key = traderPositionKey(container);
       const label = `${container.double ? 'Double ' : ''}${traderItemName(container.name)}`;
+      const place = sourceKeys.indexOf(key);
+      const priority = place < 0 ? '' : `
+          <span class="trader-priority" title="Taken from in this order">${place + 1}</span>
+          <span class="trader-move">
+            <button class="ghost-button" type="button" data-trader-move="${escapeHtml(key)}" data-trader-step="-1" aria-label="Move ${escapeHtml(label)} up to priority ${place}"${place === 0 ? ' disabled' : ''}>▲</button>
+            <button class="ghost-button" type="button" data-trader-move="${escapeHtml(key)}" data-trader-step="1" aria-label="Move ${escapeHtml(label)} down to priority ${place + 2}"${place === sourceKeys.length - 1 ? ' disabled' : ''}>▼</button>
+          </span>`;
       return `
         <li class="trader-row">
           ${itemIcon({ name: container.name })}
           <span class="trader-row-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(key.replaceAll(',', ' '))}</small></span>
+          ${priority}
           <select data-trader-role="${escapeHtml(key)}" aria-label="Role of ${escapeHtml(label)}">${options(key)}</select>
         </li>`;
     }).join('')
-    : '<li class="trader-empty">Nothing yet: put the bot in place and press Scan.</li>', [containers, roles]);
+    : '<li class="trader-empty">Nothing yet: put the bot in place and press Scan.</li>', [containers, roles, sourceKeys]);
+  const priorityNote = $('#traderPriorityNote');
+  if (priorityNote) priorityNote.hidden = sourceKeys.length < 2;
 
   const villagers = trader.villagers || [];
   const offerRow = offer => {
@@ -12350,8 +12372,9 @@ function handleTraderSetupChange(event) {
     if (role.value === 'output') {
       for (const key of Object.keys(roles)) if (roles[key] === 'output') delete roles[key];
     }
+    // A chest that just became a source comes last in priority
+    if (roles[role.dataset.traderRole] !== role.value) delete roles[role.dataset.traderRole];
     if (role.value) roles[role.dataset.traderRole] = role.value;
-    else delete roles[role.dataset.traderRole];
     draft.roles = roles;
     focus = `[data-trader-role="${CSS.escape(role.dataset.traderRole)}"]`;
   } else {
@@ -12362,6 +12385,31 @@ function handleTraderSetupChange(event) {
   renderTraderControl(trader);
   renderTraderSetup(trader);
   $(focus)?.focus();
+}
+
+// One place up or down in the priority of the source chests
+function handleTraderMove(event) {
+  const button = event.target.closest?.('[data-trader-move]');
+  const trader = state.traderData;
+  if (!button || !trader || button.disabled) return;
+  const key = button.dataset.traderMove;
+  const step = Number(button.dataset.traderStep);
+  const roles = traderChestRoles(trader);
+  const order = traderSourceKeys(roles);
+  const from = order.indexOf(key);
+  const to = from + step;
+  if (from < 0 || to < 0 || to >= order.length) return;
+  [order[from], order[to]] = [order[to], order[from]];
+  const others = Object.fromEntries(Object.entries(roles).filter(([, role]) => role !== 'source'));
+  const draft = state.traderDraft || { roles: null, choices: {} };
+  draft.roles = { ...Object.fromEntries(order.map(source => [source, 'source'])), ...others };
+  state.traderDraft = draft;
+  renderTraderControl(trader);
+  renderTraderSetup(trader);
+  const selector = `[data-trader-move="${CSS.escape(key)}"][data-trader-step="${step}"]`;
+  const moved = $(selector);
+  // At the end of the list the same arrow is disabled: the other one keeps the focus
+  (moved && !moved.disabled ? moved : $(`[data-trader-move="${CSS.escape(key)}"]:not([disabled])`))?.focus();
 }
 
 function traderConfigurePayload() {
@@ -14337,6 +14385,7 @@ $('#adminPlaytimeCommands')?.addEventListener('click', event => {
 });
 document.addEventListener('click', handleAdminBotCommand);
 document.addEventListener('change', handleTraderSetupChange);
+document.addEventListener('click', handleTraderMove);
 document.addEventListener('click', handleAdminControlAction);
 for (const [selector, action] of [
   ['#adminPlaytimeInput', 'playtime_set'],

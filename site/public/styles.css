@@ -14804,6 +14804,45 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   min-height: 36px;
 }
 
+#tab-trader .trader-priority {
+  flex: none;
+  min-width: 26px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-weight: 700;
+  text-align: center;
+  color: #fff;
+  background: var(--trader-accent-strong);
+}
+
+:root[data-theme="dark"] #tab-trader .trader-priority {
+  color: #06230f;
+  background: var(--trader-accent);
+}
+
+#tab-trader .trader-move {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+#tab-trader .trader-move button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+}
+
+#tab-trader .trader-move button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+#tab-trader #traderPriorityNote {
+  padding: 10px 16px 0;
+}
+
 #tab-trader .trader-villagers,
 #tab-trader .trader-villager {
   display: grid;
@@ -14842,6 +14881,23 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 @media (max-width: 700px) {
   #tab-trader .trader-stats-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  #tab-trader .trader-row {
+    flex-wrap: wrap;
+  }
+
+  #tab-trader .trader-row-name {
+    flex-basis: calc(100% - 50px);
+  }
+
+  #tab-trader .trader-row select {
+    flex: 1;
+    max-width: none;
+  }
+
+  #tab-trader #traderPriorityNote {
+    padding-inline: 10px;
   }
 
   #tab-trader .trader-list,

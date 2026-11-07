@@ -44,6 +44,15 @@ assert.match(app, /state\.traderDraft\?\.choices\?\.\[offer\.key\]/);
 assert.match(app, /toggle\.disabled = !trader\.enabled && \(!ready \|\| hasDraft \|\| !connected\)/);
 assert.match(app, /commandType === 'trader_scan' \? 120_000 : undefined/, 'a scan may take longer than other commands');
 
+// The source chests have a priority: their order, shown and changed on the tab
+assert.ok(html.includes('id="traderPriorityNote"'));
+assert.match(setup, /data-trader-move="\$\{escapeHtml\(key\)\}"/);
+assert.match(setup, /class="trader-priority"/);
+assert.match(app, /document\.addEventListener\('click', handleTraderMove\)/);
+const traderSourceKeys = new Function(`${app.match(/function traderSourceKeys[\s\S]*?\r?\n}\r?\n/)[0]}; return traderSourceKeys;`)();
+assert.deepEqual(traderSourceKeys({ '3,0,0': 'source', '1,0,0': 'output', '2,0,0': 'source' }), ['3,0,0', '2,0,0'], 'keeps the order, not sorted by position');
+assert.match(app.match(/function traderConfigurePayload[\s\S]*?\r?\n}\r?\n/)[0], /entries\.filter\(\(\[, role\]\) => role === 'source'\)/, 'the order is what gets saved');
+
 // The bot stays out of the game chat: the Trader speaks through the system log only
 for (const [name, source] of [['features/trader/index.js', read('features/trader/index.js')], ['minecraft/container-interaction.js', read('minecraft/container-interaction.js')]]) {
   assert.doesNotMatch(source, /\.chat\(|\.whisper\(|sendMinecraftChat|'chat_message'|'chat_command'|'chat_message'/, `${name} never writes to the chat`);

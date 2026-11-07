@@ -214,6 +214,8 @@ function createTrader({
   let idleWaiters = [];
   const openingCancels = new Set();
   const villagerRetryAt = new Map();
+  // The source chests of the current trip, in the order they were used
+  let lastTakenFrom = [];
   const quietVillagers = new Set();
   // Off for the connection once a server refused the fast craft
   let dragCraftWorks = true;
@@ -1192,6 +1194,7 @@ function createTrader({
     const { current } = context;
     const left = new Map(needed);
     let stacks = 0;
+    lastTakenFrom = [];
     phase = 'restocking';
     for (const pos of desired.sources) {
       if (stacks >= MAX_STACKS_PER_TRIP || ![...left.values()].some(count => count > 0)) break;
@@ -1206,6 +1209,7 @@ function createTrader({
           if (await shiftClick(context, window, stack.slot)) {
             left.set(stack.name, left.get(stack.name) - count);
             stacks += 1;
+            if (!lastTakenFrom.includes(pos)) lastTakenFrom.push(pos);
           }
         }
         await sleep(settleMs);
@@ -1225,7 +1229,12 @@ function createTrader({
     const { current } = context;
     const left = new Map(amounts);
     phase = 'returning';
-    for (const pos of desired.sources) {
+    // Back where it came from, the chest used last first: the priorities decide
+    // what is used up first, and nothing moves from one chest to another
+    const order = [...lastTakenFrom.reverse().filter(pos => desired.sources.includes(pos)),
+      ...desired.sources.filter(pos => !lastTakenFrom.includes(pos))];
+    lastTakenFrom = [];
+    for (const pos of order) {
       if (![...left.values()].some(count => count > 0)) break;
       const window = await openContainer(context, pos, 'A source chest');
       try {
