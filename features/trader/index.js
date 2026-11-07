@@ -991,6 +991,15 @@ function createTrader({
       await returnToSources(context, new Map(inputs.map(name => [name, carried(current, name)])));
     }
     if (!desired.output) return;
+    // A stop in the middle of a trip finds whole blocks' worth of emeralds. Only
+    // fewer than nine should end up in the chest; without a table they all do
+    try {
+      await craftEmeralds(context);
+    } catch (error) {
+      log(`[Trader] Could not craft the last emeralds when stopping: ${error.message}`, 'warn');
+      closeOpenWindow(current);
+    }
+    if (!context.active()) return;
     const products = productNames();
     products.add(EMERALD);
     if (!current.inventory.items().some(item => products.has(item.name) && isPlainItem(item))) return;

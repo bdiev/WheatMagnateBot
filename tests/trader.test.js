@@ -1127,6 +1127,34 @@ async function main() {
     trader.dispose();
   });
 
+  await test('stopping in the middle of a trip crafts what it can: only the rest goes in as emeralds', async () => {
+    const { bot, trader } = await ready({
+      inventory: [stack('emerald', 20)],
+      villagers: [{ trades: [rawTrade('paper', 1, 'emerald', 1)] }]
+    });
+    trader.start();
+    trader.stop();
+    await until(() => bot.count('emerald') === 0 && bot.count('emerald_block') === 0 && bot.outputItems().length === 2, 'all delivered');
+    const inChest = Object.fromEntries(bot.outputItems().map(entry => [entry.name, entry.count]));
+    assert.deepEqual(inChest, { emerald: 2, emerald_block: 2 });
+    trader.dispose();
+  });
+
+  await test('stopping without a crafting table still empties the inventory, and logs why', async () => {
+    const lines = [];
+    const { bot, trader } = await ready({
+      inventory: [stack('emerald', 18)],
+      villagers: [{ trades: [rawTrade('paper', 1, 'emerald', 1)] }]
+    }, { log: (message, level) => lines.push([level, message]) });
+    bot.setBlock(TABLE, 'air');
+    trader.start();
+    trader.stop();
+    await until(() => bot.count('emerald') === 0, 'emptied');
+    assert.deepEqual(bot.outputItems().map(entry => [entry.name, entry.count]), [['emerald', 18]]);
+    assert.ok(lines.some(([level, message]) => level === 'warn' && /Could not craft the last emeralds/.test(message)));
+    trader.dispose();
+  });
+
   await test('start and configure explain what is wrong; the scan needs it stopped', async () => {
     const bot = fakeBot();
     const trader = createTrader();
