@@ -12314,9 +12314,11 @@ function renderTraderSetup(trader) {
     const first = `${range(group.price1[0], group.price1[1])} ${escapeHtml(traderItemName(group.input1))}`;
     const second = group.input2 ? ` + ${range(group.price2[0], group.price2[1])} ${escapeHtml(traderItemName(group.input2))}` : '';
     const count = group.offers.length;
+    const currentPrices = [...new Set(group.offers.map(offer => offer.price1))].sort((a, b) => a - b);
     const details = [
       `${formatNumber(count)} ${count === 1 ? 'villager' : 'villagers'}`,
       `${formatNumber(group.uses)}/${formatNumber(group.maxUses)} used`,
+      currentPrices.length > 1 ? `now ${currentPrices.map(formatNumber).join(', ')}` : '',
       overLimit ? `${formatNumber(overLimit)} above the limit` : ''
     ].filter(Boolean).join(' · ');
     return `
@@ -12447,6 +12449,8 @@ function handleTraderSetupChange(event) {
   if (!role && !trade && !priceLimit) return;
   const draft = state.traderDraft || { roles: null, choices: {}, limits: {} };
   draft.limits ||= {};
+  // A dropdown gives up the focus once chosen from, or status updates would wait
+  // for the next click elsewhere; see renderTrader
   let focus = null;
   if (role) {
     const roles = { ...traderChestRoles(trader) };
@@ -12457,11 +12461,9 @@ function handleTraderSetupChange(event) {
     if (roles[role.dataset.traderRole] !== role.value) delete roles[role.dataset.traderRole];
     if (role.value) roles[role.dataset.traderRole] = role.value;
     draft.roles = roles;
-    focus = `[data-trader-role="${CSS.escape(role.dataset.traderRole)}"]`;
   } else if (priceLimit) {
     const value = Math.floor(Number(priceLimit.value));
     draft.limits[priceLimit.dataset.traderLimit] = priceLimit.value.trim() && value >= 1 ? Math.min(value, 9999) : null;
-    focus = `[data-trader-limit="${CSS.escape(priceLimit.dataset.traderLimit)}"]`;
   } else {
     draft.choices[trade.dataset.traderTrade] = trade.checked;
     focus = `[data-trader-trade="${CSS.escape(trade.dataset.traderTrade)}"]`;
@@ -12469,7 +12471,8 @@ function handleTraderSetupChange(event) {
   state.traderDraft = draft;
   renderTraderControl(trader);
   renderTraderSetup(trader);
-  $(focus)?.focus();
+  if (focus) $(focus)?.focus();
+  else if (document.activeElement?.matches?.('#tab-trader select')) document.activeElement.blur();
 }
 
 // One place up or down in the priority of the source chests

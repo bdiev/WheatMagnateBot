@@ -727,6 +727,36 @@ async function main() {
     }
   });
 
+  await test('prices of villagers it does not trade with stay current, even with empty chests', async () => {
+    const villager = { trades: [rawTrade('stone', 20, 'emerald', 1, { demand: 16 })] };
+    const { trader } = await ready({ villagers: [villager] }, { idleIntervalMs: 60_000, villagerRefreshMs: 20 });
+    trader.configure({ priceLimits: { 'stone+>emerald': 40 } });
+    trader.start();
+    await until(() => trader.getStatus().phase === 'waiting_stock', 'nothing to sell');
+    const price = () => trader.getStatus().villagers[0].offers[0].price1;
+    assert.equal(price(), 36);
+    villager.trades[0].demand = 3;
+    await until(() => price() === 23, 'the new price, with no stone to sell');
+    assert.deepEqual(trader.getStatus().priceHistory['stone+>emerald'], [20, 23, 36].filter(value => value !== 20));
+    assert.equal(villager.trades[0].nbTradeUses, 0);
+    trader.dispose();
+  });
+
+  await test('a villager too dear to trade with is read again, and trades when it gets cheap', async () => {
+    const dear = { uuid: 'dear', at: [1.5, 64, 0.5], trades: [rawTrade('stone', 20, 'emerald', 1, { demand: 40, maximumNbTradeUses: 1 })] };
+    const cheap = { uuid: 'cheap', at: [0.5, 64, 2.1], trades: [rawTrade('stone', 20, 'emerald', 1)] };
+    const { trader } = await ready({
+      source: Array.from({ length: 27 }, () => stack('stone', 64)),
+      villagers: [dear, cheap]
+    }, { villagerRefreshMs: 20 });
+    trader.configure({ priceLimits: { 'stone+>emerald': 30 } });
+    trader.start();
+    await until(() => cheap.trades[0].nbTradeUses > 0, 'trading with the cheap one');
+    dear.trades[0].demand = 0;
+    await until(() => dear.trades[0].nbTradeUses === 1, 'the dear one is noticed while the other is served');
+    trader.dispose();
+  });
+
   await test('price limits are checked, can be removed, and survive a restart', async () => {
     const stateFile = path.join(os.tmpdir(), `trader-limit-test-${process.pid}.json`);
     fs.rmSync(stateFile, { force: true });

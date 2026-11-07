@@ -89,6 +89,10 @@ assert.match(traderLimitOptions({}, limitGroup, 25), /<option value="25" selecte
 assert.match(traderLimitOptions({}, limitGroup, null), /<option value="" selected>Any/);
 assert.match(app, /document\.activeElement\?\.matches\?\.\('#tab-trader select'\)/, 'status updates do not close an open dropdown');
 
+// The current prices are on the row, and choosing from a dropdown lets updates through
+assert.match(setup, /now \$\{currentPrices\.map\(formatNumber\)\.join\(', '\)\}/);
+assert.match(app, /document\.activeElement\?\.matches\?\.\('#tab-trader select'\)\) document\.activeElement\.blur\(\)/);
+
 // The bot stays out of the game chat: the Trader speaks through the system log only
 for (const [name, source] of [['features/trader/index.js', read('features/trader/index.js')], ['minecraft/container-interaction.js', read('minecraft/container-interaction.js')]]) {
   assert.doesNotMatch(source, /\.chat\(|\.whisper\(|sendMinecraftChat|'chat_message'|'chat_command'|'chat_message'/, `${name} never writes to the chat`);
