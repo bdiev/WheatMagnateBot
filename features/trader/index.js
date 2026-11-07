@@ -72,6 +72,9 @@ const IDLE_INTERVAL_MS = 5 * 60_000;
 const VILLAGER_WATCH_GAP_MS = 1_000;
 // Between two looks into source chests too empty to pay for any trade
 const STOCK_POLL_MS = 10_000;
+// A hopper feeding the chest empties and fills it all the time: the log says so
+// at most this often
+const STOCK_LOG_INTERVAL_MS = 5 * 60_000;
 // A restock seen, but the round after it made no trade: not again right away
 const WATCH_BACKOFF_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
@@ -184,7 +187,8 @@ function createTrader({
   containerTimeoutMs = CONTAINER_TIMEOUT_MS, merchantTimeoutMs = MERCHANT_TIMEOUT_MS,
   idleIntervalMs = IDLE_INTERVAL_MS, retryDelayMs = RETRY_DELAY_MS, supplyRetryDelayMs = SUPPLY_RETRY_DELAY_MS,
   villagerCooldownMs = VILLAGER_COOLDOWN_MS, settleMs = SETTLE_MS,
-  villagerWatchGapMs = VILLAGER_WATCH_GAP_MS, watchBackoffMs = WATCH_BACKOFF_MS, stockPollMs = STOCK_POLL_MS
+  villagerWatchGapMs = VILLAGER_WATCH_GAP_MS, watchBackoffMs = WATCH_BACKOFF_MS, stockPollMs = STOCK_POLL_MS,
+  stockLogIntervalMs = STOCK_LOG_INTERVAL_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -237,6 +241,7 @@ function createTrader({
   const expensiveSeen = new Map();
   // Off for the connection once a server refused the fast craft
   let dragCraftWorks = true;
+  let lastStockLogAt = -Infinity;
   // Goes up with every new setup, which ends the wait for restocks
   let settingsVersion = 0;
   // What each villager offered when last opened, as the trades since left it, by
@@ -682,11 +687,13 @@ function createTrader({
         nextCheckAt = new Date(Date.now() + idleIntervalMs).toISOString();
         notifyChange();
         if (fruitless) await waitIdle(watchBackoffMs);
-        restockSeen = await watchForRestock(context);
+        const seen = await watchForRestock(context);
+        restockSeen = Boolean(seen);
         // One restocked: the others may have too, so one trip serves them all.
+        // Chests just refilled were read, and say nothing about the villagers.
         // Otherwise it is time to see whether the chests were refilled
-        if (restockSeen) checkVillagers = true;
-        else checkChests = true;
+        if (seen === 'restock') checkVillagers = true;
+        else if (!seen) checkChests = true;
         nextCheckAt = null;
       } catch (error) {
         if (!context.active()) break;
@@ -839,10 +846,10 @@ function createTrader({
     return enabledOffers().filter(offer => withinPriceLimit(offer.key, offer.price1));
   }
 
-  // Waits by asking the villagers in turn, as each restocks at its own time. True
-  // when one has a trade to make, or the chests were refilled; false when it is
-  // time to read the chests again or the setup changed. With nothing to pay with
-  // there is nobody to ask: it is the chests that are watched then
+  // Waits by asking the villagers in turn, as each restocks at its own time.
+  // 'restock' when one has a trade to make, 'refill' when the chests were filled;
+  // false when it is time to read the chests again or the setup changed. With
+  // nothing to pay with there is nobody to ask: it is the chests that are watched
   async function watchForRestock(context) {
     const { current } = context;
     const deadline = Date.now() + idleIntervalMs;
@@ -854,16 +861,16 @@ function createTrader({
       // Known trades the sources cannot pay for. With no trade known, as when every
       // villager was asleep at the start, the villagers still have to be asked
       if (affordableOffers().length && !stockCoversAnOffer()) {
-        if (phase !== 'waiting_stock') log('[Trader] The source chests hold too little for any trade; waiting for them to be filled.');
+        if (phase !== 'waiting_stock' && Date.now() - lastStockLogAt >= stockLogIntervalMs) {
+          lastStockLogAt = Date.now();
+          log('[Trader] The source chests hold too little for any trade; waiting for them to be filled.');
+        }
         phase = 'waiting_stock';
         notifyChange();
         await pause(stockPollMs);
         if (!watching()) continue;
         await readSources(context);
-        if (stockCoversAnOffer()) {
-          log('[Trader] The source chests were filled.');
-          return true;
-        }
+        if (stockCoversAnOffer()) return 'refill';
         phase = 'waiting_stock';
         continue;
       }
@@ -881,7 +888,7 @@ function createTrader({
           && priceAccepted(entity, offer) && usesFromStock(offer, stock) > 0);
         if (ready) {
           log(`[Trader] Villager ${villagerId(entity)} has ${ready.key} again.`);
-          return true;
+          return 'restock';
         }
         await pause(villagerWatchGapMs);
       }

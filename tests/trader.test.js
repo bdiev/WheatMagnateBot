@@ -607,7 +607,30 @@ async function main() {
     assert.ok(lines.some(line => /hold too little for any trade/.test(line)), 'the log says why it waits');
     bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`)[0] = stack('stone', 64);
     await until(() => villager.trades[0].nbTradeUses === 3, 'trading right after the refill');
-    assert.ok(lines.some(line => /source chests were filled/.test(line)));
+    trader.dispose();
+  });
+
+  await test('a chest fed bit by bit: no asking every villager after each refill, and no flood in the log', async () => {
+    const at = [[1.5, 64, 0.5], [0.5, 64, 2.1], [-1.5, 64, 0.5]];
+    const villagers = at.map(position => ({ at: position, trades: [rawTrade('stone', 64, 'emerald', 1)] }));
+    const lines = [];
+    const { bot, trader } = await ready({ source: [stack('stone', 64)], villagers }, { idleIntervalMs: 60_000, log: message => lines.push(message) });
+    let opens = 0;
+    const activateEntity = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      opens += 1;
+      return activateEntity(entity);
+    };
+    const sold = () => villagers.reduce((sum, villager) => sum + villager.trades[0].nbTradeUses, 0);
+    trader.start();
+    await until(() => sold() === 1 && trader.getStatus().phase === 'waiting_stock', 'first stack sold');
+    for (let refill = 1; refill <= 3; refill += 1) {
+      const opensBefore = opens;
+      bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`)[0] = stack('stone', 64);
+      await until(() => sold() === 1 + refill && trader.getStatus().phase === 'waiting_stock', `refill ${refill}`);
+      assert.equal(opens - opensBefore, 1, 'only the villager it trades with is opened');
+    }
+    assert.equal(lines.filter(line => /hold too little/.test(line)).length, 1, 'said once, not at every refill');
     trader.dispose();
   });
 
