@@ -63,6 +63,7 @@ const { createPearlLoaderFeature, PEARL_LOADER_ROLE } = require('./features/pear
 const { chooseObserver } = require('./features/serverObserver');
 const { createFollowFeature } = require('./features/follow');
 const { createStoneMiner } = require('./features/stoneMiner');
+const { createTrader } = require('./features/trader');
 const { createKillAuraFeature } = require('./features/killAura');
 const { isValidKillAuraRange, normalizeKillAuraRange } = require('./features/killAura/range');
 const farm = require('./features/obsidianFarm');
@@ -1329,6 +1330,15 @@ const stoneMiner = createStoneMiner({
   onChange: () => writeBotStatusSnapshot().catch(() => {}),
   ...stoneMinerStatsHooks(DEFAULT_ACCOUNT_ID, 'WheatMagnate')
 });
+const trader = createTrader({
+  stateFile: path.join('data', 'bots', DEFAULT_ACCOUNT_ID, 'trader.json'),
+  // Its only voice: the system log, never the game chat
+  log: (message, level = 'info') => {
+    originalConsoleLog(message);
+    recordSystemLog({ level, category: 'trader', message, accountId: DEFAULT_ACCOUNT_ID }).catch(() => {});
+  },
+  onChange: () => writeBotStatusSnapshot().catch(() => {})
+});
 const killAura = createKillAuraFeature({
   isProtectedPlayer: isKillAuraProtectedPlayer,
   onKill: ({ mobName }) => recordKillAuraKill(DEFAULT_ACCOUNT_ID, mobName)
@@ -1751,6 +1761,7 @@ primaryBotContext.modules = {
   killAura,
   follow: followFeature,
   stoneMiner,
+  trader,
   growingChild: { primaryOnly: true, get instance() { return growingChild; } },
   whisper: { primaryOnly: true },
   globalObservers: {
@@ -1774,7 +1785,8 @@ primaryBotContext.getStatus = () => ({
     obsidianFarm: farm.getStatus(),
     killAura: killAura.getStatus(),
     follow: followFeature.getStatus(),
-    stoneMiner: stoneMiner.getStatus()
+    stoneMiner: stoneMiner.getStatus(),
+    trader: trader.getStatus()
   }
 });
 
@@ -4579,6 +4591,7 @@ async function toggleObsidianFarmFromControl(requestedEnabled = null) {
     });
   }
   stoneMiner.stop();
+  trader.stop({ flush: false });
   // The start keeps retrying in background; the site only needs the new intent.
   const result = await startConfiguredObsidianFarm({ waitForStartMs: 0 });
   await withTimeout(writeBotStatusSnapshot(), 5_000, 'Bot status snapshot timed out').catch(() => {});
@@ -5898,6 +5911,7 @@ function pauseMinecraftConnection(reason) {
   farm.suspend();
   killAura.detachBot();
   stoneMiner.detachBot();
+  trader.detachBot();
   safelyCloseMinecraftBot(currentBot, reason);
   updateStatusMessage().catch(() => {});
   recordFarmAnnotation('pause', 'Bot paused', { reason }).catch(() => {});
@@ -5927,6 +5941,7 @@ function disconnectForNonWhitelistedPlayer(entity, distance) {
   farm.suspend();
   killAura.detachBot();
   stoneMiner.detachBot();
+  trader.detachBot();
   setDisconnectReason(`${reason} (${roundedDistance} blocks)`);
 
   if (currentBot) {
@@ -7119,6 +7134,7 @@ async function executeBotCommand(command) {
       await setObsidianFarmDesiredEnabled(false);
       followFeature.stop();
       stoneMiner.stop();
+      trader.stop({ flush: false });
     }
     const status = killAura.setEnabled(enabled, bot);
     await persistKillAuraState(DEFAULT_ACCOUNT_ID, {
@@ -7142,6 +7158,7 @@ async function executeBotCommand(command) {
     }
     farm.suspend();
     stoneMiner.stop();
+    trader.stop({ flush: false });
     followFeature.start(bot, username);
     return { targetUsername: followFeature.getStatus().targetUsername };
   }
@@ -7211,6 +7228,7 @@ async function executeBotCommand(command) {
       if (farm.getStatus().enabled || obsidianStats.desiredEnabled) {
         throw new Error('Stop the Obsidian Farm before teaching the Stone Miner.');
       }
+      trader.stop({ flush: false });
       followFeature.stop();
       if (killAura.getStatus().enabled) {
         killAura.setEnabled(false);
@@ -7231,6 +7249,7 @@ async function executeBotCommand(command) {
       if (farm.getStatus().enabled || obsidianStats.desiredEnabled) {
         throw new Error('Stop the Obsidian Farm before starting the Stone Miner.');
       }
+      trader.stop({ flush: false });
       followFeature.stop();
       if (killAura.getStatus().enabled) {
         killAura.setEnabled(false);
@@ -7241,6 +7260,33 @@ async function executeBotCommand(command) {
       }
     }
     const status = enabled ? stoneMiner.start() : stoneMiner.stop();
+    await writeBotStatusSnapshot().catch(() => {});
+    return status;
+  }
+
+  if (type === 'trader_scan' || type === 'trader_toggle') {
+    const enabled = type === 'trader_scan' || (typeof payload.enabled === 'boolean' ? payload.enabled : !trader.getStatus().enabled);
+    if (enabled) {
+      if (farm.getStatus().enabled || obsidianStats.desiredEnabled) {
+        throw new Error('Stop the Obsidian Farm before using the Trader.');
+      }
+      followFeature.stop();
+      stoneMiner.stop();
+      if (killAura.getStatus().enabled) {
+        killAura.setEnabled(false);
+        await persistKillAuraState(DEFAULT_ACCOUNT_ID, {
+          desiredEnabled: false,
+          selectedMobs: killAura.getStatus().targets
+        });
+      }
+    }
+    const status = type === 'trader_scan' ? await trader.scan() : enabled ? trader.start() : trader.stop();
+    await writeBotStatusSnapshot().catch(() => {});
+    return status;
+  }
+
+  if (type === 'trader_configure') {
+    const status = trader.configure(payload);
     await writeBotStatusSnapshot().catch(() => {});
     return status;
   }
@@ -7907,6 +7953,21 @@ async function executeManagedAccountCommand(command) {
       return status;
     }
     const status = enabled ? runtime.startStoneMiner() : runtime.stopStoneMiner();
+    await persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
+    return status;
+  }
+  if (type === 'trader_scan' || type === 'trader_toggle') {
+    const enabled = type === 'trader_scan' || (typeof payload.enabled === 'boolean' ? payload.enabled : !runtime.trader?.getStatus?.().enabled);
+    if (enabled && runtime.killAura?.getStatus?.().enabled) {
+      const auraStatus = runtime.setKillAuraEnabled(false);
+      await persistKillAuraState(command.account_id, { desiredEnabled: false, selectedMobs: auraStatus.targets });
+    }
+    const status = type === 'trader_scan' ? await runtime.scanTrader() : enabled ? runtime.startTrader() : runtime.stopTrader();
+    await persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
+    return status;
+  }
+  if (type === 'trader_configure') {
+    const status = runtime.configureTrader(payload);
     await persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
     return status;
   }
@@ -10229,6 +10290,7 @@ function getBotStatusSnapshot() {
     },
     killAura: killAura.getStatus(),
     stoneMiner: stoneMiner.getStatus(),
+    trader: trader.getStatus(),
     child: {
       enabled: growingChild?.getStatus().enabled ?? false,
       geminiEnabled: runtimeSettings.geminiEnabled,
@@ -10684,6 +10746,7 @@ function createBot() {
     farm.suspend();
     killAura.detachBot();
     stoneMiner.detachBot();
+    trader.detachBot();
     bot = null;
     detachPrimaryBot(shouldReconnect ? 'reconnecting' : 'offline');
     safelyCloseMinecraftBot(createdBot, reason);
@@ -10821,6 +10884,8 @@ function createBot() {
     killAura.attachBot(createdBot);
     stoneMiner.attachBot(createdBot);
     if (!obsidianStats.desiredEnabled) stoneMiner.onSpawn(createdBot);
+    trader.attachBot(createdBot);
+    if (!obsidianStats.desiredEnabled) trader.onSpawn(createdBot);
     primarySpawnedAt = Date.now();
     refreshObserver();
     scheduleQueuedSiteWhispersForOnlinePlayers().catch(err => {
@@ -13964,6 +14029,7 @@ async function preparePrimaryBotForShutdown() {
   clearIntervals();
   followFeature.stop();
   stoneMiner.detachBot();
+  trader.detachBot();
   clearTimeout(stoneMinerFlushTimer);
   stoneMinerFlushTimer = null;
   await flushStoneMinerBlocks().catch(() => {});

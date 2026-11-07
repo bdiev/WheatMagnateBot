@@ -14656,3 +14656,207 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
     animation: none !important;
   }
 }
+
+/* Trader: villager trading in emerald greens */
+#tab-trader {
+  --trader-accent: #1f9d55;
+  --trader-accent-strong: #157a41;
+  --trader-soft: color-mix(in srgb, #1f9d55 10%, var(--panel));
+  --trader-warn: #e8ad38;
+  --trader-bad: #d65c58;
+}
+
+:root[data-theme="dark"] #tab-trader {
+  --trader-accent: #41c97c;
+  --trader-accent-strong: #7be0a6;
+  --trader-soft: color-mix(in srgb, #41c97c 10%, var(--panel));
+}
+
+#tab-trader.active {
+  gap: 18px;
+}
+
+#tab-trader > * {
+  grid-column: 1 / -1;
+}
+
+#tab-trader .trader-stats-grid {
+  display: grid;
+  gap: 18px;
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#tab-trader .trader-stat > strong {
+  font-size: 1.8rem;
+}
+
+#tab-trader .trader-state-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+#tab-trader .trader-state-value i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted, #8a8f98);
+}
+
+#tab-trader .trader-state-value strong {
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+
+#tab-trader[data-trader-state="running"] .trader-state-value i { background: var(--trader-accent); }
+#tab-trader[data-trader-state="waiting"] .trader-state-value i { background: var(--trader-warn); }
+#tab-trader[data-trader-state="problem"] .trader-state-value i { background: var(--trader-bad); }
+
+#tab-trader .trader-admin-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+#tab-trader .admin-command-panel .panel-head p {
+  overflow-wrap: anywhere;
+}
+
+#tab-trader .trader-primary-button {
+  color: #fff;
+  background: var(--trader-accent-strong);
+  border: 1px solid var(--trader-accent-strong);
+}
+
+:root[data-theme="dark"] #tab-trader .trader-primary-button {
+  color: #06230f;
+  background: var(--trader-accent);
+  border-color: var(--trader-accent);
+}
+
+#tab-trader .trader-primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+#tab-trader .trader-setup-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  align-items: start;
+}
+
+#tab-trader .trader-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 14px 16px 0;
+  list-style: none;
+}
+
+#tab-trader .trader-row,
+#tab-trader .trader-offer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--trader-soft);
+}
+
+#tab-trader .trader-offer {
+  cursor: pointer;
+}
+
+#tab-trader .trader-offer.is-unusable {
+  cursor: default;
+  opacity: 0.6;
+}
+
+#tab-trader .trader-offer input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--trader-accent);
+}
+
+#tab-trader .trader-row-name {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+#tab-trader .trader-row-name strong {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+#tab-trader .trader-row-name small,
+#tab-trader .trader-note,
+#tab-trader .trader-empty {
+  color: var(--muted, #8a8f98);
+}
+
+#tab-trader .trader-row select {
+  flex: none;
+  max-width: 45%;
+  min-height: 36px;
+}
+
+#tab-trader .trader-villagers,
+#tab-trader .trader-villager {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+#tab-trader .trader-villagers {
+  gap: 16px;
+  padding: 14px 16px 16px;
+}
+
+#tab-trader .trader-villager h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+#tab-trader .trader-note,
+#tab-trader .trader-empty {
+  margin: 0;
+}
+
+#tab-trader #traderStock {
+  padding: 10px 16px 16px;
+}
+
+#tab-trader .trader-save-row {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+@media (max-width: 700px) {
+  #tab-trader .trader-stats-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #tab-trader .trader-list,
+  #tab-trader .trader-villagers {
+    padding-inline: 10px;
+  }
+
+  #tab-trader #traderStock {
+    padding-inline: 10px;
+  }
+}
+
+#tab-trader button:focus-visible,
+#tab-trader select:focus-visible,
+#tab-trader input:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--trader-accent) 45%, transparent);
+  outline-offset: 2px;
+}

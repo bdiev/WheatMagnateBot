@@ -176,6 +176,8 @@ const state = {
   pushRepairDevice: null,
   killAuraData: null,
   stoneMinerData: null,
+  traderData: null,
+  traderDraft: null,
   killAuraSelectedMobs: new Set(),
   killAuraModalSelectionSnapshot: new Set(),
   killAuraTargetsDirty: false,
@@ -253,6 +255,7 @@ const NAV_SECTION_INFO = Object.freeze({
   'kill-aura': ['Kill Aura', 'Mob targets and combat statistics'],
   obsidian: ['Obsidian Farm', 'Farm controls and analytics'],
   'stone-miner': ['Stone Miner', 'Generator mining and statistics'],
+  trader: ['Trader', 'Villager trading from chests'],
   server: ['Server Stats', 'TPS and server activity'],
   players: ['Player Stats', 'Profiles and activity'],
   'area-explorer': ['Area Explorer', 'Bases, loot and signs the explorer mod found'],
@@ -261,7 +264,7 @@ const NAV_SECTION_INFO = Object.freeze({
   'child-ai': ['Child AI', 'Learning and memory administration'],
   admin: ['Admin', 'Administrative controls']
 });
-const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
+const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'trader', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
 let dashboardBrandLastScrollY = Math.max(0, window.scrollY);
 let dashboardBrandScrollFrame = null;
 
@@ -1483,7 +1486,7 @@ function randomUniqueAccountColor() {
 
 function applyAccountTabScope(account) {
   const restricted = Boolean(account && !account.isDefault);
-  const allowed = new Set(['chat','bot','kill-aura','obsidian','stone-miner','area-explorer','admin']);
+  const allowed = new Set(['chat','bot','kill-aura','obsidian','stone-miner','trader','area-explorer','admin']);
   $$('.tab-button[data-tab]').forEach(button => button.classList.toggle('account-tab-restricted',restricted && !allowed.has(button.dataset.tab)));
   // Role and the user's Navigation choices decide which tabs are shown.
   applyNavigationVisibility();
@@ -1569,6 +1572,8 @@ async function selectAccount(accountId) {
   state.adminControlLoading = false;
   state.killAuraData = null;
   state.stoneMinerData = null;
+  state.traderData = null;
+  state.traderDraft = null;
   state.killAuraSelectedMobs = new Set();
   state.killAuraTargetsDirty = false;
   resetKillAuraRangeEditor();
@@ -1890,6 +1895,8 @@ function applyCurrentUser(user) {
     state.adminControlRefreshedAt = 0;
     state.killAuraData = null;
   state.stoneMinerData = null;
+    state.traderData = null;
+    state.traderDraft = null;
     state.killAuraSelectedMobs = new Set();
     state.killAuraTargetsDirty = false;
     resetKillAuraRangeEditor();
@@ -1907,7 +1914,7 @@ function applyCurrentUser(user) {
   applyNavigationVisibility();
   const logoutButton = $('#logoutButton');
   if (logoutButton) logoutButton.hidden = !state.currentUser;
-  if (!isAdmin && ['admin', 'notifications', 'child-ai'].includes(state.activeTab)) setActiveTab('chat');
+  if (!isAdmin && ['admin', 'notifications', 'child-ai', 'trader'].includes(state.activeTab)) setActiveTab('chat');
   if (state.currentUser) startRealtimeUpdates();
   else stopRealtimeUpdates();
 }
@@ -1962,7 +1969,7 @@ function loadNavigationVisibility() {
 }
 
 // A tab added later goes next to its neighbour in a saved order
-const NAV_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian' });
+const NAV_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian', trader: 'stone-miner' });
 
 function completeNavigationOrder(order) {
   const complete = [...order];
@@ -2174,7 +2181,7 @@ function getStoredTab() {
 
 function restoreActiveTab() {
   const tab = getStoredTab();
-  setActiveTab(['admin', 'notifications', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin' ? 'chat' : tab);
+  setActiveTab(['admin', 'notifications', 'child-ai', 'trader'].includes(tab) && state.currentUser?.role !== 'admin' ? 'chat' : tab);
 }
 
 async function handleLogout() {
@@ -2278,7 +2285,7 @@ function setActiveTab(tab) {
   if (tab !== 'kill-aura' && $('#killAuraTargetModal')?.classList.contains('is-open')) {
     setKillAuraTargetModalOpen(false, { restoreSelection: true, restoreFocus: false });
   }
-  if (['admin', 'notifications', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin') return;
+  if (['admin', 'notifications', 'child-ai', 'trader'].includes(tab) && state.currentUser?.role !== 'admin') return;
   const requestedButton = $(`.tab-button[data-tab="${tab}"]`);
   if (!requestedButton || requestedButton.hidden || requestedButton.classList.contains('account-tab-restricted')) {
     const fallback = $$('.tab-button[data-tab]').find(button =>
@@ -2316,6 +2323,7 @@ function setActiveTab(tab) {
   if (tab === 'child-ai') loadChildAiAdmin();
   if (tab === 'kill-aura') loadKillAura();
   if (tab === 'stone-miner') loadStoneMiner().catch(error => setBanner(`Could not load Stone Miner: ${error.message}`));
+  if (tab === 'trader') loadTrader().catch(error => setBanner(`Could not load Trader: ${error.message}`));
   if (tab === 'area-explorer') loadAreaExplorer().catch(error => setBanner(`Could not load Area Explorer: ${error.message}`));
   if (tab === 'chat') ensureInitialChatScroll();
   if (tab === 'players') {
@@ -12159,6 +12167,219 @@ async function loadStoneMiner() {
   renderStoneMiner(await fetchJson('/api/stone-miner'));
 }
 
+const TRADER_PHASES = {
+  scanning: 'Scanning',
+  reading: 'Checking the source chests',
+  restocking: 'Taking resources',
+  trading: 'Trading',
+  crafting: 'Crafting emerald blocks',
+  depositing: 'Filling the output chest',
+  returning: 'Returning resources',
+  flushing: 'Emptying the inventory',
+  waiting: 'Waiting for restocks',
+  retrying: 'Retrying'
+};
+
+function traderPositionKey(position) {
+  return position ? `${position.x},${position.y},${position.z}` : '';
+}
+
+function traderItemName(name) {
+  return String(name || '').split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
+// The roles and choices on screen: the bot's, with unsaved changes on top
+function traderChestRoles(trader) {
+  if (state.traderDraft?.roles) return state.traderDraft.roles;
+  const roles = {};
+  for (const position of trader.sources || []) roles[traderPositionKey(position)] = 'source';
+  if (trader.output) roles[traderPositionKey(trader.output)] = 'output';
+  return roles;
+}
+
+function traderTradeEnabled(offer) {
+  const choice = state.traderDraft?.choices?.[offer.key];
+  return typeof choice === 'boolean' ? choice : Boolean(offer.enabled);
+}
+
+function renderTraderSetup(trader) {
+  const roles = traderChestRoles(trader);
+  const containers = trader.containers || [];
+  const options = key => [['', 'Not used'], ['source', 'Source'], ['output', 'Output']]
+    .map(([value, label]) => `<option value="${value}"${(roles[key] || '') === value ? ' selected' : ''}>${label}</option>`)
+    .join('');
+  renderStable('#traderContainers', containers.length
+    ? containers.map(container => {
+      const key = traderPositionKey(container);
+      const label = `${container.double ? 'Double ' : ''}${traderItemName(container.name)}`;
+      return `
+        <li class="trader-row">
+          ${itemIcon({ name: container.name })}
+          <span class="trader-row-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(key.replaceAll(',', ' '))}</small></span>
+          <select data-trader-role="${escapeHtml(key)}" aria-label="Role of ${escapeHtml(label)}">${options(key)}</select>
+        </li>`;
+    }).join('')
+    : '<li class="trader-empty">Nothing yet: put the bot in place and press Scan.</li>', [containers, roles]);
+
+  const villagers = trader.villagers || [];
+  const offerRow = offer => {
+    const usable = offer.plain !== false;
+    const second = offer.input2 ? ` + ${formatNumber(offer.price2)} ${escapeHtml(traderItemName(offer.input2))}` : '';
+    const left = `${formatNumber(offer.uses)}/${formatNumber(offer.maxUses)} used${offer.disabled ? ' · locked' : ''}`;
+    return `
+      <label class="trader-offer${usable ? '' : ' is-unusable'}">
+        <input type="checkbox" data-trader-trade="${escapeHtml(offer.key)}"${usable && traderTradeEnabled(offer) ? ' checked' : ''}${usable ? '' : ' disabled'}>
+        ${itemIcon({ name: offer.output })}
+        <span class="trader-row-name">
+          <strong>${formatNumber(offer.price1)} ${escapeHtml(traderItemName(offer.input1))}${second} → ${formatNumber(offer.outputCount)} ${escapeHtml(traderItemName(offer.output))}</strong>
+          <small>${usable ? left : 'Special item · not supported'}</small>
+        </span>
+      </label>`;
+  };
+  renderStable('#traderVillagers', villagers.length
+    ? villagers.map((villager, index) => `
+      <article class="trader-villager">
+        <h3>Villager ${index + 1}${villager.level ? ` · level ${formatNumber(villager.level)}` : ''}</h3>
+        ${villager.offers?.length
+          ? villager.offers.map(offerRow).join('')
+          : '<p class="trader-note">Did not answer: asleep, busy, or without a job. It is asked again.</p>'}
+      </article>`).join('')
+    : '<p class="trader-empty">No villagers found yet.</p>', [villagers, state.traderDraft?.choices || null]);
+
+  const table = $('#traderTableStatus');
+  if (table) {
+    table.textContent = trader.craftingTable
+      ? `Crafting table at ${traderPositionKey(trader.craftingTable).replaceAll(',', ' ')}.`
+      : 'No crafting table found yet.';
+  }
+  const stock = Object.entries(trader.stock || {}).sort((a, b) => b[1] - a[1]);
+  const stockText = $('#traderStock');
+  if (stockText) {
+    stockText.textContent = stock.length
+      ? `In the sources: ${stock.map(([name, count]) => `${formatNumber(count)} ${traderItemName(name)}`).join(', ')}`
+      : '';
+  }
+  const hasDraft = Boolean(state.traderDraft);
+  const save = $('#traderSaveButton');
+  if (save) {
+    save.disabled = !hasDraft;
+    save.textContent = 'Save Setup';
+  }
+  const saveStatus = $('#traderSaveStatus');
+  if (saveStatus) saveStatus.textContent = hasDraft ? 'You have unsaved changes.' : '';
+}
+
+function renderTraderControl(trader) {
+  const status = $('#traderStatus');
+  if (!status) return;
+  const connected = Boolean(trader.connected);
+  const hasDraft = Boolean(state.traderDraft);
+  const ready = Boolean(trader.anchor && trader.sources?.length && trader.output && trader.craftingTable);
+  let text;
+  if (trader.enabled && !connected) text = 'On · starts when the bot is in game.';
+  else if (trader.lastErrorMessage && trader.enabled) text = trader.lastErrorMessage;
+  else if (trader.enabled) text = `${TRADER_PHASES[trader.phase] || 'Starting'}.`;
+  else if (trader.scanning) text = 'Scanning.';
+  else if (!trader.anchor) text = "Scan from the bot's spot first.";
+  else if (!trader.sources?.length) text = 'Choose at least one source chest.';
+  else if (!trader.output) text = 'Choose the output chest.';
+  else if (!trader.craftingTable) text = 'No crafting table in reach: place one and scan again.';
+  else text = 'Stopped.';
+  status.textContent = text;
+  status.title = text;
+  const toggle = $('#traderToggleButton');
+  if (toggle) {
+    toggle.textContent = trader.enabled ? 'Stop Trader' : 'Start Trader';
+    toggle.classList.toggle('danger-button', Boolean(trader.enabled));
+    toggle.classList.toggle('trader-primary-button', !trader.enabled);
+    toggle.disabled = !trader.enabled && (!ready || hasDraft || !connected);
+  }
+  const scan = $('#traderScanButton');
+  if (scan) {
+    scan.disabled = !connected || trader.enabled || trader.scanning;
+    scan.textContent = trader.scanning ? 'Scanning...' : 'Scan';
+  }
+  const scanStatus = $('#traderScanStatus');
+  if (scanStatus) {
+    scanStatus.textContent = trader.enabled
+      ? 'Stop the Trader to scan again.'
+      : trader.anchor
+        ? `Spot: ${traderPositionKey(trader.anchor).replaceAll(',', ' ')}. Scan again after moving anything.`
+        : 'Finds the chests, the table and the villagers in reach.';
+  }
+}
+
+function renderTrader(payload = {}) {
+  const trader = payload.state || {};
+  state.traderData = trader;
+  const tab = $('#tab-trader');
+  if (!tab) return;
+  const stateName = trader.enabled
+    ? (trader.lastErrorMessage ? 'problem' : trader.running ? 'running' : 'waiting')
+    : 'stopped';
+  tab.dataset.traderState = stateName;
+  $('#traderState').textContent = trader.enabled
+    ? (trader.outputFull ? 'Output Full' : trader.lastErrorMessage ? 'Retrying' : trader.running ? 'Running' : 'Waiting for the bot')
+    : 'Stopped';
+  $('#traderUpdated').textContent = `last update: ${formatDate(trader.observedAt)}`;
+  $('#traderTotalBlocks').textContent = formatNumber(trader.totalBlocks || 0);
+  $('#traderSessionBlocks').textContent = `this session: ${formatNumber(trader.sessionBlocks || 0)}`;
+  $('#traderTotalTrades').textContent = formatNumber(trader.totalTrades || 0);
+  $('#traderSessionTrades').textContent = `this session: ${formatNumber(trader.sessionTrades || 0)}`;
+  renderTraderControl(trader);
+  renderTraderSetup(trader);
+}
+
+async function loadTrader() {
+  if (state.currentUser?.role !== 'admin') return;
+  await ensureItemIcons().catch(() => null);
+  renderTrader(await fetchJson('/api/trader'));
+}
+
+// Changes wait for Save: the bot's own status updates must not undo them
+function handleTraderSetupChange(event) {
+  const trader = state.traderData;
+  if (!trader) return;
+  const role = event.target.closest?.('[data-trader-role]');
+  const trade = event.target.closest?.('[data-trader-trade]');
+  if (!role && !trade) return;
+  const draft = state.traderDraft || { roles: null, choices: {} };
+  let focus = null;
+  if (role) {
+    const roles = { ...traderChestRoles(trader) };
+    if (role.value === 'output') {
+      for (const key of Object.keys(roles)) if (roles[key] === 'output') delete roles[key];
+    }
+    if (role.value) roles[role.dataset.traderRole] = role.value;
+    else delete roles[role.dataset.traderRole];
+    draft.roles = roles;
+    focus = `[data-trader-role="${CSS.escape(role.dataset.traderRole)}"]`;
+  } else {
+    draft.choices[trade.dataset.traderTrade] = trade.checked;
+    focus = `[data-trader-trade="${CSS.escape(trade.dataset.traderTrade)}"]`;
+  }
+  state.traderDraft = draft;
+  renderTraderControl(trader);
+  renderTraderSetup(trader);
+  $(focus)?.focus();
+}
+
+function traderConfigurePayload() {
+  const draft = state.traderDraft || {};
+  const payload = { tradeChoices: draft.choices || {} };
+  if (draft.roles) {
+    const position = key => {
+      const [x, y, z] = key.split(',').map(Number);
+      return { x, y, z };
+    };
+    const entries = Object.entries(draft.roles);
+    payload.sources = entries.filter(([, role]) => role === 'source').map(([key]) => position(key));
+    const output = entries.find(([, role]) => role === 'output');
+    payload.output = output ? position(output[0]) : null;
+  }
+  return payload;
+}
+
 function renderAdminControlState(payload = {}) {
   state.adminControlState = payload;
   const settings = payload.settings || {};
@@ -12281,6 +12502,12 @@ function setButtonBusyState(commandType) {
   } else if (commandType === 'obsidian_radius_toggle') {
     const button = $('#obsidianRadiusButton');
     if (button) button.textContent = 'Changing radius...';
+  } else if (commandType === 'trader_scan') {
+    const button = $('#traderScanButton');
+    if (button) button.textContent = 'Scanning...';
+  } else if (commandType === 'trader_configure') {
+    const button = $('#traderSaveButton');
+    if (button) button.textContent = 'Saving...';
   } else if (commandType === 'obsidian_reset_coordinates') {
     const button = $('#obsidianResetButton');
     if (button) button.textContent = 'Resetting...';
@@ -12376,6 +12603,9 @@ async function handleAdminBotCommand(event) {
     body.payload = { enabled: !(commandType === 'stone_miner_learn' ? miner.learning : miner.enabled) };
   }
   if (commandType === 'stone_miner_clear' && !confirm('Forget the Stone Miner blocks? It stops until you teach it again.')) return;
+  if (commandType === 'trader_toggle') body.payload = { enabled: !state.traderData?.enabled };
+  if (commandType === 'trader_configure') body.payload = traderConfigurePayload();
+  if (commandType === 'trader_scan' && state.traderDraft && !confirm('Scanning drops your unsaved Trader changes. Scan anyway?')) return;
   if (commandType === 'obsidian_reset_coordinates') {
     const hasCoordinates = Boolean(state.adminControlState?.bot?.obsidian?.config);
     if (!hasCoordinates) {
@@ -12392,7 +12622,9 @@ async function handleAdminBotCommand(event) {
   try {
     setButtonBusyState(commandType);
     const queued = await postJson('/api/admin/bot-command', { ...body,accountId:state.activeAccountId });
-    await waitForAdminBotCommand(queued.command.id);
+    // A scan asks every villager, and one that does not answer takes seconds
+    await waitForAdminBotCommand(queued.command.id, commandType === 'trader_scan' ? 120_000 : undefined);
+    if (commandType === 'trader_scan' || commandType === 'trader_configure') state.traderDraft = null;
     if (commandType === 'obsidian_reset_coordinates') {
       state.obsidianCoordinateEditorOpen = true;
       clearObsidianCoordinateEditor();
@@ -12414,6 +12646,7 @@ async function handleAdminBotCommand(event) {
     Promise.all([loadAll(), loadAdminSystemLogs()]).catch(() => {});
     scheduleAdminControlRefresh();
     if (commandType.startsWith('stone_miner_')) loadStoneMiner().catch(() => {});
+    if (commandType.startsWith('trader_')) loadTrader().catch(() => {});
     if (submitsKillAuraTargets) {
       setTimeout(() => {
         state.killAuraTargetsDirty = false;
@@ -13542,6 +13775,7 @@ async function refreshLiveDashboard() {
     renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);
     if (liveObsidian) renderLiveObsidian(liveObsidian);
     if (state.activeTab === 'stone-miner') loadStoneMiner().catch(() => {});
+    if (state.activeTab === 'trader') loadTrader().catch(() => {});
   } catch {
     // SSE and the periodic full dashboard refresh remain as fallbacks.
   } finally {
@@ -13760,6 +13994,9 @@ async function loadAll({ force = false, switchGeneration = state.accountSwitchGe
         fetchJson('/api/bot-stats', { signal }).then(renderIfCurrent(renderBotStats)),
         fetchJson('/api/kill-aura', { signal }).then(renderIfCurrent(renderKillAura)),
         fetchJson('/api/stone-miner', { signal }).then(renderIfCurrent(renderStoneMiner)),
+        ...(state.currentUser?.role === 'admin'
+          ? [fetchJson('/api/trader', { signal }).then(renderIfCurrent(renderTrader))]
+          : []),
         Promise.all([ensureItemIcons(), fetchJson(obsidianStatsPath(), { signal })]).then(([, payload]) => {
           if (!isCurrentSync()) return;
           if (hasActiveTextSelection()) {
@@ -14099,6 +14336,7 @@ $('#adminPlaytimeCommands')?.addEventListener('click', event => {
   if (button) copyAdminPlaytimeCommand(button);
 });
 document.addEventListener('click', handleAdminBotCommand);
+document.addEventListener('change', handleTraderSetupChange);
 document.addEventListener('click', handleAdminControlAction);
 for (const [selector, action] of [
   ['#adminPlaytimeInput', 'playtime_set'],

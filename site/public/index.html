@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=310">
+  <link rel="stylesheet" href="/styles.css?v=311">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -114,6 +114,7 @@
               <button class="tab-button" type="button" data-tab="kill-aura" role="menuitem">Kill Aura</button>
               <button class="tab-button" type="button" data-tab="obsidian" role="menuitem">Obsidian Farm</button>
               <button class="tab-button" type="button" data-tab="stone-miner" role="menuitem">Stone Miner</button>
+              <button class="tab-button admin-only" type="button" data-tab="trader" role="menuitem" hidden>Trader</button>
               <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
               <button class="tab-button" type="button" data-tab="players" role="menuitem">Player Stats</button>
               <button class="tab-button" type="button" data-tab="area-explorer" role="menuitem">Area Explorer</button>
@@ -861,6 +862,93 @@
             </dl>
           </section>
         </section>
+      </section>
+
+      <section id="tab-trader" class="tab-panel" data-panel="trader" data-trader-state="stopped">
+        <section class="stats-grid trader-stats-grid">
+          <article class="stat trader-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Emerald Blocks</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Emerald_Block.png" alt=""></span>
+            </div>
+            <strong id="traderTotalBlocks">-</strong>
+            <small id="traderSessionBlocks">this session: -</small>
+          </article>
+          <article class="stat trader-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Trader State</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Lever.png" alt=""></span>
+            </div>
+            <div class="trader-state-value"><i aria-hidden="true"></i><strong id="traderState">-</strong></div>
+            <small id="traderUpdated">last update: -</small>
+          </article>
+          <article class="stat trader-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Trades Made</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Emerald.png" alt=""></span>
+            </div>
+            <strong id="traderTotalTrades">-</strong>
+            <small id="traderSessionTrades">this session: -</small>
+          </article>
+        </section>
+
+        <section class="farm-admin-grid trader-admin-grid">
+          <section class="panel admin-command-panel">
+            <div class="panel-head">
+              <div class="aura-control-title">
+                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Lever.png" alt=""></span>
+                <div>
+                  <h2>Trader Power</h2>
+                  <p id="traderStatus" aria-live="polite">Scan from the bot's spot, then choose the chests.</p>
+                </div>
+              </div>
+            </div>
+            <div class="admin-command-actions">
+              <button id="traderToggleButton" class="trader-primary-button" type="button" data-bot-command="trader_toggle">Start Trader</button>
+            </div>
+          </section>
+
+          <section class="panel admin-command-panel">
+            <div class="panel-head">
+              <div class="aura-control-title">
+                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Compass.png" alt=""></span>
+                <div>
+                  <h2>Scan</h2>
+                  <p id="traderScanStatus" aria-live="polite">Finds the chests, the table and the villagers in reach.</p>
+                </div>
+              </div>
+            </div>
+            <div class="admin-command-actions">
+              <button id="traderScanButton" class="ghost-button" type="button" data-bot-command="trader_scan">Scan</button>
+            </div>
+          </section>
+        </section>
+
+        <section class="split-grid trader-setup-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Chests</h2>
+                <p id="traderTableStatus">No crafting table found yet.</p>
+              </div>
+            </div>
+            <ul id="traderContainers" class="trader-list"></ul>
+            <p id="traderStock" class="trader-note"></p>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Trades</h2>
+                <p>Selling for emeralds is on; anything else is your choice.</p>
+              </div>
+            </div>
+            <div id="traderVillagers" class="trader-villagers"></div>
+          </section>
+        </section>
+        <div class="trader-save-row">
+          <p id="traderSaveStatus" class="trader-note" aria-live="polite"></p>
+          <button id="traderSaveButton" class="trader-primary-button" type="button" data-bot-command="trader_configure" disabled>Save Setup</button>
+        </div>
       </section>
 
       <section id="tab-obsidian" class="tab-panel" data-panel="obsidian">
@@ -1874,6 +1962,6 @@
     <script src="/player-accent.js?v=1" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=369" defer></script>
+    <script src="/app.js?v=370" defer></script>
   </body>
 </html>

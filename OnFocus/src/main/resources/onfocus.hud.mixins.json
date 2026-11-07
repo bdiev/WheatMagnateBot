@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "package": "dev.onfocus.addon.mixin.hud",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "FabricEventMixin",
+    "MalilibRenderEventHandlerMixin",
+    "XaeroMinimapCoreMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

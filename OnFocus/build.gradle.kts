@@ -64,6 +64,11 @@ dependencies {
     // Xaero's Minimap (compile-only: Area Explorer's auto markers go into its waypoints when it's installed)
     modCompileOnly(files("libs/xaerominimap-fabric-1.21.4-25.3.10.jar"))
 
+    // Fabric API (compile-only: the Hud Hider mixin for mods drawing through HudRenderCallback
+    // is simply skipped when the API is not installed)
+    modCompileOnly("net.fabricmc.fabric-api:fabric-rendering-v1:10.2.1+0d31b09f04")
+    modCompileOnly("net.fabricmc.fabric-api:fabric-api-base:0.4.54+b47eab6b04")
+
     // Only for `runClient` / the debug launch, not shipped with the jar
     modLocalRuntime(files(
         "libs/xaeroworldmap-fabric-1.21.4-1.40.11.jar",

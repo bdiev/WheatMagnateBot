@@ -4,8 +4,14 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "DrawContextMixin",
+    "EventBusMixin",
+    "GameRendererMixin",
     "HandledScreenMixin",
+    "HeldItemRendererMixin",
+    "LayeredDrawerMixin",
     "MinecraftClientMixin",
+    "NametagsInvoker",
+    "NametagsMixin",
     "PacketInflaterMixin"
   ],
   "injectors": {

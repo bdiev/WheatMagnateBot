@@ -3697,6 +3697,60 @@ function stoneMinerDirection(anchor, blocks) {
   return { side, height };
 }
 
+// The setup holds coordinates, so the Trader tab is for administrators
+async function getTraderState(currentUser, url) {
+  assertDatabase();
+  assertAdminUser(currentUser);
+  const scoped = await scopedAccountRuntime(url, currentUser);
+  const defaultBotResult = scoped
+    ? { rows: [] }
+    : await pool.query('SELECT status,observed_at FROM bot_status_snapshots WHERE id=1');
+  const runtimeBot = scoped?.bot || defaultBotResult.rows[0]?.status || {};
+  const trader = runtimeBot.trader || runtimeBot.modules?.trader || {};
+  const connected = Boolean(runtimeBot.connected ?? runtimeBot.status === 'online');
+  return {
+    state: {
+      ...trader,
+      enabled: Boolean(trader.enabled || trader.desiredEnabled),
+      running: Boolean(trader.running && connected),
+      scanning: Boolean(trader.scanning && connected),
+      connected,
+      observedAt: scoped?.observedAt || defaultBotResult.rows[0]?.observed_at || null
+    }
+  };
+}
+
+function normalizeTraderPosition(value, label) {
+  const position = { x: Number(value?.x), y: Number(value?.y), z: Number(value?.z) };
+  if (![position.x, position.y, position.z].every(coordinate => Number.isInteger(coordinate) && Math.abs(coordinate) <= 30_000_000)) {
+    throw Object.assign(new Error(`${label} must be a block position.`), { statusCode:400 });
+  }
+  return position;
+}
+
+// Only what the Trader setup holds passes on to the bot
+function normalizeTraderSettings(payload = {}) {
+  const invalid = message => Object.assign(new Error(message), { statusCode:400 });
+  const settings = {};
+  if (payload.sources !== undefined) {
+    if (!Array.isArray(payload.sources) || payload.sources.length > 16) throw invalid('Trader takes at most 16 source chests.');
+    settings.sources = payload.sources.map(position => normalizeTraderPosition(position, 'A source chest'));
+  }
+  if (payload.output !== undefined) {
+    settings.output = payload.output === null ? null : normalizeTraderPosition(payload.output, 'The output chest');
+  }
+  if (payload.tradeChoices !== undefined) {
+    const entries = payload.tradeChoices && typeof payload.tradeChoices === 'object' ? Object.entries(payload.tradeChoices) : null;
+    if (!entries || entries.length > 500) throw invalid('Too many trade choices.');
+    settings.tradeChoices = {};
+    for (const [key, enabled] of entries) {
+      if (key.length > 200 || typeof enabled !== 'boolean') throw invalid('Invalid trade choice.');
+      settings.tradeChoices[key] = enabled;
+    }
+  }
+  return settings;
+}
+
 async function getStoneMinerStats(currentUser, url) {
   assertDatabase();
   const scoped = await scopedAccountRuntime(url, currentUser);
@@ -5768,6 +5822,9 @@ async function queueAdminBotCommand(currentUser, body) {
     'stone_miner_learn',
     'stone_miner_toggle',
     'stone_miner_clear',
+    'trader_scan',
+    'trader_toggle',
+    'trader_configure',
     'child_toggle',
     'child_say',
     'gemini_toggle',
@@ -5818,14 +5875,14 @@ async function queueAdminBotCommand(currentUser, body) {
   if (commandType === 'obsidian_toggle' && typeof payload.enabled !== 'boolean') {
     delete payload.enabled;
   }
-  if (['stone_miner_learn', 'stone_miner_toggle'].includes(commandType) && typeof payload.enabled !== 'boolean') {
+  if (['stone_miner_learn', 'stone_miner_toggle', 'trader_toggle'].includes(commandType) && typeof payload.enabled !== 'boolean') {
     delete payload.enabled;
   }
 
   const accountId = await commandAccountId(body,currentUser) || DEFAULT_MINECRAFT_ACCOUNT_ID;
   const account = (await getAccountRegistry()).get(accountId);
   if (commandType.startsWith('child_') || commandType.startsWith('gemini_')) assertModuleAvailable(account, 'growingChild');
-  return queueBotCommand(currentUser, commandType, payload, { accountId });
+  return queueBotCommand(currentUser, commandType, commandType === 'trader_configure' ? normalizeTraderSettings(payload) : payload, { accountId });
 }
 
 async function setAdminPlaytime(currentUser, body, database = pool, audit = recordSystemLog) {
@@ -6230,9 +6287,9 @@ async function getPushSettings(currentUser) {
   };
 }
 
-const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
+const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'trader', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
 
-const NAVIGATION_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian' });
+const NAVIGATION_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian', trader: 'stone-miner' });
 
 function normalizeNavigationPreferences(input = {}) {
   const rawVisibility = input.visibility && typeof input.visibility === 'object' && !Array.isArray(input.visibility) ? input.visibility : {};
@@ -6731,6 +6788,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/kill-aura' && req.method === 'GET') {
       sendJson(res, 200, await getKillAuraStats(currentUser, url));
+      return;
+    }
+    if (url.pathname === '/api/trader' && req.method === 'GET') {
+      sendJson(res, 200, await getTraderState(currentUser, url));
       return;
     }
     if (url.pathname === '/api/stone-miner' && req.method === 'GET') {

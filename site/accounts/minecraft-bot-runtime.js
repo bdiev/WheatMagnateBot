@@ -15,7 +15,7 @@ const {
   createFarmPingMonitor
 } = require('../../features/obsidianFarm/ping-protection');
 
-const TASKS = new Set(['obsidian','observe','follow','kill_aura','stone_miner','pearl_loader','chat','idle','paused']);
+const TASKS = new Set(['obsidian','observe','follow','kill_aura','stone_miner','trader','pearl_loader','chat','idle','paused']);
 const STABLE_CONNECTION_RESET_MS = 60_000;
 // Keep this list deliberately conservative. Raw meat, spider eyes and poisonous
 // potatoes are technically consumable, but are a poor choice for an unattended bot.
@@ -93,6 +93,7 @@ class MinecraftBotRuntime extends BotContext {
     this.killAura = this.modules.killAura;
     this.follow = this.modules.follow;
     this.stoneMiner = this.modules.stoneMiner;
+    this.trader = this.modules.trader;
   }
 
   canResumeFarmAt(dateParts) {
@@ -382,7 +383,7 @@ class MinecraftBotRuntime extends BotContext {
             ? 'obsidian'
             : this.killAura?.getStatus?.().enabled
               ? 'kill_aura'
-              : this.follow?.getStatus?.().enabled ? 'follow' : this.stoneMiner?.getStatus?.().enabled ? 'stone_miner' : 'idle';
+              : this.follow?.getStatus?.().enabled ? 'follow' : this.stoneMiner?.getStatus?.().enabled ? 'stone_miner' : this.trader?.getStatus?.().enabled ? 'trader' : 'idle';
         }
         this.emit('status', this.getStatus());
         this.startAfkMonitors();
@@ -472,6 +473,7 @@ class MinecraftBotRuntime extends BotContext {
     this.follow?.stop?.();
     // Only the loop: an enabled Stone Miner starts again after the restart
     this.stoneMiner?.detachBot?.();
+    this.trader?.detachBot?.();
     // Stop only the physical loop. Keep desiredEnabled intact so the
     // replacement process can reopen the protection lever and resume the farm
     // after its Minecraft connection and chunks are ready.
@@ -524,7 +526,7 @@ class MinecraftBotRuntime extends BotContext {
       ? 'kill_aura'
       : this.obsidianFarm?.getStatus?.().enabled
         ? 'obsidian'
-        : this.follow?.getStatus?.().enabled ? 'follow' : this.stoneMiner?.getStatus?.().enabled ? 'stone_miner' : 'idle';
+        : this.follow?.getStatus?.().enabled ? 'follow' : this.stoneMiner?.getStatus?.().enabled ? 'stone_miner' : this.trader?.getStatus?.().enabled ? 'trader' : 'idle';
     const status = this.getStatus();
     this.emit('status', status);
     return status;
@@ -552,6 +554,7 @@ class MinecraftBotRuntime extends BotContext {
       this.obsidianFarm?.suspend?.();
       this.follow?.stop?.();
       this.stoneMiner?.stop?.();
+      this.trader?.stop?.({ flush:false });
     }
     const status = this.killAura.setEnabled(enabled, this.bot);
     this.task = status.enabled ? 'kill_aura' : 'idle';
@@ -604,6 +607,7 @@ class MinecraftBotRuntime extends BotContext {
       this.killAura?.setEnabled(false);
       this.follow?.stop?.();
       this.stoneMiner?.stop?.();
+      this.trader?.stop?.({ flush:false });
       const farmStatus = this.obsidianFarm.start();
       if (!farmStatus?.enabled) throw new Error('Obsidian Farm cannot start: farm loop is not enabled.');
       this.task = 'obsidian';
@@ -632,7 +636,7 @@ class MinecraftBotRuntime extends BotContext {
     this.nextObsidianResumeAt = 0;
     this.task = this.killAura?.getStatus?.().enabled
       ? 'kill_aura'
-      : this.follow?.getStatus?.().enabled ? 'follow' : this.stoneMiner?.getStatus?.().enabled ? 'stone_miner' : 'idle';
+      : this.follow?.getStatus?.().enabled ? 'follow' : this.stoneMiner?.getStatus?.().enabled ? 'stone_miner' : this.trader?.getStatus?.().enabled ? 'trader' : 'idle';
     this.status = this.bot?.entity ? 'connected' : 'stopped';
     this.lastError = null;
     // The farm loop and reconnect intent are already disabled. Publish that
@@ -653,6 +657,7 @@ class MinecraftBotRuntime extends BotContext {
     this.obsidianFarm?.suspend?.();
     this.killAura?.setEnabled(false);
     this.stoneMiner?.stop?.();
+    this.trader?.stop?.({ flush:false });
     const result = this.follow.start(username, options);
     this.task = 'follow';
     this.emit('status', this.getStatus());
@@ -672,6 +677,7 @@ class MinecraftBotRuntime extends BotContext {
       this.obsidianFarm?.suspend?.();
       this.killAura?.setEnabled(false);
       this.follow?.stop?.();
+      this.trader?.stop?.({ flush:false });
     }
     const status = this.stoneMiner.setLearning(enabled);
     if (this.task === 'stone_miner') this.task = 'idle';
@@ -685,6 +691,7 @@ class MinecraftBotRuntime extends BotContext {
     }
     this.killAura?.setEnabled(false);
     this.follow?.stop?.();
+    this.trader?.stop?.({ flush:false });
     const status = this.stoneMiner.start();
     this.task = 'stone_miner';
     this.emit('status', this.getStatus());
@@ -700,6 +707,42 @@ class MinecraftBotRuntime extends BotContext {
   clearStoneMinerBlocks() {
     if (!this.stoneMiner) throw new Error('Stone Miner is unavailable for this runtime.');
     const status = this.stoneMiner.clearBlocks();
+    this.emit('status', this.getStatus());
+    return status;
+  }
+  // The Trader stands still and takes the bot off every task that would move it
+  prepareForTrader() {
+    if (!this.trader) throw new Error('Trader is unavailable for this runtime.');
+    if (this.obsidianFarm?.getStatus?.().desiredEnabled) {
+      throw new Error('Stop the Obsidian Farm before using the Trader.');
+    }
+    this.killAura?.setEnabled(false);
+    this.follow?.stop?.();
+    this.stoneMiner?.stop?.();
+  }
+  async scanTrader() {
+    this.prepareForTrader();
+    const status = await this.trader.scan();
+    this.emit('status', this.getStatus());
+    return status;
+  }
+  configureTrader(settings) {
+    if (!this.trader) throw new Error('Trader is unavailable for this runtime.');
+    const status = this.trader.configure(settings);
+    this.emit('status', this.getStatus());
+    return status;
+  }
+  startTrader() {
+    this.prepareForTrader();
+    const status = this.trader.start();
+    this.task = 'trader';
+    this.emit('status', this.getStatus());
+    return status;
+  }
+  stopTrader() {
+    if (!this.trader) throw new Error('Trader is unavailable for this runtime.');
+    const status = this.trader.stop();
+    if (this.task === 'trader') this.task = 'idle';
     this.emit('status', this.getStatus());
     return status;
   }
@@ -732,9 +775,11 @@ class MinecraftBotRuntime extends BotContext {
         obsidianFarm:obsidian,
         killAura:this.killAura?.getStatus?.() || null,
         follow:this.follow?.getStatus?.() || null,
-        stoneMiner:this.stoneMiner?.getStatus?.() || null
+        stoneMiner:this.stoneMiner?.getStatus?.() || null,
+        trader:this.trader?.getStatus?.() || null
       },
       stoneMiner:this.stoneMiner?.getStatus?.() || null,
+      trader:this.trader?.getStatus?.() || null,
       obsidian,
       killAura:this.killAura?.getStatus?.() || null,
       followTarget:this.follow?.getStatus?.().targetUsername || null,

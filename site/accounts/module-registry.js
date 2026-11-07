@@ -6,6 +6,7 @@ const { createObsidianFarm } = require('../../features/obsidianFarm');
 const { createKillAuraFeature } = require('../../features/killAura');
 const { createFollowFeature } = require('../../features/follow');
 const { createStoneMiner } = require('../../features/stoneMiner');
+const { createTrader } = require('../../features/trader');
 const { PEARL_LOADER_ROLE } = require('../../features/pearlLoader');
 
 function pearlLoaderOnlyModules() {
@@ -16,6 +17,7 @@ function pearlLoaderOnlyModules() {
   const killAuraStatus = () => ({ enabled:false,desiredEnabled:false,selectedMobs:[] });
   const followStatus = () => ({ enabled:false,desiredEnabled:false,targetUsername:null });
   const stoneMinerStatus = () => ({ enabled:false,desiredEnabled:false,running:false,learning:false,blocks:[],blockCount:0 });
+  const traderStatus = () => ({ enabled:false,desiredEnabled:false,running:false,scanning:false,sources:[],containers:[],villagers:[] });
   return {
     obsidianFarm: {
       attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, suspend:obsidianStatus,
@@ -38,6 +40,11 @@ function pearlLoaderOnlyModules() {
       attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, stop:stoneMinerStatus,
       start:() => restricted('Stone Miner'), setLearning:enabled => enabled ? restricted('Stone Miner') : stoneMinerStatus(),
       clearBlocks:stoneMinerStatus, getStatus:stoneMinerStatus
+    },
+    trader: {
+      attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, stop:traderStatus,
+      start:() => restricted('Trader'), scan:() => restricted('Trader'), configure:() => restricted('Trader'),
+      getStatus:traderStatus
     }
   };
 }
@@ -194,6 +201,7 @@ function createModulesForBot(context, {
   followFactory = createFollowFeature,
   stoneMinerFactory = createStoneMiner,
   stoneMinerHooks = {},
+  traderFactory = createTrader,
   notify = null,
   systemLogger = null,
   obsidianState = null,
@@ -243,6 +251,18 @@ function createModulesForBot(context, {
         context.emit?.('status', context.getStatus?.());
       },
       ...stoneMinerHooks
+    }),
+    trader: traderFactory({
+      stateFile: path.join(accountRoot, 'trader.json'),
+      // Its only voice: the system log, never the game chat
+      log: (message, level = 'info') => {
+        if (!systemLogger) {
+          console.log(`${message} [${context.username}]`);
+          return;
+        }
+        Promise.resolve(systemLogger({ level, category: 'trader', message: `${message} [${context.username}]` })).catch(() => {});
+      },
+      onChange: () => context.emit?.('status', context.getStatus?.())
     })
   };
 

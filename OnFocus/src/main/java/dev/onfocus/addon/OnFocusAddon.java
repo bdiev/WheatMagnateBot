@@ -15,6 +15,7 @@ import dev.onfocus.addon.modules.DeathMessageBlocker;
 import dev.onfocus.addon.modules.ElytraControl;
 import dev.onfocus.addon.modules.ElytraKeeper;
 import dev.onfocus.addon.modules.EzBundles;
+import dev.onfocus.addon.modules.HudHider;
 import dev.onfocus.addon.modules.JoinLeaveMessages;
 import dev.onfocus.addon.modules.MapArtBulkCopier;
 import dev.onfocus.addon.modules.MapArtCopier;
@@ -62,6 +63,7 @@ public class OnFocusAddon extends MeteorAddon {
         Modules.get().add(new MapPreview());
         Modules.get().add(new EzBundles());
         Modules.get().add(new MapPainter());
+        Modules.get().add(new HudHider());
 
         Commands.add(new RegroupMarkersCommand());
         Commands.add(new LootMarkersCommand());

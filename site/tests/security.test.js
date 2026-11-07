@@ -46,7 +46,7 @@ function testNavigationPreferencesAreNormalized() {
   assert.equal(new Set(value.order).size, value.order.length, 'navigation order must not contain duplicates');
   assert.equal(value.order.includes('unknown'), false);
   const saved = normalizeNavigationPreferences({ order: ['obsidian', 'chat', 'bot', 'kill-aura', 'server'] });
-  assert.deepEqual(saved.order.slice(0, 3), ['obsidian', 'stone-miner', 'chat'], 'Stone Miner joins a saved order after Obsidian Farm');
+  assert.deepEqual(saved.order.slice(0, 4), ['obsidian', 'stone-miner', 'trader', 'chat'], 'Stone Miner joins a saved order after Obsidian Farm, and Trader after it');
 }
 
 function testRateLimit() {

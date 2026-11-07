@@ -16,7 +16,8 @@
   "mixins": [
     "onfocus.mixins.json",
     "onfocus.baritone.mixins.json",
-    "onfocus.xaero.mixins.json"
+    "onfocus.xaero.mixins.json",
+    "onfocus.hud.mixins.json"
   ],
   "custom": {
     "meteor-client:color": "80,190,255"
