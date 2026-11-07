@@ -96,6 +96,8 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   bot.count = name => bot.inventory.items().filter(entry => entry.name === name).reduce((sum, entry) => sum + entry.count, 0);
   bot.currentWindow = null;
   bot.written = [];
+  bot.syncs = 0;
+  bot._syncWindow = async () => { bot.syncs += 1; };
   bot.clicks = 0;
   bot.dragPackets = 0;
   bot.refuseDrag = false;
@@ -329,7 +331,13 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
     }
     assert.equal(mode, 1, 'stacks are moved with a shift-click');
     if (window.type === 'minecraft:merchant') {
-      assert.equal(slot, 2, 'only the result slot is clicked in a merchant window');
+      if (slot < 2) {
+        if (window.slots[slot]) insert(window, window.slots[slot], window.inventoryStart, window.inventoryEnd);
+        window.slots[slot] = null;
+        refreshResult(window);
+        return;
+      }
+      assert.equal(slot, 2, 'only the input and result slots are clicked in a merchant window');
       while (window.slots[2]) {
         const result = window.slots[2];
         const room = window.slots.slice(window.inventoryStart, window.inventoryEnd)
@@ -677,6 +685,13 @@ async function main() {
     let fewestFree = 36;
     let sourceOpens = 0;
     let villagerOpens = 0;
+    let returnClicks = 0;
+    const click = bot.clickWindow;
+    bot.clickWindow = async (slot, button, mode) => {
+      const window = bot.currentWindow;
+      if (window.stored && window.stored === bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`) && slot >= window.inventoryStart) returnClicks += 1;
+      return click(slot, button, mode);
+    };
     const working = () => trader.getStatus().phase !== 'waiting';
     const activateEntity = bot.activateEntity;
     bot.activateEntity = async entity => {
@@ -694,8 +709,9 @@ async function main() {
     await until(() => villagers.every(villager => villager.trades[0].nbTradeUses === 16) && trader.getStatus().phase === 'waiting', 'all sold', 8000);
     assert.equal(mostStacks, 18, 'a trip carries 18 stacks');
     assert.ok(fewestFree >= 9, `9 slots stay free, saw ${fewestFree}`);
-    // One look at the start, a visit to take and one to return per trip, one last look
-    assert.ok(sourceOpens <= 6, `the chests are not read between trips: ${sourceOpens}`);
+    // One look at the start, a visit to take per trip, and the rest back at the end
+    assert.ok(sourceOpens <= 5, `the chests are not read between trips: ${sourceOpens}`);
+    assert.ok(returnClicks <= 1, `the last stack goes back once, after the last trip: ${returnClicks}`);
     // Five to read the offers once, then only the six visits that trade
     assert.ok(villagerOpens <= 11, `the villagers are not asked again between trips: ${villagerOpens}`);
     assert.equal(bot.outputItems().find(entry => entry.name === 'emerald_block').count, 8, '80 trades make 8 blocks');
@@ -704,6 +720,57 @@ async function main() {
     assert.equal(bot.sourceItems().reduce((sum, entry) => sum + entry.count, 0), 27 * 64 - 1600);
     assert.ok(lines.some(line => /Trip: took 1152 items, made \d+ trades in/.test(line)), 'the log tells how a trip went');
     assert.deepEqual(bot.dropped, []);
+    trader.dispose();
+  });
+
+  await test('what a trip leaves pays for the next one instead of going back to the chest', async () => {
+    const villagers = [[2.5, 64, 0.5], [-1.5, 64, 0.5]].map(at => ({ at, trades: [rawTrade('stone', 7, 'emerald', 1, { maximumNbTradeUses: 10 })] }));
+    const lines = [];
+    // Each villager takes 70 stone: 64 + 64 leaves 58 after the first, which with
+    // the stack still in the chest is enough for the second
+    const { bot, trader } = await ready({ source: [stack('stone', 64), stack('stone', 64), stack('stone', 64)], villagers }, { log: message => lines.push(message) });
+    const back = [];
+    const click = bot.clickWindow;
+    bot.clickWindow = async (slot, button, mode) => {
+      const window = bot.currentWindow;
+      if (window.stored && slot >= window.inventoryStart) back.push(window.slots[slot]?.name);
+      return click(slot, button, mode);
+    };
+    trader.start();
+    await until(() => villagers.every(villager => villager.trades[0].nbTradeUses === 10) && trader.getStatus().phase === 'waiting', 'all sold');
+    assert.equal(bot.count('stone'), 0);
+    assert.equal(bot.sourceItems().reduce((sum, entry) => sum + entry.count, 0), 3 * 64 - 140);
+    assert.equal(back.filter(name => name === 'stone').length, 1, 'once, when nothing is left to sell');
+    trader.dispose();
+  });
+
+  await test('emeralds the bot earned stay out of a purchase, though leftovers of other inputs are used', async () => {
+    const villager = { trades: [rawTrade('emerald', 2, 'bread', 1, { maximumNbTradeUses: 2 })] };
+    const { bot, trader } = await ready({
+      inventory: [stack('emerald', 8)],
+      source: [stack('emerald', 10)],
+      villagers: [villager]
+    });
+    trader.configure({ tradeChoices: { 'emerald+>bread': true } });
+    trader.start();
+    await until(() => villager.trades[0].nbTradeUses === 2 && trader.getStatus().phase === 'waiting', 'bought');
+    assert.equal(bot.outputItems().find(entry => entry.name === 'bread').count, 2);
+    assert.equal(bot.crafts, 0, 'nothing bought with is crafted');
+    trader.dispose();
+  });
+
+  await test('no blind pauses: a whole round takes a fraction of what the old waits would', async () => {
+    const villager = { trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 20 })] };
+    const bot = fakeBot({ source: [stack('paper', 64)], villagers: [villager] });
+    const trader = createTrader({ settleMs: 1500, idleIntervalMs: 60_000 });
+    trader.attachBot(bot);
+    await trader.scan();
+    trader.configure({ sources: [SOURCE], output: OUTPUT });
+    const startedAt = Date.now();
+    trader.start();
+    await until(() => bot.outputItems().find(entry => entry.name === 'emerald_block')?.count === 2, 'two blocks', 2500);
+    assert.ok(Date.now() - startedAt < 1200, `took ${Date.now() - startedAt} ms with a 1500 ms fallback pause`);
+    assert.ok(bot.syncs > 0, 'it asks the server instead');
     trader.dispose();
   });
 

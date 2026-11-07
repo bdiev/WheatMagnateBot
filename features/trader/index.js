@@ -75,7 +75,7 @@ const VILLAGER_COOLDOWN_MS = 60_000;
 const CONTAINER_TIMEOUT_MS = 5_000;
 // A sleeping or busy villager just doesn't answer
 const MERCHANT_TIMEOUT_MS = 5_000;
-// Results reach the inventory a tick or two after a click or a closed window
+// Only where the server cannot be asked; see syncWindowState
 const SETTLE_MS = 300;
 
 function sleep(ms) {
@@ -489,7 +489,6 @@ function createTrader({
           log(`[Trader] Villager ${villagerId(entity)} did not trade during the scan: ${error.message}`);
           merchants.set(villagerId(entity), { id: villagerId(entity), level: null, offers: [], answered: false });
         }
-        await sleep(settleMs);
       }
       log(`[Trader] Scan: ${containers.length} containers, ${merchants.size} villagers, ${desired.craftingTable ? 'a' : 'no'} crafting table.`);
       saveState();
@@ -681,8 +680,6 @@ function createTrader({
   async function runRound(context) {
     const { current } = context;
     assertOnSpot(current);
-    await tidyInventory(context);
-    if (!context.active()) return false;
     const chestsRead = checkChests;
     if (checkChests) {
       await readSources(context);
@@ -690,8 +687,6 @@ function createTrader({
     }
     const villagers = reachableVillagers(current);
     if (!villagers.length) throw supplyError('No villager within reach of the bot.');
-    // Past the checks: the site should not show an old problem for a whole round
-    clearError();
     if (checkVillagers) {
       for (const entity of villagers) {
         if (!context.active()) return false;
@@ -707,6 +702,10 @@ function createTrader({
       await readSources(context);
       plan = planTrades(villagers);
     }
+    await tidyInventory(context, plan);
+    if (!context.active()) return false;
+    // Past the checks: the site should not show an old problem for a whole round
+    clearError();
     const spendsEmeralds = entry => offerCosts(entry.offer, 1).has(EMERALD);
     const selling = plan.filter(entry => !spendsEmeralds(entry));
     const trips = plan.filter(spendsEmeralds).map(entry => [entry]);
@@ -715,7 +714,7 @@ function createTrader({
     for (const trip of trips) {
       if (!context.active()) return worked;
       if (await makeTrip(context, trip)) worked = true;
-      await tidyInventory(context);
+      await tidyInventory(context, planTrades(villagers));
     }
     // Not what the bot expected: it looks again before relying on its memory
     if (trips.length && !worked) {
@@ -726,7 +725,11 @@ function createTrader({
   }
 
   function planTrades(villagers) {
+    // What the last trip left in the inventory pays too, but never earned emeralds
     const stock = totalStock();
+    for (const item of bot?.inventory.items() || []) {
+      if (item.name !== EMERALD && isPlainItem(item)) stock.set(item.name, (stock.get(item.name) || 0) + item.count);
+    }
     const plan = [];
     for (const entity of villagers) {
       if (Date.now() < (villagerRetryAt.get(villagerId(entity)) || 0)) continue;
@@ -839,12 +842,13 @@ function createTrader({
       .filter(name => name && name !== EMERALD && !productNames().has(name)));
   }
 
-  // Leftovers back to the sources, emeralds into blocks, products to the output.
-  // Trading waits for all of it, so a full output chest stops the trades and
-  // nothing piles up in the inventory
-  async function tidyInventory(context) {
+  // Leftovers back to the sources, unless the next trip uses them, emeralds into
+  // blocks, products to the output. Trading waits for all of it, so a full output
+  // chest stops the trades and nothing piles up in the inventory
+  async function tidyInventory(context, plan = []) {
     const { current } = context;
-    const inputs = [...inputNames()].filter(name => carried(current, name) > 0);
+    const nextTrip = new Set(plan.flatMap(({ offer }) => [...offerCosts(offer, 1).keys()]));
+    const inputs = [...inputNames()].filter(name => carried(current, name) > 0 && !nextTrip.has(name));
     if (inputs.length) await returnToSources(context, new Map(inputs.map(name => [name, carried(current, name)])));
     await craftEmeralds(context);
     await depositProducts(context);
@@ -862,10 +866,10 @@ function createTrader({
     const window = await openContainer(context, desired.output, 'The output chest');
     try {
       await moveToContainer(context, window, item => products.has(item.name));
+      await syncWindowState(current, window);
     } finally {
       closeWindow(current, window);
     }
-    await sleep(settleMs);
     if (hasProducts()) {
       setOutputFull(true);
       throw supplyError('The output chest is full; the trades wait for room.');
@@ -893,10 +897,10 @@ function createTrader({
     const window = await openContainer(context, desired.output, 'The output chest');
     try {
       await moveToContainer(context, window, item => products.has(item.name));
+      await syncWindowState(current, window);
     } finally {
       closeWindow(current, window);
     }
-    await sleep(settleMs);
   }
 
   // A stack spread over the grid with one drag, the rest put back, and one
@@ -929,7 +933,7 @@ function createTrader({
     const gridEmpty = () => CRAFT_GRID_SLOTS.every(slot => !window.slots[slot]);
     let crafted = false;
     try {
-      await sleep(settleMs);
+      await syncWindowState(current, window);
       while (context.active() && current.currentWindow === window) {
         const stack = window.slots.slice(window.inventoryStart, window.inventoryEnd)
           .filter(item => item?.name === EMERALD && isPlainItem(item) && item.count >= EMERALDS_PER_BLOCK)
@@ -988,7 +992,6 @@ function createTrader({
         .some(item => item.name === EMERALD && isPlainItem(item) && item.count >= EMERALDS_PER_BLOCK);
       const fast = dragCraftWorks && hasStack && await craftByDrag(context, table);
       if (!context.active()) return;
-      await sleep(settleMs);
       if (!fast) {
         if (dragCraftWorks && hasStack) {
           dragCraftWorks = false;
@@ -1030,11 +1033,16 @@ function createTrader({
     for (const { offer, uses } of plan) {
       for (const [name, count] of offerCosts(offer, uses)) needed.set(name, (needed.get(name) || 0) + count);
     }
-    const before = new Map([...needed.keys()].map(name => [name, carried(current, name)]));
-    await takeFromSources(context, needed);
+    // Emeralds the bot already holds were earned and stay out of it; anything else
+    // in the inventory is what the last trip left, and goes first
+    const before = new Map([...needed.keys()].map(name => [name, name === EMERALD ? carried(current, EMERALD) : 0]));
+    const usable = name => carried(current, name) - before.get(name);
+    const carriedAtStart = [...needed.keys()].reduce((sum, name) => sum + usable(name), 0);
+    const missing = new Map([...needed].map(([name, count]) => [name, count - usable(name)]).filter(([, count]) => count > 0));
+    if (missing.size) await takeFromSources(context, missing);
     if (!context.active()) return false;
-    const takenAll = [...before].reduce((sum, [name, count]) => sum + Math.max(0, carried(current, name) - count), 0);
-    if (!takenAll) {
+    const inHand = [...needed.keys()].reduce((sum, name) => sum + Math.max(0, usable(name)), 0);
+    if (!inHand) {
       // With room to spare the chest just no longer held it: what the bot
       // remembered is out of date, which the round after this one corrects
       if (current.inventory.emptySlotCount() > RESERVED_FREE_SLOTS) return false;
@@ -1046,12 +1054,15 @@ function createTrader({
       if (Date.now() < (villagerRetryAt.get(villagerId(entity)) || 0)) continue;
       let affordable = uses;
       for (const [name, cost] of offerCosts(offer, 1)) {
-        affordable = Math.min(affordable, Math.floor((carried(current, name) - before.get(name)) / cost));
+        affordable = Math.min(affordable, Math.floor(usable(name) / cost));
       }
       if (affordable > 0) made += await makeTrade(context, entity, offer, affordable);
     }
-    await returnTaken(context, before);
-    if (made) log(`[Trader] Trip: took ${takenAll} items, made ${made} trades in ${((Date.now() - startedAt) / 1000).toFixed(1)} s.`);
+    // Ordinary inputs wait for the next trip; tidyInventory returns them if there
+    // is none. What is also a product or was bought with must go back now
+    const inputs = inputNames();
+    await returnTaken(context, new Map([...before].filter(([name]) => !inputs.has(name))));
+    if (made) log(`[Trader] Trip: took ${inHand - carriedAtStart} items, made ${made} trades in ${((Date.now() - startedAt) / 1000).toFixed(1)} s.`);
     return made > 0;
   }
 
@@ -1069,7 +1080,6 @@ function createTrader({
       villagerRetryAt.set(villagerId(entity), Date.now() + villagerCooldownMs);
       log(`[Trader] ${offer.key} did not run: ${error.message}`, 'warn');
     }
-    await sleep(settleMs);
     const gained = Math.max(0, carried(current, outputName) - outputBefore);
     const made = Math.floor(gained / Math.max(1, offer.outputCount));
     const known = (knownOffers.get(villagerId(entity)) || []).find(entry => entry.key === offer.key);
@@ -1123,6 +1133,12 @@ function createTrader({
         await sleep(Math.min(settleMs, TRADE_SETTLE_MS));
         if (!answered || outputCount() <= beforeClick) break;
       }
+      // Unused inputs out of the trade slots first: closing would return them only
+      // after the inventory has been counted
+      for (const slot of [0, 1]) {
+        if (window.slots[slot] && current.currentWindow === window) clickInWindow(current, window, slot);
+      }
+      await syncWindowState(current, window);
     } finally {
       closeWindow(current, window);
     }
@@ -1140,12 +1156,30 @@ function createTrader({
 
   // mineflayer waits for slot updates that may not all come; what counts is what
   // arrives in the inventory
-  async function clickOutput(current, window) {
+  async function clickInWindow(current, window, slot) {
     try {
-      await withTimeout(current.clickWindow(2, 0, 1), CLICK_TIMEOUT_MS, 'The trade click got no answer.');
+      await withTimeout(current.clickWindow(slot, 0, 1), CLICK_TIMEOUT_MS, 'The trade click got no answer.');
     } catch (error) {
       if (current.currentWindow === window) log(`[Trader] ${error.message}`, 'warn');
     }
+  }
+
+  function clickOutput(current, window) {
+    return clickInWindow(current, window, 2);
+  }
+
+  // Asks the server for the whole window. The answer comes after every click sent
+  // before it, so the window then is what the server has, one ping later: no
+  // guessing how long is long enough. A closed window takes its slots along into
+  // the inventory, so closing right after this loses nothing
+  async function syncWindowState(current, window) {
+    if (current.currentWindow !== window) return;
+    if (!current._syncWindow) {
+      await sleep(settleMs);
+      return;
+    }
+    await withTimeout(current._syncWindow(window), CLICK_TIMEOUT_MS, 'The server did not report the window.')
+      .catch(error => log(`[Trader] ${error.message}`, 'warn'));
   }
 
   // Opens a villager and notes its offers. A villager can refuse (asleep, busy, a
@@ -1259,13 +1293,12 @@ function createTrader({
             if (!lastTakenFrom.includes(pos)) lastTakenFrom.push(pos);
           }
         }
-        await sleep(settleMs);
+        await syncWindowState(current, window);
         noteStock(pos, window);
       } finally {
         closeWindow(current, window);
       }
     }
-    await sleep(settleMs);
   }
 
   function freeSlots(window) {
@@ -1288,13 +1321,12 @@ function createTrader({
         await moveToContainer(context, window, item => left.get(item.name) > 0, moved => {
           left.set(moved.name, left.get(moved.name) - moved.count);
         });
-        await sleep(settleMs);
+        await syncWindowState(current, window);
         noteStock(pos, window);
       } finally {
         closeWindow(current, window);
       }
     }
-    await sleep(settleMs);
   }
 
   async function moveToContainer(context, window, wanted, onMoved = () => {}) {
@@ -1351,7 +1383,8 @@ function createTrader({
     await current.lookAt(block.position.plus(cursor), true);
     if (current.waitForTicks) await current.waitForTicks(2);
     const window = await waitForContainerWindow(current, block, direction, cursor, `${label} at ${positionKey(pos)} did not open.`);
-    await sleep(settleMs);
+    // Some servers fill a container a moment after opening it
+    await syncWindowState(current, window);
     return window;
   }
 
