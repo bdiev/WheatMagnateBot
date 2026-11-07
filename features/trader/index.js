@@ -8,12 +8,13 @@
  *   1. Scan: from the spot, finds the chests, the crafting table and the
  *      villagers in reach and reads what each villager offers. The site then
  *      marks the chests as sources or the output, and picks the trades
- *   2. Each round reads the source chests and the villagers, then makes one trip:
- *      up to 18 stacks of what all enabled trades need are taken at once, nine
- *      slots stay free for the results, the villagers are served one after
- *      another, and what is left goes back to the sources in one go. Trades
- *      spending emeralds get a trip of their own, so they use the emeralds from
- *      the sources and not the ones just earned
+ *   2. It reads the source chests and the villagers once, and keeps what it saw up
+ *      to date as it works, so trips follow each other without asking again. A
+ *      trip takes up to 18 stacks of what all enabled trades need, nine slots stay
+ *      free for the results, the villagers are served one after another, and what
+ *      is left goes back to the sources in one go. Trades spending emeralds get a
+ *      trip of their own, so they use the emeralds from the sources and not the
+ *      ones just earned
  *   3. Every nine emeralds become an emerald block at the crafting table. The
  *      blocks and the results of other trades go into the output chest. Fewer
  *      than nine emeralds wait in the inventory for the next round, and go into
@@ -221,6 +222,11 @@ function createTrader({
   let dragCraftWorks = true;
   // Goes up with every new setup, which ends the wait for restocks
   let settingsVersion = 0;
+  // What each villager offered when last opened, as the trades since left it, by
+  // UUID, and whether that or the stock in the chests has to be looked at again
+  const knownOffers = new Map();
+  let checkVillagers = true;
+  let checkChests = true;
   // What the source chests held when last opened, by position
   const sourceStock = new Map();
 
@@ -440,6 +446,8 @@ function createTrader({
     }
     saveState();
     settingsVersion += 1;
+    checkVillagers = true;
+    checkChests = true;
     wakeIdleWaiters();
     return getStatus();
   }
@@ -604,6 +612,9 @@ function createTrader({
     sessionBlocks = 0;
     sessionStartedAt = new Date().toISOString();
     dragCraftWorks = true;
+    knownOffers.clear();
+    checkVillagers = true;
+    checkChests = true;
     log('[Trader] Started.');
     loopFinished = loop(generation, current).catch(error => log(`[Trader] Loop crashed: ${error.message}`, 'error'));
   }
@@ -628,6 +639,10 @@ function createTrader({
         notifyChange();
         if (fruitless) await waitIdle(watchBackoffMs);
         restockSeen = await watchForRestock(context);
+        // One restocked: the others may have too, so one trip serves them all.
+        // Otherwise it is time to see whether the chests were refilled
+        if (restockSeen) checkVillagers = true;
+        else checkChests = true;
         nextCheckAt = null;
       } catch (error) {
         if (!context.active()) break;
@@ -668,25 +683,29 @@ function createTrader({
     assertOnSpot(current);
     await tidyInventory(context);
     if (!context.active()) return false;
-    await readSources(context);
+    const chestsRead = checkChests;
+    if (checkChests) {
+      await readSources(context);
+      checkChests = false;
+    }
     const villagers = reachableVillagers(current);
     if (!villagers.length) throw supplyError('No villager within reach of the bot.');
     // Past the checks: the site should not show an old problem for a whole round
     clearError();
-    const stock = totalStock();
-    const plan = [];
-    for (const entity of villagers) {
-      if (!context.active()) return false;
-      const offers = await surveyVillager(context, entity);
-      if (!context.active()) return false;
-      if (!offers) continue;
-      for (const offer of offers) {
-        if (!isEnabled(offer.key, offer.outputItem.name)) continue;
-        const uses = usesFromStock(offer, stock);
-        if (!uses) continue;
-        for (const [name, count] of offerCosts(offer, uses)) stock.set(name, stock.get(name) - count);
-        plan.push({ entity, offer, uses });
+    if (checkVillagers) {
+      for (const entity of villagers) {
+        if (!context.active()) return false;
+        await surveyVillager(context, entity);
       }
+      if (!context.active()) return false;
+      checkVillagers = false;
+    }
+    let plan = planTrades(villagers);
+    // Nothing left by what the bot remembers: the one moment the chests are worth
+    // reading again, as someone may have filled them
+    if (!plan.length && !chestsRead) {
+      await readSources(context);
+      plan = planTrades(villagers);
     }
     const spendsEmeralds = entry => offerCosts(entry.offer, 1).has(EMERALD);
     const selling = plan.filter(entry => !spendsEmeralds(entry));
@@ -698,7 +717,28 @@ function createTrader({
       if (await makeTrip(context, trip)) worked = true;
       await tidyInventory(context);
     }
+    // Not what the bot expected: it looks again before relying on its memory
+    if (trips.length && !worked) {
+      checkChests = true;
+      checkVillagers = true;
+    }
     return worked;
+  }
+
+  function planTrades(villagers) {
+    const stock = totalStock();
+    const plan = [];
+    for (const entity of villagers) {
+      if (Date.now() < (villagerRetryAt.get(villagerId(entity)) || 0)) continue;
+      for (const offer of knownOffers.get(villagerId(entity)) || []) {
+        if (!isEnabled(offer.key, offer.outputItem.name)) continue;
+        const uses = usesFromStock(offer, stock);
+        if (!uses) continue;
+        for (const [name, count] of offerCosts(offer, uses)) stock.set(name, stock.get(name) - count);
+        plan.push({ entity, offer, uses });
+      }
+    }
+    return plan;
   }
 
   // Opens a villager only to read its offers; null when it is resting or refused
@@ -995,6 +1035,9 @@ function createTrader({
     if (!context.active()) return false;
     const takenAll = [...before].reduce((sum, [name, count]) => sum + Math.max(0, carried(current, name) - count), 0);
     if (!takenAll) {
+      // With room to spare the chest just no longer held it: what the bot
+      // remembered is out of date, which the round after this one corrects
+      if (current.inventory.emptySlotCount() > RESERVED_FREE_SLOTS) return false;
       throw supplyError(`No room to take resources: ${current.inventory.emptySlotCount()} free slots, and ${RESERVED_FREE_SLOTS} stay free for the results.`);
     }
     let made = 0;
@@ -1029,6 +1072,8 @@ function createTrader({
     await sleep(settleMs);
     const gained = Math.max(0, carried(current, outputName) - outputBefore);
     const made = Math.floor(gained / Math.max(1, offer.outputCount));
+    const known = (knownOffers.get(villagerId(entity)) || []).find(entry => entry.key === offer.key);
+    if (known) known.uses += made;
     if (made > 0) {
       sessionTrades += made;
       totalTrades += made;
@@ -1055,8 +1100,9 @@ function createTrader({
     const { current } = context;
     const { window, offers } = await openMerchant(context, entity);
     try {
-      const offer = offers.find(entry => entry.key === wanted.key && entry.realPrice === wanted.realPrice);
-      if (!offer) throw new Error('the villager no longer offers this at that price.');
+      // At the price it asks now, which what the bot remembers may be behind on
+      const offer = offers.find(entry => entry.key === wanted.key);
+      if (!offer) throw new Error('the villager no longer offers this.');
       window.selectedTrade = offer;
       const outputCount = () => window.slots.slice(window.inventoryStart, window.inventoryEnd)
         .filter(item => item?.name === offer.outputItem.name)
@@ -1144,6 +1190,7 @@ function createTrader({
     }
     const Item = require('prismarine-item')(current.registry);
     const offers = parseOffers(Item, packet);
+    knownOffers.set(villagerId(entity), offers);
     merchants.set(villagerId(entity), {
       id: villagerId(entity),
       level: Number(packet.villagerLevel) || null,

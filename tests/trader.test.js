@@ -676,28 +676,63 @@ async function main() {
     let mostStacks = 0;
     let fewestFree = 36;
     let sourceOpens = 0;
+    let villagerOpens = 0;
+    const working = () => trader.getStatus().phase !== 'waiting';
     const activateEntity = bot.activateEntity;
     bot.activateEntity = async entity => {
+      if (working()) villagerOpens += 1;
       mostStacks = Math.max(mostStacks, bot.inventory.items().filter(entry => entry.name === 'stone').length);
       fewestFree = Math.min(fewestFree, bot.inventory.emptySlotCount());
       return activateEntity(entity);
     };
     const activateBlock = bot.activateBlock;
     bot.activateBlock = async block => {
-      if (block.position.x === SOURCE.x) sourceOpens += 1;
+      if (block.position.x === SOURCE.x && working()) sourceOpens += 1;
       return activateBlock(block);
     };
     trader.start();
     await until(() => villagers.every(villager => villager.trades[0].nbTradeUses === 16) && trader.getStatus().phase === 'waiting', 'all sold', 8000);
     assert.equal(mostStacks, 18, 'a trip carries 18 stacks');
     assert.ok(fewestFree >= 9, `9 slots stay free, saw ${fewestFree}`);
-    assert.ok(sourceOpens <= 8, `one visit to take and one to return per trip, not one per villager: ${sourceOpens}`);
+    // One look at the start, a visit to take and one to return per trip, one last look
+    assert.ok(sourceOpens <= 6, `the chests are not read between trips: ${sourceOpens}`);
+    // Five to read the offers once, then only the six visits that trade
+    assert.ok(villagerOpens <= 11, `the villagers are not asked again between trips: ${villagerOpens}`);
     assert.equal(bot.outputItems().find(entry => entry.name === 'emerald_block').count, 8, '80 trades make 8 blocks');
     assert.equal(bot.count('emerald'), 8);
     assert.equal(bot.count('stone'), 0, 'what is left goes back');
     assert.equal(bot.sourceItems().reduce((sum, entry) => sum + entry.count, 0), 27 * 64 - 1600);
     assert.ok(lines.some(line => /Trip: took 1152 items, made \d+ trades in/.test(line)), 'the log tells how a trip went');
     assert.deepEqual(bot.dropped, []);
+    trader.dispose();
+  });
+
+  await test('a chest emptied behind the bot\'s back is no error, and it notices', async () => {
+    const villager = { trades: [rawTrade('paper', 1, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('paper', 64)], villagers: [villager] }, { idleIntervalMs: 30 });
+    const activateEntity = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      // Between reading the chest and going back for the paper
+      bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`).length = 0;
+      return activateEntity(entity);
+    };
+    trader.start();
+    await until(() => trader.getStatus().phase === 'waiting', 'waiting');
+    assert.equal(villager.trades[0].nbTradeUses, 0);
+    assert.equal(trader.getStatus().lastErrorMessage, null);
+    await until(() => (trader.getStatus().stock.paper || 0) === 0, 'it knows the chest is empty');
+    trader.dispose();
+  });
+
+  await test('chests filled later are picked up, and a new price is seen when the villager is opened', async () => {
+    const villager = { trades: [rawTrade('paper', 2, 'emerald', 1, { maximumNbTradeUses: 3 })] };
+    const { bot, trader } = await ready({ villagers: [villager] }, { idleIntervalMs: 20 });
+    trader.start();
+    await until(() => trader.getStatus().phase === 'waiting', 'nothing to sell yet');
+    bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`)[0] = stack('paper', 64);
+    villager.trades[0].inputItem1.itemCount = 4;
+    await until(() => villager.trades[0].nbTradeUses === 3, 'sold after the chest was read again');
+    await until(() => bot.sourceItems()[0]?.count === 64 - 12, 'at the new price');
     trader.dispose();
   });
 
