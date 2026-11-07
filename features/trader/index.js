@@ -15,13 +15,16 @@
  *      is left goes back to the sources in one go. Trades spending emeralds get a
  *      trip of their own, so they use the emeralds from the sources and not the
  *      ones just earned
+ *      A trade can have a price limit: a villager asking more than that for its
+ *      first input is left alone until the price has come down
  *   3. Every nine emeralds become an emerald block at the crafting table. The
  *      blocks and the results of other trades go into the output chest. Fewer
  *      than nine emeralds wait in the inventory for the next round, and go into
  *      the output chest when the trader is turned off
  *   4. With nothing to trade it opens the villagers one after another, since each
  *      restocks at its own time, and starts a new round as soon as one has a trade
- *      the sources can pay for. The chests are read again every five minutes
+ *      the sources can pay for. With the sources too empty for any trade it looks
+ *      into them every ten seconds instead, and goes on as soon as they are filled
  *
  * Chests and villagers are only ever used with shift-clicks. The server refused
  * cursor drags in chests, and mineflayer's bot.trade carries the result on the
@@ -67,6 +70,8 @@ const SLOT_READY_TIMEOUT_MS = 2_000;
 const IDLE_INTERVAL_MS = 5 * 60_000;
 // Between two villagers while waiting for restocks: twelve of them take 12 s
 const VILLAGER_WATCH_GAP_MS = 1_000;
+// Between two looks into source chests too empty to pay for any trade
+const STOCK_POLL_MS = 10_000;
 // A restock seen, but the round after it made no trade: not again right away
 const WATCH_BACKOFF_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
@@ -179,7 +184,7 @@ function createTrader({
   containerTimeoutMs = CONTAINER_TIMEOUT_MS, merchantTimeoutMs = MERCHANT_TIMEOUT_MS,
   idleIntervalMs = IDLE_INTERVAL_MS, retryDelayMs = RETRY_DELAY_MS, supplyRetryDelayMs = SUPPLY_RETRY_DELAY_MS,
   villagerCooldownMs = VILLAGER_COOLDOWN_MS, settleMs = SETTLE_MS,
-  villagerWatchGapMs = VILLAGER_WATCH_GAP_MS, watchBackoffMs = WATCH_BACKOFF_MS
+  villagerWatchGapMs = VILLAGER_WATCH_GAP_MS, watchBackoffMs = WATCH_BACKOFF_MS, stockPollMs = STOCK_POLL_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -189,7 +194,9 @@ function createTrader({
     output: validPosition(saved.output) ? plainPosition(saved.output) : null,
     craftingTable: validPosition(saved.craftingTable) ? plainPosition(saved.craftingTable) : null,
     // What the site chose per trade; a trade without a choice follows defaultEnabled
-    tradeChoices: saved.tradeChoices && typeof saved.tradeChoices === 'object' ? { ...saved.tradeChoices } : {}
+    tradeChoices: saved.tradeChoices && typeof saved.tradeChoices === 'object' ? { ...saved.tradeChoices } : {},
+    // The most a trade may cost in its first input; a trade without one has no limit
+    priceLimits: saved.priceLimits && typeof saved.priceLimits === 'object' ? { ...saved.priceLimits } : {}
   };
   let totalTrades = Math.max(0, Number(saved.totalTrades) || 0);
   let totalBlocks = Math.max(0, Number(saved.totalBlocks) || 0);
@@ -218,6 +225,7 @@ function createTrader({
   // The source chests of the current trip, in the order they were used
   let lastTakenFrom = [];
   const quietVillagers = new Set();
+  const expensiveSeen = new Map();
   // Off for the connection once a server refused the fast craft
   let dragCraftWorks = true;
   // Goes up with every new setup, which ends the wait for restocks
@@ -260,6 +268,11 @@ function createTrader({
     return typeof choice === 'boolean' ? choice : defaultEnabled(output);
   }
 
+  function withinPriceLimit(key, price) {
+    const limit = desired.priceLimits[key];
+    return !Number.isInteger(limit) || price <= limit;
+  }
+
   function totalStock() {
     const totals = new Map();
     for (const stock of sourceStock.values()) {
@@ -282,7 +295,12 @@ function createTrader({
       containers: containers.map(entry => ({ ...entry })),
       villagers: [...merchants.values()].map(merchant => ({
         ...merchant,
-        offers: merchant.offers.map(offer => ({ ...offer, enabled: isEnabled(offer.key, offer.output) }))
+        offers: merchant.offers.map(offer => ({
+          ...offer,
+          enabled: isEnabled(offer.key, offer.output),
+          priceLimit: desired.priceLimits[offer.key] ?? null,
+          overLimit: !withinPriceLimit(offer.key, offer.price1)
+        }))
       })),
       stock: Object.fromEntries(totalStock()),
       outputFull,
@@ -421,7 +439,7 @@ function createTrader({
     return getStatus();
   }
 
-  function configure({ sources, output, craftingTable, tradeChoices } = {}) {
+  function configure({ sources, output, craftingTable, tradeChoices, priceLimits } = {}) {
     const nextSources = sources === undefined ? desired.sources : sources;
     const nextOutput = output === undefined ? desired.output : output;
     const nextTable = craftingTable === undefined ? desired.craftingTable : craftingTable;
@@ -439,6 +457,13 @@ function createTrader({
       for (const [key, value] of Object.entries(tradeChoices)) {
         if (typeof value !== 'boolean') throw new Error('A trade choice must be on or off.');
         desired.tradeChoices[key] = value;
+      }
+    }
+    if (priceLimits && typeof priceLimits === 'object') {
+      for (const [key, value] of Object.entries(priceLimits)) {
+        if (value !== null && (!Number.isInteger(value) || value < 1)) throw new Error('A price limit must be a whole number above zero.');
+        if (value === null) delete desired.priceLimits[key];
+        else desired.priceLimits[key] = value;
       }
     }
     for (const key of [...sourceStock.keys()]) {
@@ -724,6 +749,20 @@ function createTrader({
     return worked;
   }
 
+  // Says so in the log once per price, not on every look
+  function priceAccepted(entity, offer) {
+    const seen = `${villagerId(entity)}|${offer.key}`;
+    if (withinPriceLimit(offer.key, offer.realPrice)) {
+      expensiveSeen.delete(seen);
+      return true;
+    }
+    if (expensiveSeen.get(seen) !== offer.realPrice) {
+      expensiveSeen.set(seen, offer.realPrice);
+      log(`[Trader] Villager ${villagerId(entity)} asks ${offer.realPrice} for ${offer.key}, above the limit of ${desired.priceLimits[offer.key]}.`);
+    }
+    return false;
+  }
+
   function planTrades(villagers) {
     // What the last trip left in the inventory pays too, but never earned emeralds
     const stock = totalStock();
@@ -735,6 +774,7 @@ function createTrader({
       if (Date.now() < (villagerRetryAt.get(villagerId(entity)) || 0)) continue;
       for (const offer of knownOffers.get(villagerId(entity)) || []) {
         if (!isEnabled(offer.key, offer.outputItem.name)) continue;
+        if (!priceAccepted(entity, offer)) continue;
         const uses = usesFromStock(offer, stock);
         if (!uses) continue;
         for (const [name, count] of offerCosts(offer, uses)) stock.set(name, stock.get(name) - count);
@@ -770,14 +810,19 @@ function createTrader({
   // Whether any enabled trade could be paid for from what the sources held
   function stockCoversAnOffer() {
     const stock = totalStock();
-    return enabledOffers().some(offer => offer.plain !== false && offer.price1 > 0
+    return affordableOffers().some(offer => offer.plain !== false && offer.price1 > 0
       && (stock.get(offer.input1) || 0) >= offer.price1
       && (!offer.input2 || (stock.get(offer.input2) || 0) >= offer.price2));
   }
 
+  function affordableOffers() {
+    return enabledOffers().filter(offer => withinPriceLimit(offer.key, offer.price1));
+  }
+
   // Waits by asking the villagers in turn, as each restocks at its own time. True
-  // when one has a trade to make; false when it is time to read the chests again
-  // or the setup changed. With nothing to pay with there is nobody to ask
+  // when one has a trade to make, or the chests were refilled; false when it is
+  // time to read the chests again or the setup changed. With nothing to pay with
+  // there is nobody to ask: it is the chests that are watched then
   async function watchForRestock(context) {
     const { current } = context;
     const deadline = Date.now() + idleIntervalMs;
@@ -786,10 +831,24 @@ function createTrader({
     const pause = ms => waitIdle(Math.max(0, Math.min(ms, deadline - Date.now())));
     while (watching()) {
       assertOnSpot(current);
-      if (!stockCoversAnOffer()) {
-        await pause(idleIntervalMs);
+      // Known trades the sources cannot pay for. With no trade known, as when every
+      // villager was asleep at the start, the villagers still have to be asked
+      if (affordableOffers().length && !stockCoversAnOffer()) {
+        if (phase !== 'waiting_stock') log('[Trader] The source chests hold too little for any trade; waiting for them to be filled.');
+        phase = 'waiting_stock';
+        notifyChange();
+        await pause(stockPollMs);
+        if (!watching()) continue;
+        await readSources(context);
+        if (stockCoversAnOffer()) {
+          log('[Trader] The source chests were filled.');
+          return true;
+        }
+        phase = 'waiting_stock';
         continue;
       }
+      // Prices only come down when villagers restock, so they are asked all the same
+      phase = enabledOffers().length && !affordableOffers().length ? 'waiting_price' : 'waiting';
       const villagers = reachableVillagers(current)
         .filter(entity => Date.now() >= (villagerRetryAt.get(villagerId(entity)) || 0));
       if (!villagers.length) await pause(villagerWatchGapMs);
@@ -798,7 +857,8 @@ function createTrader({
         const offers = await surveyVillager(context, entity);
         if (!context.active()) return false;
         const stock = totalStock();
-        const ready = (offers || []).find(offer => isEnabled(offer.key, offer.outputItem.name) && usesFromStock(offer, stock) > 0);
+        const ready = (offers || []).find(offer => isEnabled(offer.key, offer.outputItem.name)
+          && priceAccepted(entity, offer) && usesFromStock(offer, stock) > 0);
         if (ready) {
           log(`[Trader] Villager ${villagerId(entity)} has ${ready.key} again.`);
           return true;
@@ -1113,6 +1173,8 @@ function createTrader({
       // At the price it asks now, which what the bot remembers may be behind on
       const offer = offers.find(entry => entry.key === wanted.key);
       if (!offer) throw new Error('the villager no longer offers this.');
+      // What the bot remembered may have been cheaper: the plan knows better next time
+      if (!priceAccepted(entity, offer)) return;
       window.selectedTrade = offer;
       const outputCount = () => window.slots.slice(window.inventoryStart, window.inventoryEnd)
         .filter(item => item?.name === offer.outputItem.name)

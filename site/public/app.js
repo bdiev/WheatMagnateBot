@@ -12177,6 +12177,8 @@ const TRADER_PHASES = {
   returning: 'Returning resources',
   flushing: 'Emptying the inventory',
   waiting: 'Waiting for restocks',
+  waiting_stock: 'Waiting for resources in the source chests',
+  waiting_price: 'Every trade is above its price limit · waiting for prices to fall',
   retrying: 'Retrying'
 };
 
@@ -12200,6 +12202,13 @@ function traderChestRoles(trader) {
 // The source chests in priority order: the order the roles were added in
 function traderSourceKeys(roles) {
   return Object.keys(roles).filter(key => roles[key] === 'source');
+}
+
+// The limit on screen: an unsaved one, or the bot's. Null means no limit
+function traderPriceLimit(offer) {
+  const limits = state.traderDraft?.limits;
+  if (limits && Object.hasOwn(limits, offer.key)) return limits[offer.key];
+  return offer.priceLimit ?? null;
 }
 
 function traderTradeEnabled(offer) {
@@ -12247,16 +12256,22 @@ function renderTraderSetup(trader) {
   const offerRow = offer => {
     const usable = offer.plain !== false;
     const second = offer.input2 ? ` + ${formatNumber(offer.price2)} ${escapeHtml(traderItemName(offer.input2))}` : '';
+    const limit = traderPriceLimit(offer);
+    const tooExpensive = usable && limit !== null && offer.price1 > limit;
     const left = `${formatNumber(offer.uses)}/${formatNumber(offer.maxUses)} used${offer.disabled ? ' · locked' : ''}`;
+    const inputName = escapeHtml(traderItemName(offer.input1));
     return `
-      <label class="trader-offer${usable ? '' : ' is-unusable'}">
-        <input type="checkbox" data-trader-trade="${escapeHtml(offer.key)}"${usable && traderTradeEnabled(offer) ? ' checked' : ''}${usable ? '' : ' disabled'}>
-        ${itemIcon({ name: offer.output })}
-        <span class="trader-row-name">
-          <strong>${formatNumber(offer.price1)} ${escapeHtml(traderItemName(offer.input1))}${second} → ${formatNumber(offer.outputCount)} ${escapeHtml(traderItemName(offer.output))}</strong>
-          <small>${usable ? left : 'Special item · not supported'}</small>
-        </span>
-      </label>`;
+      <div class="trader-offer${usable ? '' : ' is-unusable'}${tooExpensive ? ' is-over-limit' : ''}">
+        <label class="trader-offer-main">
+          <input type="checkbox" data-trader-trade="${escapeHtml(offer.key)}"${usable && traderTradeEnabled(offer) ? ' checked' : ''}${usable ? '' : ' disabled'}>
+          ${itemIcon({ name: offer.output })}
+          <span class="trader-row-name">
+            <strong>${formatNumber(offer.price1)} ${inputName}${second} → ${formatNumber(offer.outputCount)} ${escapeHtml(traderItemName(offer.output))}</strong>
+            <small>${usable ? (tooExpensive ? `Above the limit · ${left}` : left) : 'Special item · not supported'}</small>
+          </span>
+        </label>
+        ${usable ? `<label class="trader-limit"><small>Max</small><input type="number" min="1" max="9999" step="1" inputmode="numeric" placeholder="any" value="${limit ?? ''}" data-trader-limit="${escapeHtml(offer.key)}" aria-label="Highest price in ${inputName}"></label>` : ''}
+      </div>`;
   };
   renderStable('#traderVillagers', villagers.length
     ? villagers.map((villager, index) => `
@@ -12266,7 +12281,7 @@ function renderTraderSetup(trader) {
           ? villager.offers.map(offerRow).join('')
           : '<p class="trader-note">Did not answer: asleep, busy, or without a job. It is asked again.</p>'}
       </article>`).join('')
-    : '<p class="trader-empty">No villagers found yet.</p>', [villagers, state.traderDraft?.choices || null]);
+    : '<p class="trader-empty">No villagers found yet.</p>', [villagers, state.traderDraft?.choices || null, state.traderDraft?.limits || null]);
 
   const table = $('#traderTableStatus');
   if (table) {
@@ -12364,8 +12379,10 @@ function handleTraderSetupChange(event) {
   if (!trader) return;
   const role = event.target.closest?.('[data-trader-role]');
   const trade = event.target.closest?.('[data-trader-trade]');
-  if (!role && !trade) return;
-  const draft = state.traderDraft || { roles: null, choices: {} };
+  const priceLimit = event.target.closest?.('[data-trader-limit]');
+  if (!role && !trade && !priceLimit) return;
+  const draft = state.traderDraft || { roles: null, choices: {}, limits: {} };
+  draft.limits ||= {};
   let focus = null;
   if (role) {
     const roles = { ...traderChestRoles(trader) };
@@ -12377,6 +12394,10 @@ function handleTraderSetupChange(event) {
     if (role.value) roles[role.dataset.traderRole] = role.value;
     draft.roles = roles;
     focus = `[data-trader-role="${CSS.escape(role.dataset.traderRole)}"]`;
+  } else if (priceLimit) {
+    const value = Math.floor(Number(priceLimit.value));
+    draft.limits[priceLimit.dataset.traderLimit] = priceLimit.value.trim() && value >= 1 ? Math.min(value, 9999) : null;
+    focus = `[data-trader-limit="${CSS.escape(priceLimit.dataset.traderLimit)}"]`;
   } else {
     draft.choices[trade.dataset.traderTrade] = trade.checked;
     focus = `[data-trader-trade="${CSS.escape(trade.dataset.traderTrade)}"]`;
@@ -12414,7 +12435,7 @@ function handleTraderMove(event) {
 
 function traderConfigurePayload() {
   const draft = state.traderDraft || {};
-  const payload = { tradeChoices: draft.choices || {} };
+  const payload = { tradeChoices: draft.choices || {}, priceLimits: draft.limits || {} };
   if (draft.roles) {
     const position = key => {
       const [x, y, z] = key.split(',').map(Number);

@@ -3748,6 +3748,15 @@ function normalizeTraderSettings(payload = {}) {
       settings.tradeChoices[key] = enabled;
     }
   }
+  if (payload.priceLimits !== undefined) {
+    const entries = payload.priceLimits && typeof payload.priceLimits === 'object' ? Object.entries(payload.priceLimits) : null;
+    if (!entries || entries.length > 500) throw invalid('Too many price limits.');
+    settings.priceLimits = {};
+    for (const [key, limit] of entries) {
+      if (key.length > 200 || (limit !== null && (!Number.isInteger(limit) || limit < 1 || limit > 9999))) throw invalid('Invalid price limit.');
+      settings.priceLimits[key] = limit;
+    }
+  }
   return settings;
 }
 

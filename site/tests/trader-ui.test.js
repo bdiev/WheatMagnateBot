@@ -53,6 +53,13 @@ const traderSourceKeys = new Function(`${app.match(/function traderSourceKeys[\s
 assert.deepEqual(traderSourceKeys({ '3,0,0': 'source', '1,0,0': 'output', '2,0,0': 'source' }), ['3,0,0', '2,0,0'], 'keeps the order, not sorted by position');
 assert.match(app.match(/function traderConfigurePayload[\s\S]*?\r?\n}\r?\n/)[0], /entries\.filter\(\(\[, role\]\) => role === 'source'\)/, 'the order is what gets saved');
 
+// A trade can have a price limit, checked on the server and saved with the setup
+assert.match(setup, /data-trader-limit="\$\{escapeHtml\(offer\.key\)\}"/);
+assert.match(app, /priceLimits: draft\.limits/);
+assert.match(app, /waiting_price: /);
+assert.match(server, /settings\.priceLimits\[key\] = limit/);
+assert.match(server, /limit < 1 \|\| limit > 9999/);
+
 // The bot stays out of the game chat: the Trader speaks through the system log only
 for (const [name, source] of [['features/trader/index.js', read('features/trader/index.js')], ['minecraft/container-interaction.js', read('minecraft/container-interaction.js')]]) {
   assert.doesNotMatch(source, /\.chat\(|\.whisper\(|sendMinecraftChat|'chat_message'|'chat_command'|'chat_message'/, `${name} never writes to the chat`);

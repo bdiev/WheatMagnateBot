@@ -14764,16 +14764,49 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   background: var(--trader-soft);
 }
 
-#tab-trader .trader-offer {
+#tab-trader .trader-offer-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
   cursor: pointer;
 }
 
 #tab-trader .trader-offer.is-unusable {
-  cursor: default;
   opacity: 0.6;
 }
 
-#tab-trader .trader-offer input {
+#tab-trader .trader-offer.is-unusable .trader-offer-main {
+  cursor: default;
+}
+
+#tab-trader .trader-offer.is-over-limit {
+  box-shadow: inset 3px 0 0 var(--trader-warn);
+}
+
+#tab-trader .trader-offer.is-over-limit .trader-row-name small {
+  color: var(--trader-warn);
+}
+
+#tab-trader .trader-limit {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+#tab-trader .trader-limit small {
+  color: var(--muted, #8a8f98);
+}
+
+#tab-trader .trader-limit input {
+  width: 72px;
+  min-height: 36px;
+  padding: 4px 6px;
+}
+
+#tab-trader .trader-offer-main input {
   flex: none;
   width: 18px;
   height: 18px;

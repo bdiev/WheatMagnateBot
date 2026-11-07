@@ -10,7 +10,7 @@ const registry = require('prismarine-registry')('1.21.4');
 const Item = require('prismarine-item')(registry);
 const { createTrader: create, parseOffers, usesFromStock, tradeKey } = require('../features/trader');
 
-const fast = { settleMs: 0, idleIntervalMs: 40, retryDelayMs: 10, supplyRetryDelayMs: 10, merchantTimeoutMs: 60, containerTimeoutMs: 60, villagerWatchGapMs: 2, watchBackoffMs: 5 };
+const fast = { settleMs: 0, idleIntervalMs: 40, retryDelayMs: 10, supplyRetryDelayMs: 10, merchantTimeoutMs: 60, containerTimeoutMs: 60, villagerWatchGapMs: 2, watchBackoffMs: 5, stockPollMs: 5 };
 const createTrader = options => create({ ...fast, ...options });
 
 const SOURCE = { x: 2, y: 64, z: 0 };
@@ -589,13 +589,101 @@ async function main() {
       return activateEntity(entity);
     };
     trader.start();
-    await until(() => trader.getStatus().phase === 'waiting', 'waiting');
+    await until(() => trader.getStatus().phase === 'waiting_stock', 'waiting for resources, not for restocks');
     const afterRound = opens;
     await wait(60);
     assert.equal(opens, afterRound);
     trader.configure({ tradeChoices: {} });
     await until(() => opens > afterRound, 'a new setup starts a new round');
     trader.dispose();
+  });
+
+  await test('sources run dry during work: filled again, it goes on within seconds, not minutes', async () => {
+    const villager = { trades: [rawTrade('stone', 64, 'emerald', 1)] };
+    const lines = [];
+    const { bot, trader } = await ready({ source: [stack('stone', 64), stack('stone', 64)], villagers: [villager] }, { idleIntervalMs: 60_000, log: message => lines.push(message) });
+    trader.start();
+    await until(() => villager.trades[0].nbTradeUses === 2 && trader.getStatus().phase === 'waiting_stock', 'sold out of stone');
+    assert.ok(lines.some(line => /hold too little for any trade/.test(line)), 'the log says why it waits');
+    bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`)[0] = stack('stone', 64);
+    await until(() => villager.trades[0].nbTradeUses === 3, 'trading right after the refill');
+    assert.ok(lines.some(line => /source chests were filled/.test(line)));
+    trader.dispose();
+  });
+
+  await test('villagers asleep at the start are asked again, and it is not blamed on the chests', async () => {
+    const lines = [];
+    const villager = { refuses: true, trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 2 })] };
+    const { trader } = await ready({ source: [stack('paper', 10)], villagers: [villager] }, { idleIntervalMs: 60_000, villagerCooldownMs: 5, log: message => lines.push(message) });
+    trader.start();
+    await until(() => trader.getStatus().phase === 'waiting', 'waiting');
+    assert.equal(lines.some(line => /hold too little/.test(line)), false);
+    villager.refuses = false;
+    await until(() => villager.trades[0].nbTradeUses === 2, 'traded once it woke up');
+    trader.dispose();
+  });
+
+  await test('a trade above its price limit is left alone until the price falls', async () => {
+    const lines = [];
+    const dear = { uuid: 'dear', at: [1.5, 64, 0.5], trades: [rawTrade('stone', 20, 'emerald', 1, { demand: 40, maximumNbTradeUses: 3 })] };
+    const cheap = { uuid: 'cheap', at: [0.5, 64, 2.1], trades: [rawTrade('stone', 20, 'emerald', 1, { maximumNbTradeUses: 2 })] };
+    const { bot, trader } = await ready({
+      source: Array.from({ length: 5 }, () => stack('stone', 64)),
+      villagers: [dear, cheap]
+    }, { idleIntervalMs: 60_000, log: message => lines.push(message) });
+    trader.configure({ priceLimits: { 'stone+>emerald': 30 } });
+    const offers = trader.getStatus().villagers.flatMap(villager => villager.offers);
+    assert.deepEqual(offers.map(offer => [offer.price1, offer.priceLimit, offer.overLimit]).sort(), [[20, 30, false], [60, 30, true]]);
+
+    trader.start();
+    await until(() => cheap.trades[0].nbTradeUses === 2 && trader.getStatus().phase === 'waiting', 'only the cheap one, then waiting for it to restock');
+    assert.equal(dear.trades[0].nbTradeUses, 0);
+    const line = /Villager dear asks 60 for stone\+>emerald, above the limit of 30/;
+    await wait(40);
+    assert.equal(lines.filter(entry => line.test(entry)).length, 1, 'once per price, though it is asked again and again');
+    assert.equal(bot.count('stone'), 0, 'nothing is held back for it');
+
+    dear.trades[0].demand = 0;
+    await until(() => dear.trades[0].nbTradeUses === 3, 'trades when the price has fallen');
+    assert.equal(trader.getStatus().enabled, true);
+    trader.dispose();
+  });
+
+  await test('a price risen since the villager was last seen stops at the window', async () => {
+    const villager = { trades: [rawTrade('stone', 20, 'emerald', 1, { maximumNbTradeUses: 2 })] };
+    const { bot, trader } = await ready({ source: [stack('stone', 64)], villagers: [villager] }, { idleIntervalMs: 60_000 });
+    trader.configure({ priceLimits: { 'stone+>emerald': 30 } });
+    let opens = 0;
+    const activateEntity = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      opens += 1;
+      // After the look at the start, on the way to trade
+      if (opens === 2) villager.trades[0].demand = 40;
+      return activateEntity(entity);
+    };
+    trader.start();
+    await until(() => opens >= 2 && bot.count('stone') === 0 && bot.sourceItems().length === 1, 'the stone is back');
+    await until(() => trader.getStatus().phase === 'waiting_price', 'waiting for the price');
+    assert.equal(villager.trades[0].nbTradeUses, 0);
+    assert.equal(bot.written.includes('select_trade'), false);
+    trader.dispose();
+  });
+
+  await test('price limits are checked, can be removed, and survive a restart', async () => {
+    const stateFile = path.join(os.tmpdir(), `trader-limit-test-${process.pid}.json`);
+    fs.rmSync(stateFile, { force: true });
+    try {
+      const trader = createTrader({ stateFile });
+      assert.throws(() => trader.configure({ priceLimits: { a: 0 } }), /whole number/);
+      assert.throws(() => trader.configure({ priceLimits: { a: 2.5 } }), /whole number/);
+      trader.configure({ priceLimits: { a: 30, b: 40 } });
+      trader.configure({ priceLimits: { b: null } });
+      trader.dispose();
+      const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      assert.deepEqual(saved.priceLimits, { a: 30 });
+    } finally {
+      fs.rmSync(stateFile, { force: true });
+    }
   });
 
   await test('a restock the round cannot use is not retried in a tight loop', async () => {
@@ -784,7 +872,7 @@ async function main() {
       return activateEntity(entity);
     };
     trader.start();
-    await until(() => trader.getStatus().phase === 'waiting', 'waiting');
+    await until(() => trader.getStatus().phase === 'waiting_stock', 'waiting');
     assert.equal(villager.trades[0].nbTradeUses, 0);
     assert.equal(trader.getStatus().lastErrorMessage, null);
     await until(() => (trader.getStatus().stock.paper || 0) === 0, 'it knows the chest is empty');
@@ -795,7 +883,7 @@ async function main() {
     const villager = { trades: [rawTrade('paper', 2, 'emerald', 1, { maximumNbTradeUses: 3 })] };
     const { bot, trader } = await ready({ villagers: [villager] }, { idleIntervalMs: 20 });
     trader.start();
-    await until(() => trader.getStatus().phase === 'waiting', 'nothing to sell yet');
+    await until(() => trader.getStatus().phase === 'waiting_stock', 'nothing to sell yet');
     bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`)[0] = stack('paper', 64);
     villager.trades[0].inputItem1.itemCount = 4;
     await until(() => villager.trades[0].nbTradeUses === 3, 'sold after the chest was read again');
