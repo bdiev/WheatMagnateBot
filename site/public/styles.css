@@ -14876,15 +14876,27 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   padding: 10px 16px 0;
 }
 
-#tab-trader .trader-villagers,
+#tab-trader .trader-villagers-inner,
 #tab-trader .trader-villager {
   display: grid;
   gap: 8px;
   min-width: 0;
 }
 
+#tab-trader .trader-other-trades summary {
+  padding: 6px 2px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#tab-trader .trader-other-trades[open] summary {
+  margin-bottom: 8px;
+}
+
 #tab-trader .trader-villagers {
-  gap: 16px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
   padding: 14px 16px 16px;
 }
 

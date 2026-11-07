@@ -178,6 +178,7 @@ const state = {
   stoneMinerData: null,
   traderData: null,
   traderDraft: null,
+  traderOtherTradesOpen: false,
   killAuraSelectedMobs: new Set(),
   killAuraModalSelectionSnapshot: new Set(),
   killAuraTargetsDirty: false,
@@ -12216,6 +12217,46 @@ function traderTradeEnabled(offer) {
   return typeof choice === 'boolean' ? choice : Boolean(offer.enabled);
 }
 
+// One entry per trade, however many villagers offer it: its switch and its limit
+// are the same for all of them anyway. What sells for emeralds comes first
+function traderTradeGroups(villagers) {
+  const groups = new Map();
+  const widen = (span, value) => [Math.min(span[0], value), Math.max(span[1], value)];
+  for (const villager of villagers) {
+    for (const offer of villager.offers || []) {
+      const plain = offer.plain !== false;
+      const id = `${offer.key}|${plain}`;
+      let group = groups.get(id);
+      if (!group) {
+        group = {
+          key: offer.key,
+          enabled: offer.enabled,
+          priceLimit: offer.priceLimit,
+          input1: offer.input1,
+          input2: offer.input2,
+          output: offer.output,
+          plain,
+          selling: plain && offer.output === 'emerald',
+          price1: [offer.price1, offer.price1],
+          price2: [offer.price2 || 0, offer.price2 || 0],
+          outputCount: [offer.outputCount, offer.outputCount],
+          uses: 0,
+          maxUses: 0,
+          offers: []
+        };
+        groups.set(id, group);
+      }
+      group.price1 = widen(group.price1, offer.price1);
+      group.price2 = widen(group.price2, offer.price2 || 0);
+      group.outputCount = widen(group.outputCount, offer.outputCount);
+      group.uses += offer.uses;
+      group.maxUses += offer.maxUses;
+      group.offers.push(offer);
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.input1.localeCompare(b.input1) || a.output.localeCompare(b.output));
+}
+
 function renderTraderSetup(trader) {
   const roles = traderChestRoles(trader);
   const containers = trader.containers || [];
@@ -12253,34 +12294,45 @@ function renderTraderSetup(trader) {
   if (priorityNote) priorityNote.hidden = sourceKeys.length < 2;
 
   const villagers = trader.villagers || [];
-  const offerRow = offer => {
-    const usable = offer.plain !== false;
-    const second = offer.input2 ? ` + ${formatNumber(offer.price2)} ${escapeHtml(traderItemName(offer.input2))}` : '';
-    const limit = traderPriceLimit(offer);
-    const tooExpensive = usable && limit !== null && offer.price1 > limit;
-    const left = `${formatNumber(offer.uses)}/${formatNumber(offer.maxUses)} used${offer.disabled ? ' · locked' : ''}`;
-    const inputName = escapeHtml(traderItemName(offer.input1));
+  const silent = villagers.filter(villager => !villager.offers?.length).length;
+  const groups = traderTradeGroups(villagers);
+  const range = (low, high) => formatNumber(low) + (high > low ? `–${formatNumber(high)}` : '');
+  const groupRow = group => {
+    const limit = traderPriceLimit(group);
+    const overLimit = limit === null ? 0 : group.offers.filter(offer => offer.price1 > limit).length;
+    const first = `${range(group.price1[0], group.price1[1])} ${escapeHtml(traderItemName(group.input1))}`;
+    const second = group.input2 ? ` + ${range(group.price2[0], group.price2[1])} ${escapeHtml(traderItemName(group.input2))}` : '';
+    const count = group.offers.length;
+    const details = [
+      `${formatNumber(count)} ${count === 1 ? 'villager' : 'villagers'}`,
+      `${formatNumber(group.uses)}/${formatNumber(group.maxUses)} used`,
+      overLimit ? `${formatNumber(overLimit)} above the limit` : ''
+    ].filter(Boolean).join(' · ');
     return `
-      <div class="trader-offer${usable ? '' : ' is-unusable'}${tooExpensive ? ' is-over-limit' : ''}">
+      <div class="trader-offer${group.plain ? '' : ' is-unusable'}${overLimit ? ' is-over-limit' : ''}">
         <label class="trader-offer-main">
-          <input type="checkbox" data-trader-trade="${escapeHtml(offer.key)}"${usable && traderTradeEnabled(offer) ? ' checked' : ''}${usable ? '' : ' disabled'}>
-          ${itemIcon({ name: offer.output })}
+          <input type="checkbox" data-trader-trade="${escapeHtml(group.key)}"${group.plain && traderTradeEnabled(group) ? ' checked' : ''}${group.plain ? '' : ' disabled'}>
+          ${itemIcon({ name: group.selling ? group.input1 : group.output })}
           <span class="trader-row-name">
-            <strong>${formatNumber(offer.price1)} ${inputName}${second} → ${formatNumber(offer.outputCount)} ${escapeHtml(traderItemName(offer.output))}</strong>
-            <small>${usable ? (tooExpensive ? `Above the limit · ${left}` : left) : 'Special item · not supported'}</small>
+            <strong>${first}${second} → ${range(group.outputCount[0], group.outputCount[1])} ${escapeHtml(traderItemName(group.output))}</strong>
+            <small>${group.plain ? details : 'Special item · not supported'}</small>
           </span>
         </label>
-        ${usable ? `<label class="trader-limit"><small>Max</small><input type="number" min="1" max="9999" step="1" inputmode="numeric" placeholder="any" value="${limit ?? ''}" data-trader-limit="${escapeHtml(offer.key)}" aria-label="Highest price in ${inputName}"></label>` : ''}
+        ${group.plain ? `<label class="trader-limit"><small>Max</small><input type="number" min="1" max="9999" step="1" inputmode="numeric" placeholder="any" value="${limit ?? ''}" data-trader-limit="${escapeHtml(group.key)}" aria-label="Highest price in ${escapeHtml(traderItemName(group.input1))}"></label>` : ''}
       </div>`;
   };
+  const selling = groups.filter(group => group.selling);
+  const others = groups.filter(group => !group.selling);
+  const othersOn = others.filter(group => group.plain && traderTradeEnabled(group)).length;
   renderStable('#traderVillagers', villagers.length
-    ? villagers.map((villager, index) => `
-      <article class="trader-villager">
-        <h3>Villager ${index + 1}${villager.level ? ` · level ${formatNumber(villager.level)}` : ''}</h3>
-        ${villager.offers?.length
-          ? villager.offers.map(offerRow).join('')
-          : '<p class="trader-note">Did not answer: asleep, busy, or without a job. It is asked again.</p>'}
-      </article>`).join('')
+    ? `
+      <p class="trader-note">${formatNumber(villagers.length)} ${villagers.length === 1 ? 'villager' : 'villagers'} in reach${silent ? ` · ${formatNumber(silent)} not answering (asleep, busy, or without a job)` : ''}</p>
+      ${selling.map(groupRow).join('')}
+      ${others.length ? `
+        <details id="traderOtherTrades" class="trader-other-trades"${state.traderOtherTradesOpen ? ' open' : ''}>
+          <summary>Other trades (${formatNumber(others.length)}${othersOn ? `, ${formatNumber(othersOn)} on` : ''})</summary>
+          <div class="trader-villagers-inner">${others.map(groupRow).join('')}</div>
+        </details>` : ''}`
     : '<p class="trader-empty">No villagers found yet.</p>', [villagers, state.traderDraft?.choices || null, state.traderDraft?.limits || null]);
 
   const table = $('#traderTableStatus');
@@ -14407,6 +14459,10 @@ $('#adminPlaytimeCommands')?.addEventListener('click', event => {
 document.addEventListener('click', handleAdminBotCommand);
 document.addEventListener('change', handleTraderSetupChange);
 document.addEventListener('click', handleTraderMove);
+// Status updates redraw the list: the folded part stays as it was left
+document.addEventListener('toggle', event => {
+  if (event.target?.id === 'traderOtherTrades') state.traderOtherTradesOpen = event.target.open;
+}, true);
 document.addEventListener('click', handleAdminControlAction);
 for (const [selector, action] of [
   ['#adminPlaytimeInput', 'playtime_set'],
