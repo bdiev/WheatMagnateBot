@@ -8,10 +8,12 @@
  *   1. Scan: from the spot, finds the chests, the crafting table and the
  *      villagers in reach and reads what each villager offers. The site then
  *      marks the chests as sources or the output, and picks the trades
- *   2. Each round reads the source chests and the villagers. Every enabled
- *      trade whose inputs lie in the sources is made: the inputs are taken, the
- *      trade runs as often as they and the villager allow, and what is left goes
- *      back to the sources
+ *   2. Each round reads the source chests and the villagers, then makes one trip:
+ *      up to 18 stacks of what all enabled trades need are taken at once, nine
+ *      slots stay free for the results, the villagers are served one after
+ *      another, and what is left goes back to the sources in one go. Trades
+ *      spending emeralds get a trip of their own, so they use the emeralds from
+ *      the sources and not the ones just earned
  *   3. Every nine emeralds become an emerald block at the crafting table. The
  *      blocks and the results of other trades go into the output chest. Fewer
  *      than nine emeralds wait in the inventory for the next round, and go into
@@ -19,11 +21,11 @@
  *   4. With nothing to trade it looks again every five minutes, since villagers
  *      restock on their own
  *
- * Items are only ever moved with shift-clicks. The server refuses cursor drags
- * while a container is open, and mineflayer's bot.trade carries the result on
- * the cursor and throws it on the ground when the inventory is full; a
- * shift-click on the result slot repeats the trade on the server and stops by
- * itself when there is no room.
+ * Chests and villagers are only ever used with shift-clicks. The server refused
+ * cursor drags in chests, and mineflayer's bot.trade carries the result on the
+ * cursor and throws it on the ground when the inventory is full; a shift-click on
+ * the result slot repeats the trade on the server and stops by itself when there
+ * is no room. The crafting table takes one drag, see craftByDrag.
  *
  * It never stops on its own: every error is shown and retried. It never writes
  * to the game chat: everything it has to say goes to the log.
@@ -40,12 +42,21 @@ const VILLAGER = 'villager';
 const EMERALD = 'emerald';
 const EMERALD_BLOCK = 'emerald_block';
 const EMERALDS_PER_BLOCK = 9;
-// Vanilla entity reach, from the eye to the nearest point of the villager
-const VILLAGER_REACH = 3;
+const CRAFT_RESULT_SLOT = 0;
+const CRAFT_GRID_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const DOUBLE_CHEST_SLOTS = 54;
+// From the eye to the nearest point of the villager. The server takes up to six
+// blocks (the reach of 3 plus its margin of 3); a little less, as villagers move
+const VILLAGER_REACH = 5.5;
 const MAX_SOURCES = 16;
-// Kept free when taking inputs, so the results of the trade fit
-const RESERVED_FREE_SLOTS = 2;
-// A craft is one click per emerald; larger amounts go in several batches
+// One trip to the sources takes at most this many stacks, and leaves this many
+// slots free for the results: nine stacks of emeralds make 64 blocks
+const MAX_STACKS_PER_TRIP = 18;
+const RESERVED_FREE_SLOTS = 9;
+// The server sends the whole result of a shift-click in one tick
+const TRADE_SETTLE_MS = 50;
+// mineflayer's craft is one click per emerald, each waiting for the server, so it
+// is only the fallback for a server refusing the fast way; it goes in batches
 const MAX_CRAFTS_PER_BATCH = 16;
 const CRAFT_TIMEOUT_BASE_MS = 30_000;
 const CRAFT_TIMEOUT_PER_CRAFT_MS = 10_000;
@@ -198,6 +209,8 @@ function createTrader({
   const openingCancels = new Set();
   const villagerRetryAt = new Map();
   const quietVillagers = new Set();
+  // Off for the connection once a server refused the fast craft
+  let dragCraftWorks = true;
   // What the source chests held when last opened, by position
   const sourceStock = new Map();
 
@@ -435,13 +448,19 @@ function createTrader({
     try {
       await flushing;
       desired.anchor = feetPosition(current);
-      containers = findContainers(current);
+      containers = await findContainers(context);
       const known = new Set(containers.map(positionKey));
       desired.sources = desired.sources.filter(pos => known.has(positionKey(pos)));
       if (desired.output && !known.has(positionKey(desired.output))) desired.output = null;
       desired.craftingTable = findCraftingTable(current);
       merchants.clear();
       villagerRetryAt.clear();
+      for (const entity of Object.values(current.entities || {})) {
+        if (entity?.name !== VILLAGER || !entity.position) continue;
+        const distance = distanceToEntity(current, entity);
+        if (distance > VILLAGER_REACH + 10) continue;
+        log(`[Trader] Scan: villager ${villagerId(entity)} at ${distance.toFixed(1)} blocks${distance > VILLAGER_REACH ? ', out of reach' : ''}.`);
+      }
       for (const entity of reachableVillagers(current)) {
         if (!context.active()) break;
         try {
@@ -487,8 +506,11 @@ function createTrader({
     return step ? { x: block.position.x + step[0], y: block.position.y, z: block.position.z + step[1] } : null;
   }
 
-  // Each chest once, however many blocks it takes
-  function findContainers(current) {
+  // Each chest once, however many blocks it takes. The block states say which
+  // blocks belong together; what the server opens is the proof where they don't:
+  // both halves of a double chest open the same 54 slots
+  async function findContainers(context) {
+    const { current } = context;
     const seen = new Set();
     const found = [];
     for (const block of findBlocksInReach(current, [...STORAGE_BLOCKS])) {
@@ -497,9 +519,42 @@ function createTrader({
       seen.add(key);
       const partner = chestPartner(block);
       if (partner) seen.add(positionKey(partner));
-      found.push({ ...plainPosition(block.position), name: block.name, double: Boolean(partner) });
+      const properties = block.getProperties?.() || {};
+      found.push({
+        ...plainPosition(block.position), name: block.name, double: Boolean(partner),
+        linked: Boolean(partner), state: `${properties.type || '-'}/${properties.facing || '-'}`
+      });
     }
-    return found;
+    for (const entry of found) {
+      if (entry.name === 'barrel' || !context.active()) continue;
+      try {
+        const window = await openContainer(context, entry, 'A chest');
+        entry.slots = window.inventoryStart;
+        entry.contents = JSON.stringify(window.slots.slice(0, window.inventoryStart).map(item => item && [item.name, item.count]));
+        closeWindow(current, window);
+      } catch (error) {
+        log(`[Trader] Scan: could not open ${entry.name} at ${positionKey(entry)}: ${error.message}`, 'warn');
+      }
+      log(`[Trader] Scan: ${entry.name} at ${positionKey(entry)}, state ${entry.state}, ${entry.slots ?? '?'} slots.`);
+    }
+    // In coordinate order, so a row of double chests pairs up from one end
+    const unlinked = found.filter(entry => !entry.linked && entry.slots === DOUBLE_CHEST_SLOTS)
+      .sort((a, b) => a.x - b.x || a.z - b.z);
+    const merged = new Set();
+    for (const entry of unlinked) {
+      if (merged.has(entry)) continue;
+      const half = unlinked.find(other => other !== entry && !merged.has(other)
+        && other.name === entry.name && other.y === entry.y
+        && Math.abs(other.x - entry.x) + Math.abs(other.z - entry.z) === 1
+        && other.contents === entry.contents);
+      if (!half) continue;
+      merged.add(half);
+      merged.add(entry);
+      entry.double = true;
+      found.splice(found.indexOf(half), 1);
+      log(`[Trader] Scan: ${positionKey(entry)} and ${positionKey(half)} are one double chest.`);
+    }
+    return found.map(({ x, y, z, name, double, slots }) => ({ x, y, z, name, double: double || slots === DOUBLE_CHEST_SLOTS }));
   }
 
   function findCraftingTable(current) {
@@ -537,6 +592,7 @@ function createTrader({
     sessionTrades = 0;
     sessionBlocks = 0;
     sessionStartedAt = new Date().toISOString();
+    dragCraftWorks = true;
     log('[Trader] Started.');
     loopFinished = loop(generation, current).catch(error => log(`[Trader] Loop crashed: ${error.message}`, 'error'));
   }
@@ -602,9 +658,10 @@ function createTrader({
     if (!villagers.length) throw supplyError('No villager within reach of the bot.');
     // Past the checks: the site should not show an old problem for a whole round
     clearError();
-    let worked = false;
+    const stock = totalStock();
+    const plan = [];
     for (const entity of villagers) {
-      if (!context.active()) return worked;
+      if (!context.active()) return false;
       const id = villagerId(entity);
       if (Date.now() < (villagerRetryAt.get(id) || 0)) continue;
       let offers;
@@ -613,7 +670,7 @@ function createTrader({
         offers = opened.offers;
         closeWindow(current, opened.window);
       } catch (error) {
-        if (!context.active()) return worked;
+        if (!context.active()) return false;
         villagerRetryAt.set(id, Date.now() + villagerCooldownMs);
         // A villager sleeps all night: once, not every minute
         if (!quietVillagers.has(id)) {
@@ -625,15 +682,33 @@ function createTrader({
       villagerRetryAt.delete(id);
       quietVillagers.delete(id);
       for (const offer of offers) {
-        if (!context.active()) return worked;
         if (!isEnabled(offer.key, offer.outputItem.name)) continue;
-        const uses = usesFromStock(offer, totalStock());
+        const uses = usesFromStock(offer, stock);
         if (!uses) continue;
-        if (await makeTrade(context, entity, offer, uses)) worked = true;
-        await tidyInventory(context);
+        for (const [name, count] of offerCosts(offer, uses)) stock.set(name, stock.get(name) - count);
+        plan.push({ entity, offer, uses });
       }
     }
+    const spendsEmeralds = entry => offerCosts(entry.offer, 1).has(EMERALD);
+    const selling = plan.filter(entry => !spendsEmeralds(entry));
+    const trips = plan.filter(spendsEmeralds).map(entry => [entry]);
+    if (selling.length) trips.push(selling);
+    let worked = false;
+    for (const trip of trips) {
+      if (!context.active()) return worked;
+      if (await makeTrip(context, trip)) worked = true;
+      await tidyInventory(context);
+    }
     return worked;
+  }
+
+  function offerCosts(offer, uses) {
+    const costs = new Map([[offer.inputItem1.name, offer.realPrice * uses]]);
+    if (offer.hasItem2) {
+      const name = offer.inputItem2.name;
+      costs.set(name, (costs.get(name) || 0) + offer.price2 * uses);
+    }
+    return costs;
   }
 
   // Items in the inventory that a trade can use
@@ -720,6 +795,72 @@ function createTrader({
     await sleep(settleMs);
   }
 
+  // A stack spread over the grid with one drag, the rest put back, and one
+  // shift-click on the result: the way a player does it. The server repeats the
+  // craft by itself and stops when there is no room, so nothing lands on the
+  // ground. prismarine-windows has no model of a drag, so these clicks are written
+  // directly; like mineflayer's own syncWindow they carry an impossible stateId,
+  // which makes the server answer with the whole window and the cursor.
+  async function craftByDrag(context, table) {
+    const { current } = context;
+    if (!current.registry.supportFeature?.('stateIdUsed')) return false;
+    const { direction, cursor } = containerInteraction(current, table);
+    await current.lookAt(table.position.plus(cursor), true);
+    if (current.waitForTicks) await current.waitForTicks(2);
+    const window = await waitForContainerWindow(current, table, direction, cursor,
+      'The crafting table did not open.', opened => String(opened.type || '').startsWith('minecraft:crafting'));
+    const Item = require('prismarine-item')(current.registry);
+    const sendDragClick = (slot, mouseButton) => current._client.write('window_click', {
+      windowId: window.id,
+      stateId: -1,
+      slot,
+      mouseButton,
+      mode: 5,
+      changedSlots: [],
+      cursorItem: Item.toNotch(window.selectedItem)
+    });
+    const inventoryCount = name => window.slots.slice(window.inventoryStart, window.inventoryEnd)
+      .filter(item => item?.name === name && isPlainItem(item))
+      .reduce((sum, item) => sum + item.count, 0);
+    const gridEmpty = () => CRAFT_GRID_SLOTS.every(slot => !window.slots[slot]);
+    let crafted = false;
+    try {
+      await sleep(settleMs);
+      while (context.active() && current.currentWindow === window) {
+        const stack = window.slots.slice(window.inventoryStart, window.inventoryEnd)
+          .filter(item => item?.name === EMERALD && isPlainItem(item) && item.count >= EMERALDS_PER_BLOCK)
+          .sort((a, b) => b.count - a.count)[0];
+        if (!stack) break;
+        const { slot: stackSlot, count } = stack;
+        const blocksBefore = inventoryCount(EMERALD_BLOCK);
+        await current.clickWindow(stackSlot, 0, 0);
+        sendDragClick(-999, 0);
+        for (const slot of CRAFT_GRID_SLOTS) sendDragClick(slot, 1);
+        sendDragClick(-999, 2);
+        const expected = Math.floor(count / EMERALDS_PER_BLOCK);
+        const spread = await waitFor(() => window.slots[CRAFT_RESULT_SLOT]?.name === EMERALD_BLOCK
+          && CRAFT_GRID_SLOTS.every(slot => window.slots[slot]?.name === EMERALD), SLOT_READY_TIMEOUT_MS);
+        if (!spread) return crafted;
+        if (window.selectedItem) await current.clickWindow(stackSlot, 0, 0);
+        await withTimeout(current.clickWindow(CRAFT_RESULT_SLOT, 0, 1), CLICK_TIMEOUT_MS, 'The craft click got no answer.')
+          .catch(error => log(`[Trader] ${error.message}`, 'warn'));
+        if (current._syncWindow) {
+          await withTimeout(current._syncWindow(window), CLICK_TIMEOUT_MS, 'The crafting table gave no answer.')
+            .catch(error => log(`[Trader] ${error.message}`, 'warn'));
+        }
+        await waitFor(() => inventoryCount(EMERALD_BLOCK) >= blocksBefore + expected && gridEmpty(), SLOT_READY_TIMEOUT_MS);
+        if (inventoryCount(EMERALD_BLOCK) <= blocksBefore) return crafted;
+        crafted = true;
+        // No room for the rest of the result: it goes back on close, and the
+        // products leave the inventory before the next try
+        if (!gridEmpty()) break;
+      }
+      return crafted;
+    } finally {
+      closeWindow(current, window);
+    }
+  }
+
   // Every nine emeralds at the crafting table, as blocks. mineflayer's craft
   // throws a result on the ground when it has no room, so room comes first
   async function craftEmeralds(context) {
@@ -736,22 +877,37 @@ function createTrader({
       phase = 'crafting';
       closeOpenWindow(current);
       const blocksBefore = carried(current, EMERALD_BLOCK);
-      try {
-        await withTimeout(
-          current.craft(recipe, crafts, table),
-          CRAFT_TIMEOUT_BASE_MS + crafts * CRAFT_TIMEOUT_PER_CRAFT_MS,
-          'Crafting emerald blocks took too long.'
-        );
-      } finally {
-        closeOpenWindow(current);
-      }
+      const startedAt = Date.now();
+      // Emeralds scattered in small stacks have nothing to spread: only then, or
+      // on a server refusing the drag, the slow way is used
+      const hasStack = current.inventory.items()
+        .some(item => item.name === EMERALD && isPlainItem(item) && item.count >= EMERALDS_PER_BLOCK);
+      const fast = dragCraftWorks && hasStack && await craftByDrag(context, table);
+      if (!context.active()) return;
       await sleep(settleMs);
+      if (!fast) {
+        if (dragCraftWorks && hasStack) {
+          dragCraftWorks = false;
+          log('[Trader] The server did not take the fast craft; crafting one block at a time.', 'warn');
+        }
+        closeOpenWindow(current);
+        try {
+          await withTimeout(
+            current.craft(recipe, crafts, table),
+            CRAFT_TIMEOUT_BASE_MS + crafts * CRAFT_TIMEOUT_PER_CRAFT_MS,
+            'Crafting emerald blocks took too long.'
+          );
+        } finally {
+          closeOpenWindow(current);
+        }
+        await sleep(settleMs);
+      }
       const made = carried(current, EMERALD_BLOCK) - blocksBefore;
       if (made <= 0) throw new Error('The crafting table gave no emerald blocks.');
       sessionBlocks += made;
       totalBlocks += made;
       saveState();
-      log(`[Trader] Crafted ${made} emerald ${made === 1 ? 'block' : 'blocks'}.`);
+      log(`[Trader] Crafted ${made} emerald ${made === 1 ? 'block' : 'blocks'} in ${((Date.now() - startedAt) / 1000).toFixed(1)} s.`);
       notifyChange();
     }
   }
@@ -761,24 +917,40 @@ function createTrader({
     return current.inventory.items().some(item => item.name === EMERALD_BLOCK && item.count < (item.stackSize || 64));
   }
 
-  // Takes what one trade needs from the sources, and makes it
-  async function makeTrade(context, entity, offer, uses) {
+  // One visit to the sources for everything in the plan, then the villagers one
+  // after another. What did not fit in this trip is for the next round
+  async function makeTrip(context, plan) {
     const { current } = context;
-    const needed = new Map([[offer.inputItem1.name, offer.realPrice * uses]]);
-    if (offer.hasItem2) {
-      const name = offer.inputItem2.name;
-      needed.set(name, (needed.get(name) || 0) + offer.price2 * uses);
+    const startedAt = Date.now();
+    const needed = new Map();
+    for (const { offer, uses } of plan) {
+      for (const [name, count] of offerCosts(offer, uses)) needed.set(name, (needed.get(name) || 0) + count);
     }
     const before = new Map([...needed.keys()].map(name => [name, carried(current, name)]));
     await takeFromSources(context, needed);
     if (!context.active()) return false;
-    for (const [name, count] of before) {
-      if (carried(current, name) <= count) {
-        await returnTaken(context, before);
-        throw supplyError(`No room in the inventory for ${name}.`);
-      }
+    const takenAll = [...before].reduce((sum, [name, count]) => sum + Math.max(0, carried(current, name) - count), 0);
+    if (!takenAll) {
+      throw supplyError(`No room to take resources: ${current.inventory.emptySlotCount()} free slots, and ${RESERVED_FREE_SLOTS} stay free for the results.`);
     }
+    let made = 0;
+    for (const { entity, offer, uses } of plan) {
+      if (!context.active()) break;
+      if (Date.now() < (villagerRetryAt.get(villagerId(entity)) || 0)) continue;
+      let affordable = uses;
+      for (const [name, cost] of offerCosts(offer, 1)) {
+        affordable = Math.min(affordable, Math.floor((carried(current, name) - before.get(name)) / cost));
+      }
+      if (affordable > 0) made += await makeTrade(context, entity, offer, affordable);
+    }
+    await returnTaken(context, before);
+    if (made) log(`[Trader] Trip: took ${takenAll} items, made ${made} trades in ${((Date.now() - startedAt) / 1000).toFixed(1)} s.`);
+    return made > 0;
+  }
 
+  // One trade with what the bot already carries; how many times it ran
+  async function makeTrade(context, entity, offer, uses) {
+    const { current } = context;
     const outputName = offer.outputItem.name;
     const outputBefore = carried(current, outputName);
     phase = 'trading';
@@ -793,7 +965,6 @@ function createTrader({
     await sleep(settleMs);
     const gained = Math.max(0, carried(current, outputName) - outputBefore);
     const made = Math.floor(gained / Math.max(1, offer.outputCount));
-    await returnTaken(context, before);
     if (made > 0) {
       sessionTrades += made;
       totalTrades += made;
@@ -801,7 +972,7 @@ function createTrader({
       log(`[Trader] ${made} x ${offer.key}.`);
       notifyChange();
     }
-    return made > 0;
+    return made;
   }
 
   // Only what was taken goes back: before, the bot may already have held emeralds
@@ -834,9 +1005,13 @@ function createTrader({
         // a time, and shows the result in slot 2
         current._client.write('select_trade', { slot: offer.index });
         if (!await waitFor(() => tradeIsReady(window, offer), SLOT_READY_TIMEOUT_MS)) break;
-        await clickOutput(current, window);
-        await sleep(settleMs);
-        if (outputCount() <= beforeClick) break;
+        // Not awaited: mineflayer may wait for a slot update that never comes.
+        // The inputs going down is the server's own answer
+        const paidBefore = window.slots[0].count;
+        clickOutput(current, window);
+        const answered = await waitFor(() => !window.slots[0] || window.slots[0].count !== paidBefore, SLOT_READY_TIMEOUT_MS);
+        await sleep(Math.min(settleMs, TRADE_SETTLE_MS));
+        if (!answered || outputCount() <= beforeClick) break;
       }
     } finally {
       closeWindow(current, window);
@@ -949,22 +1124,27 @@ function createTrader({
     sourceStock.set(positionKey(pos), stock);
   }
 
-  // Whole stacks, until enough is taken or only the reserved slots are free
+  // Whole stacks, until enough is taken, the trip is full, or only the reserved
+  // slots are free
   async function takeFromSources(context, needed) {
     const { current } = context;
     const left = new Map(needed);
+    let stacks = 0;
     phase = 'restocking';
     for (const pos of desired.sources) {
-      if (![...left.values()].some(count => count > 0)) return;
+      if (stacks >= MAX_STACKS_PER_TRIP || ![...left.values()].some(count => count > 0)) break;
       const stock = sourceStock.get(positionKey(pos));
       if (!stock || ![...left.keys()].some(name => left.get(name) > 0 && stock.get(name) > 0)) continue;
       const window = await openContainer(context, pos, 'A source chest');
       try {
         for (const stack of window.slots.slice(0, window.inventoryStart)) {
           if (!stack || !isPlainItem(stack) || !(left.get(stack.name) > 0)) continue;
-          if (freeSlots(window) <= RESERVED_FREE_SLOTS) break;
+          if (stacks >= MAX_STACKS_PER_TRIP || freeSlots(window) <= RESERVED_FREE_SLOTS) break;
           const count = stack.count;
-          if (await shiftClick(context, window, stack.slot)) left.set(stack.name, left.get(stack.name) - count);
+          if (await shiftClick(context, window, stack.slot)) {
+            left.set(stack.name, left.get(stack.name) - count);
+            stacks += 1;
+          }
         }
         await sleep(settleMs);
         noteStock(pos, window);
@@ -1057,14 +1237,15 @@ function createTrader({
     return window;
   }
 
-  async function waitForContainerWindow(current, block, direction, cursor, message) {
+  async function waitForContainerWindow(current, block, direction, cursor, message,
+    isExpected = opened => String(opened.type || '').startsWith('minecraft:generic')) {
     let onOpen;
     let cancel;
     let cancelled = false;
     const opening = new Promise((resolve, reject) => {
       onOpen = window => {
         // A villager that answers late must not pass for the chest
-        if (String(window.type || '').startsWith('minecraft:generic')) {
+        if (isExpected(window)) {
           resolve(window);
         } else {
           closeWindow(current, window);

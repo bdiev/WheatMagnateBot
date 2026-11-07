@@ -32,7 +32,7 @@ async function until(check, label, timeoutMs = 3000) {
 }
 
 function stack(name, count, extra = {}) {
-  return { name, count, type: registry.itemsByName[name].id, stackSize: registry.itemsByName[name].stackSize, ...extra };
+  return { name, count, type: registry.itemsByName[name].id, stackSize: registry.itemsByName[name].stackSize, components: [], removedComponents: [], ...extra };
 }
 
 function rawItem(name, count) {
@@ -96,6 +96,10 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   bot.count = name => bot.inventory.items().filter(entry => entry.name === name).reduce((sum, entry) => sum + entry.count, 0);
   bot.currentWindow = null;
   bot.written = [];
+  bot.clicks = 0;
+  bot.dragPackets = 0;
+  bot.refuseDrag = false;
+  bot.oldCrafts = 0;
   bot.dropped = [];
   bot.crafts = 0;
   bot._client = client;
@@ -144,6 +148,12 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
         if (window.slots[slot]) giveToBot(window.slots[slot]);
       }
     }
+    if (window.type === 'minecraft:crafting') {
+      for (let slot = 1; slot <= 9; slot += 1) {
+        if (window.slots[slot]) giveToBot(window.slots[slot]);
+      }
+      if (window.selectedItem) giveToBot(window.selectedItem);
+    }
   };
 
   function giveToBot(entry) {
@@ -179,8 +189,22 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
     return left;
   }
 
+  bot.setChestSize = (pos, size, stored) => {
+    const key = `${pos.x},${pos.y},${pos.z}`;
+    sizes.set(key, size);
+    contents.set(key, stored);
+  };
+
   bot.activateBlock = async block => {
     const key = `${block.position.x},${block.position.y},${block.position.z}`;
+    if (block.name === 'crafting_table') {
+      const table = makeWindow('minecraft:crafting', 10, null);
+      table.selectedItem = null;
+      table.drag = null;
+      bot.currentWindow = table;
+      setImmediate(() => bot.emit('windowOpen', table));
+      return;
+    }
     const window = makeWindow('minecraft:generic_9x3', sizes.get(key) || 27, contents.get(key));
     if (block.name !== 'chest') return;
     bot.currentWindow = window;
@@ -219,8 +243,34 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
     return moved;
   }
 
+  function refreshCraftResult(window) {
+    const grid = window.slots.slice(1, 10);
+    window.slots[0] = grid.every(entry => entry?.name === 'emerald') ? { ...stack('emerald_block', 1), slot: 0 } : null;
+  }
+
+  // A drag: start, one click per slot, end. The end splits the cursor evenly
+  function dragClick(window, { slot, mouseButton, mode, stateId }) {
+    assert.equal(mode, 5);
+    assert.equal(stateId, -1, 'the server answers such a click with the whole window');
+    bot.dragPackets += 1;
+    if (bot.refuseDrag) return;
+    if (mouseButton === 0) window.drag = [];
+    else if (mouseButton === 1) window.drag.push(slot);
+    else if (mouseButton === 2) {
+      const each = Math.floor(window.selectedItem.count / window.drag.length);
+      for (const target of window.drag) window.slots[target] = { ...window.selectedItem, count: each, slot: target };
+      window.selectedItem.count -= each * window.drag.length;
+      if (!window.selectedItem.count) window.selectedItem = null;
+      refreshCraftResult(window);
+    }
+  }
+
   client.write = (name, data) => {
     bot.written.push(name);
+    if (name === 'window_click') {
+      dragClick(bot.currentWindow, data);
+      return;
+    }
     if (name !== 'select_trade') return;
     const window = bot.currentWindow;
     const trade = window.villager.trades[data.slot];
@@ -253,8 +303,31 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   }
 
   bot.clickWindow = async (slot, button, mode) => {
-    assert.equal(mode, 1, 'stacks are moved with a shift-click');
     const window = bot.currentWindow;
+    bot.clicks += 1;
+    if (window.type === 'minecraft:crafting') {
+      if (mode === 0) {
+        const held = window.selectedItem;
+        window.selectedItem = window.slots[slot] ? { ...window.slots[slot] } : null;
+        window.slots[slot] = held ? { ...held, slot } : null;
+        return;
+      }
+      assert.equal(mode, 1);
+      assert.equal(slot, 0, 'only the result is shift-clicked at the table');
+      while (window.slots[0]) {
+        const room = window.slots.slice(10, 46).some(entry => !entry || (entry.name === 'emerald_block' && entry.count < 64));
+        if (!room) break;
+        insert(window, { ...stack('emerald_block', 1) }, 10, 46);
+        for (let target = 1; target <= 9; target += 1) {
+          window.slots[target].count -= 1;
+          if (!window.slots[target].count) window.slots[target] = null;
+        }
+        bot.crafts += 1;
+        refreshCraftResult(window);
+      }
+      return;
+    }
+    assert.equal(mode, 1, 'stacks are moved with a shift-click');
     if (window.type === 'minecraft:merchant') {
       assert.equal(slot, 2, 'only the result slot is clicked in a merchant window');
       while (window.slots[2]) {
@@ -294,6 +367,7 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   bot.craft = async (recipe, count, table) => {
     assert.equal(table.name, 'crafting_table');
     assert.equal(bot.currentWindow, null, 'crafting starts with no window open');
+    bot.oldCrafts += count;
     for (let done = 0; done < count; done += 1) {
       let need = 9;
       for (const entry of bot.inventory.items().filter(value => value.name === 'emerald')) {
@@ -374,6 +448,155 @@ async function main() {
     const [sell, buy] = status.villagers[0].offers;
     assert.equal(sell.enabled, true, 'selling for emeralds is on by default');
     assert.equal(buy.enabled, false, 'spending emeralds has to be chosen');
+    trader.dispose();
+  });
+
+  await test('a double chest whose block states say single counts once, by the slots the server opens', async () => {
+    const lines = [];
+    const bot = fakeBot();
+    const partner = { x: 2, y: 64, z: 1 };
+    const shared = [stack('paper', 12)];
+    bot.setBlock(partner, 'chest');
+    bot.setChestSize(SOURCE, 54, shared);
+    bot.setChestSize(partner, 54, shared);
+    const trader = createTrader({ log: message => lines.push(message) });
+    trader.attachBot(bot);
+    const status = await trader.scan();
+    const doubles = status.containers.filter(entry => entry.double);
+    assert.equal(doubles.length, 1);
+    assert.equal(status.containers.length, 2, 'the double chest and the other one');
+    assert.ok(lines.some(line => /state -\/-, 54 slots/.test(line)), 'the log says what the bot saw');
+    assert.ok(lines.some(line => /are one double chest/.test(line)));
+    trader.dispose();
+  });
+
+  await test('two single chests side by side stay two, and so do two double chests with different contents', async () => {
+    const bot = fakeBot();
+    const neighbour = { x: 2, y: 64, z: 1 };
+    bot.setBlock(neighbour, 'chest');
+    const trader = createTrader();
+    trader.attachBot(bot);
+    let status = await trader.scan();
+    assert.equal(status.containers.filter(entry => entry.x === 2).length, 2, 'single chests');
+
+    bot.setChestSize(SOURCE, 54, [stack('paper', 1)]);
+    bot.setChestSize(neighbour, 54, [stack('dirt', 1)]);
+    status = await trader.scan();
+    assert.equal(status.containers.filter(entry => entry.x === 2).length, 2, 'different contents');
+    trader.dispose();
+  });
+
+  await test('a stack is crafted with one drag and one shift-click, not click by click', async () => {
+    const lines = [];
+    const { bot, trader } = await ready({
+      inventory: [stack('emerald', 64), stack('emerald', 20)],
+      villagers: [{ trades: [rawTrade('paper', 1, 'emerald', 1)] }]
+    }, { log: message => lines.push(message) });
+    trader.start();
+    await until(() => bot.outputItems().find(entry => entry.name === 'emerald_block')?.count === 9, 'nine blocks');
+    assert.equal(bot.crafts, 9);
+    assert.equal(bot.oldCrafts, 0, 'mineflayer\'s slow craft stays unused');
+    assert.equal(bot.dragPackets, 22, 'eleven packets per stack, not per block');
+    assert.ok(bot.clicks <= 8, `three clicks per stack, got ${bot.clicks}`);
+    assert.equal(bot.count('emerald'), 3, 'the remainder is back in the inventory');
+    assert.deepEqual(bot.dropped, []);
+    assert.ok(lines.some(line => /Crafted \d+ emerald blocks? in [\d.]+ s\./.test(line)));
+    trader.dispose();
+  });
+
+  await test('a server refusing the drag gets the slow craft, and nothing is lost', async () => {
+    const lines = [];
+    const { bot, trader } = await ready({
+      inventory: [stack('emerald', 20)],
+      villagers: [{ trades: [rawTrade('paper', 1, 'emerald', 1)] }]
+    }, { log: message => lines.push(message) });
+    bot.refuseDrag = true;
+    trader.start();
+    await until(() => bot.outputItems().find(entry => entry.name === 'emerald_block')?.count === 2, 'two blocks', 8000);
+    assert.equal(bot.oldCrafts, 2);
+    assert.equal(bot.count('emerald'), 2);
+    assert.ok(lines.some(line => /did not take the fast craft/.test(line)));
+    trader.dispose();
+  });
+
+  await test('emeralds in small stacks go the slow way without giving up on the fast one', async () => {
+    const lines = [];
+    const small = Array.from({ length: 3 }, () => stack('emerald', 5));
+    const { bot, trader } = await ready({
+      inventory: small,
+      villagers: [{ trades: [rawTrade('paper', 1, 'emerald', 1)] }]
+    }, { log: message => lines.push(message) });
+    trader.start();
+    await until(() => bot.oldCrafts === 1, 'the slow craft');
+    assert.equal(lines.some(line => /did not take the fast craft/.test(line)), false);
+    trader.dispose();
+  });
+
+  await test('a ring of villagers within the server reach is found, and the log tells the distance of the rest', async () => {
+    const lines = [];
+    const trades = () => [rawTrade('paper', 1, 'emerald', 1)];
+    const ring = [[4.5, 64, 0.5], [-3.5, 64, 0.5], [0.5, 64, 4.5], [0.5, 64, -3.5], [3.5, 64, 3.5], [-2.5, 64, -2.5]];
+    const villagers = ring.map(at => ({ at, trades: trades() }));
+    villagers.push({ at: [8.5, 64, 0.5], uuid: 'too-far', trades: trades() });
+    const bot = fakeBot({ villagers });
+    const trader = createTrader({ log: message => lines.push(message) });
+    trader.attachBot(bot);
+    const status = await trader.scan();
+    assert.equal(status.villagers.length, 6, 'all within 5.5 blocks');
+    assert.equal(status.villagers.every(entry => entry.offers.length === 1), true);
+    assert.ok(lines.some(line => /villager too-far at 7\.\d blocks, out of reach/.test(line)));
+    trader.dispose();
+  });
+
+  await test('one trip takes 18 stacks, keeps 9 slots free, and serves every villager in one go', async () => {
+    const at = [[2.5, 64, 0.5], [-1.5, 64, 0.5], [0.5, 64, 2.5], [0.5, 64, -1.5], [1.5, 64, 1.5]];
+    const villagers = at.map(position => ({ at: position, trades: [rawTrade('stone', 20, 'emerald', 1)] }));
+    const lines = [];
+    const { bot, trader } = await ready({
+      source: Array.from({ length: 27 }, () => stack('stone', 64)),
+      villagers
+    }, { log: message => lines.push(message) });
+    let mostStacks = 0;
+    let fewestFree = 36;
+    let sourceOpens = 0;
+    const activateEntity = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      mostStacks = Math.max(mostStacks, bot.inventory.items().filter(entry => entry.name === 'stone').length);
+      fewestFree = Math.min(fewestFree, bot.inventory.emptySlotCount());
+      return activateEntity(entity);
+    };
+    const activateBlock = bot.activateBlock;
+    bot.activateBlock = async block => {
+      if (block.position.x === SOURCE.x) sourceOpens += 1;
+      return activateBlock(block);
+    };
+    trader.start();
+    await until(() => villagers.every(villager => villager.trades[0].nbTradeUses === 16) && trader.getStatus().phase === 'waiting', 'all sold', 8000);
+    assert.equal(mostStacks, 18, 'a trip carries 18 stacks');
+    assert.ok(fewestFree >= 9, `9 slots stay free, saw ${fewestFree}`);
+    assert.ok(sourceOpens <= 8, `one visit to take and one to return per trip, not one per villager: ${sourceOpens}`);
+    assert.equal(bot.outputItems().find(entry => entry.name === 'emerald_block').count, 8, '80 trades make 8 blocks');
+    assert.equal(bot.count('emerald'), 8);
+    assert.equal(bot.count('stone'), 0, 'what is left goes back');
+    assert.equal(bot.sourceItems().reduce((sum, entry) => sum + entry.count, 0), 27 * 64 - 1600);
+    assert.ok(lines.some(line => /Trip: took 1152 items, made \d+ trades in/.test(line)), 'the log tells how a trip went');
+    assert.deepEqual(bot.dropped, []);
+    trader.dispose();
+  });
+
+  await test('with too few free slots it says so and trades nothing until there is room', async () => {
+    const villager = { trades: [rawTrade('stone', 20, 'emerald', 1, { maximumNbTradeUses: 1 })] };
+    const { bot, trader } = await ready({
+      inventory: Array.from({ length: 30 }, () => stack('dirt', 64)),
+      source: [stack('stone', 64)],
+      villagers: [villager]
+    });
+    trader.start();
+    await until(() => /No room to take resources: 6 free slots, and 9 stay free/.test(trader.getStatus().lastErrorMessage || ''), 'the message');
+    assert.equal(villager.trades[0].nbTradeUses, 0);
+    assert.equal(trader.getStatus().enabled, true);
+    for (let slot = 9; slot < 13; slot += 1) bot.slots[slot] = null;
+    await until(() => villager.trades[0].nbTradeUses === 1, 'trading with room');
     trader.dispose();
   });
 
