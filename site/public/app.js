@@ -12179,6 +12179,7 @@ const TRADER_PHASES = {
   flushing: 'Emptying the inventory',
   waiting: 'Waiting for restocks',
   waiting_stock: 'Waiting for resources in the source chests',
+  waiting_work: 'Villagers are off work · no restocks until morning',
   waiting_price: 'Every trade is above its price limit · waiting for prices to fall',
   retrying: 'Retrying'
 };

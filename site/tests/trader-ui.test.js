@@ -93,6 +93,8 @@ assert.match(app, /document\.activeElement\?\.matches\?\.\('#tab-trader select'\
 assert.match(setup, /now \$\{currentPrices\.map\(formatNumber\)\.join\(', '\)\}/);
 assert.match(app, /document\.activeElement\?\.matches\?\.\('#tab-trader select'\)\) document\.activeElement\.blur\(\)/);
 
+assert.match(app, /waiting_work: /);
+
 // The bot stays out of the game chat: the Trader speaks through the system log only
 for (const [name, source] of [['features/trader/index.js', read('features/trader/index.js')], ['minecraft/container-interaction.js', read('minecraft/container-interaction.js')]]) {
   assert.doesNotMatch(source, /\.chat\(|\.whisper\(|sendMinecraftChat|'chat_message'|'chat_command'|'chat_message'/, `${name} never writes to the chat`);

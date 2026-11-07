@@ -23,7 +23,10 @@
  *      the output chest when the trader is turned off
  *   4. With nothing to trade it opens the villagers one after another, since each
  *      restocks at its own time, and starts a new round as soon as one has a trade
- *      the sources can pay for. With the sources too empty for any trade it looks
+ *      the sources can pay for. Villagers restock (and prices change) only during
+ *      their working hours, and an open window makes one walk towards the bot and
+ *      forget where it was going, so they are left alone the rest of the day, and
+ *      opened slowly even then. With the sources too empty for any trade it looks
  *      into them every ten seconds instead, and goes on as soon as they are filled
  *
  * Chests and villagers are only ever used with shift-clicks. The server refused
@@ -68,8 +71,15 @@ const CRAFT_TIMEOUT_PER_CRAFT_MS = 10_000;
 const CLICK_TIMEOUT_MS = 5_000;
 const SLOT_READY_TIMEOUT_MS = 2_000;
 const IDLE_INTERVAL_MS = 5 * 60_000;
-// Between two villagers while waiting for restocks: twelve of them take 12 s
-const VILLAGER_WATCH_GAP_MS = 1_000;
+// Between two villagers while waiting for restocks: twelve of them take a minute,
+// which is nothing to two restocks a day
+const VILLAGER_WATCH_GAP_MS = 5_000;
+// The hours of the default villager schedule, in ticks of the day. A villager
+// restocks only at its job site during the WORK activity
+const WORK_STARTS_AT = 2_000;
+const WORK_ENDS_AT = 9_000;
+// How often it looks at the clock while the villagers are not working
+const WORK_POLL_MS = 15_000;
 // Between two looks into source chests too empty to pay for any trade
 const STOCK_POLL_MS = 10_000;
 // A hopper feeding the chest empties and fills it all the time: the log says so
@@ -77,7 +87,7 @@ const STOCK_POLL_MS = 10_000;
 const STOCK_LOG_INTERVAL_MS = 5 * 60_000;
 // Trips only open the villagers they trade with, so one left alone for being too
 // dear would never be seen getting cheaper: every villager is read this often
-const VILLAGER_REFRESH_MS = 60_000;
+const VILLAGER_REFRESH_MS = 3 * 60_000;
 // A restock seen, but the round after it made no trade: not again right away
 const WATCH_BACKOFF_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
@@ -191,7 +201,8 @@ function createTrader({
   idleIntervalMs = IDLE_INTERVAL_MS, retryDelayMs = RETRY_DELAY_MS, supplyRetryDelayMs = SUPPLY_RETRY_DELAY_MS,
   villagerCooldownMs = VILLAGER_COOLDOWN_MS, settleMs = SETTLE_MS,
   villagerWatchGapMs = VILLAGER_WATCH_GAP_MS, watchBackoffMs = WATCH_BACKOFF_MS, stockPollMs = STOCK_POLL_MS,
-  stockLogIntervalMs = STOCK_LOG_INTERVAL_MS, villagerRefreshMs = VILLAGER_REFRESH_MS
+  stockLogIntervalMs = STOCK_LOG_INTERVAL_MS, villagerRefreshMs = VILLAGER_REFRESH_MS,
+  workPollMs = WORK_POLL_MS
 } = {}) {
   const saved = loadState();
   const desired = {
@@ -246,6 +257,9 @@ function createTrader({
   let dragCraftWorks = true;
   let lastStockLogAt = -Infinity;
   let lastVillagerCheckAt = 0;
+  // Worked since they were last read: one more look after work catches a restock
+  // from its last minutes
+  let workedSinceRead = false;
   // Goes up with every new setup, which ends the wait for restocks
   let settingsVersion = 0;
   // What each villager offered when last opened, as the trades since left it, by
@@ -736,7 +750,7 @@ function createTrader({
   async function runRound(context) {
     const { current } = context;
     assertOnSpot(current);
-    if (villagerRefreshDue()) checkVillagers = true;
+    if (villagerRefreshDue(current)) checkVillagers = true;
     const chestsRead = checkChests;
     if (checkChests) {
       await readSources(context);
@@ -745,13 +759,14 @@ function createTrader({
     const villagers = reachableVillagers(current);
     if (!villagers.length) throw supplyError('No villager within reach of the bot.');
     if (checkVillagers) {
+      const workingAtStart = villagersAreWorking(current);
       for (const entity of villagers) {
         if (!context.active()) return false;
         await surveyVillager(context, entity);
       }
       if (!context.active()) return false;
       checkVillagers = false;
-      lastVillagerCheckAt = Date.now();
+      noteVillagersRead(workingAtStart);
     }
     let plan = planTrades(villagers);
     // Nothing left by what the bot remembers: the one moment the chests are worth
@@ -796,8 +811,28 @@ function createTrader({
     return false;
   }
 
-  function villagerRefreshDue() {
-    return Date.now() - lastVillagerCheckAt >= villagerRefreshMs;
+  // Without a clock from the server it counts as working: rather a click too many
+  function villagersAreWorking(current) {
+    const time = current.time?.timeOfDay;
+    if (!Number.isFinite(time)) return true;
+    const ofDay = ((time % 24_000) + 24_000) % 24_000;
+    return ofDay >= WORK_STARTS_AT && ofDay < WORK_ENDS_AT;
+  }
+
+  function villagersMayHaveChanged(current) {
+    if (villagersAreWorking(current)) workedSinceRead = true;
+    return workedSinceRead;
+  }
+
+  // Only a pass begun after work has seen everything: one begun before may have
+  // opened a villager that restocked later
+  function noteVillagersRead(workingAtStart) {
+    lastVillagerCheckAt = Date.now();
+    if (!workingAtStart) workedSinceRead = false;
+  }
+
+  function villagerRefreshDue(current) {
+    return villagersMayHaveChanged(current) && Date.now() - lastVillagerCheckAt >= villagerRefreshMs;
   }
 
   function planTrades(villagers) {
@@ -882,8 +917,13 @@ function createTrader({
         if (!watching()) continue;
         await readSources(context);
         if (stockCoversAnOffer()) return 'refill';
-        if (villagerRefreshDue()) return 'refresh';
+        if (villagerRefreshDue(current)) return 'refresh';
         phase = 'waiting_stock';
+        continue;
+      }
+      if (enabledOffers().length && !villagersMayHaveChanged(current)) {
+        phase = 'waiting_work';
+        await pause(workPollMs);
         continue;
       }
       // Prices only come down when villagers restock, so they are asked all the same
@@ -891,6 +931,7 @@ function createTrader({
       const villagers = reachableVillagers(current)
         .filter(entity => Date.now() >= (villagerRetryAt.get(villagerId(entity)) || 0));
       if (!villagers.length) await pause(villagerWatchGapMs);
+      const workingAtStart = villagersAreWorking(current);
       for (const entity of villagers) {
         if (!watching()) return false;
         const offers = await surveyVillager(context, entity);
@@ -904,7 +945,7 @@ function createTrader({
         }
         await pause(villagerWatchGapMs);
       }
-      if (villagers.length) lastVillagerCheckAt = Date.now();
+      if (villagers.length) noteVillagersRead(workingAtStart);
     }
     return false;
   }

@@ -10,7 +10,7 @@ const registry = require('prismarine-registry')('1.21.4');
 const Item = require('prismarine-item')(registry);
 const { createTrader: create, parseOffers, usesFromStock, tradeKey } = require('../features/trader');
 
-const fast = { settleMs: 0, idleIntervalMs: 40, retryDelayMs: 10, supplyRetryDelayMs: 10, merchantTimeoutMs: 60, containerTimeoutMs: 60, villagerWatchGapMs: 2, watchBackoffMs: 5, stockPollMs: 5 };
+const fast = { settleMs: 0, idleIntervalMs: 40, retryDelayMs: 10, supplyRetryDelayMs: 10, merchantTimeoutMs: 60, containerTimeoutMs: 60, villagerWatchGapMs: 2, watchBackoffMs: 5, stockPollMs: 5, workPollMs: 2 };
 const createTrader = options => create({ ...fast, ...options });
 
 const SOURCE = { x: 2, y: 64, z: 0 };
@@ -607,6 +607,45 @@ async function main() {
     assert.ok(lines.some(line => /hold too little for any trade/.test(line)), 'the log says why it waits');
     bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`)[0] = stack('stone', 64);
     await until(() => villager.trades[0].nbTradeUses === 3, 'trading right after the refill');
+    trader.dispose();
+  });
+
+  await test('villagers are left alone off work: one last look, then none until morning', async () => {
+    const villager = { trades: [rawTrade('stone', 20, 'emerald', 1, { maximumNbTradeUses: 1 })] };
+    const { bot, trader } = await ready({ source: [stack('stone', 64)], villagers: [villager] }, { idleIntervalMs: 60_000 });
+    let opens = 0;
+    const activateEntity = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      opens += 1;
+      return activateEntity(entity);
+    };
+    bot.time = { timeOfDay: 5_000 };
+    trader.start();
+    await until(() => villager.trades[0].nbTradeUses === 1 && trader.getStatus().phase === 'waiting', 'sold out at work');
+    const atWork = opens;
+    await until(() => opens >= atWork + 3, 'asked during working hours');
+
+    bot.time.timeOfDay = 13_000;
+    await until(() => trader.getStatus().phase === 'waiting_work', 'evening');
+    const evening = opens;
+    await wait(40);
+    assert.equal(opens, evening, 'nobody is opened off work');
+
+    villager.trades[0].nbTradeUses = 0;
+    bot.time.timeOfDay = 24_000 + 3_000;
+    await until(() => villager.trades[0].nbTradeUses === 1, 'trades after the morning restock');
+    trader.dispose();
+  });
+
+  await test('a restock in the last minutes of work is caught by one look after it', async () => {
+    const villager = { trades: [rawTrade('stone', 20, 'emerald', 1, { maximumNbTradeUses: 1 })] };
+    const { bot, trader } = await ready({ source: [stack('stone', 64)], villagers: [villager] }, { idleIntervalMs: 60_000, villagerWatchGapMs: 30 });
+    bot.time = { timeOfDay: 8_000 };
+    trader.start();
+    await until(() => villager.trades[0].nbTradeUses === 1 && trader.getStatus().phase === 'waiting', 'sold out');
+    villager.trades[0].nbTradeUses = 0;
+    bot.time.timeOfDay = 9_500;
+    await until(() => villager.trades[0].nbTradeUses === 1, 'sold again after work');
     trader.dispose();
   });
 
