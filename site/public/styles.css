@@ -14800,10 +14800,10 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   color: var(--muted, #8a8f98);
 }
 
-#tab-trader .trader-limit input {
-  width: 72px;
+#tab-trader .trader-limit select {
+  width: 76px;
   min-height: 36px;
-  padding: 4px 6px;
+  padding-block: 4px;
 }
 
 #tab-trader .trader-offer-main input {

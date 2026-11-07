@@ -208,6 +208,15 @@ function createTrader({
   const merchants = new Map((Array.isArray(saved.merchants) ? saved.merchants : [])
     .filter(entry => entry?.id && Array.isArray(entry.offers))
     .map(entry => [entry.id, entry]));
+  // Every price each trade ever asked for its first input, lowest first, for the
+  // site to offer as limits. Never forgotten; a new scan does not touch it
+  const priceHistory = {};
+  for (const [key, prices] of Object.entries(saved.priceHistory && typeof saved.priceHistory === 'object' ? saved.priceHistory : {})) {
+    if (Array.isArray(prices)) prices.forEach(price => notePrice(key, price));
+  }
+  for (const merchant of merchants.values()) {
+    for (const offer of merchant.offers) notePrice(offer.key, offer.price1);
+  }
   let containers = Array.isArray(saved.containers) ? saved.containers.filter(validPosition) : [];
   let bot = null;
   let running = false;
@@ -238,6 +247,16 @@ function createTrader({
   // What the source chests held when last opened, by position
   const sourceStock = new Map();
 
+  // Whether it was new
+  function notePrice(key, price) {
+    if (!Number.isInteger(price) || price < 1) return false;
+    const prices = priceHistory[key] || (priceHistory[key] = []);
+    if (prices.includes(price)) return false;
+    prices.push(price);
+    prices.sort((a, b) => a - b);
+    return true;
+  }
+
   function loadState() {
     if (!stateFile) return {};
     try {
@@ -252,7 +271,7 @@ function createTrader({
     try {
       fs.mkdirSync(path.dirname(stateFile), { recursive: true });
       fs.writeFileSync(stateFile, JSON.stringify({
-        ...desired, totalTrades, totalBlocks, containers, merchants: [...merchants.values()]
+        ...desired, totalTrades, totalBlocks, containers, merchants: [...merchants.values()], priceHistory
       }, null, 2), 'utf8');
     } catch (error) {
       log(`[Trader] Could not save state: ${error.message}`, 'warn');
@@ -293,6 +312,7 @@ function createTrader({
       output: desired.output && { ...desired.output },
       craftingTable: desired.craftingTable && { ...desired.craftingTable },
       containers: containers.map(entry => ({ ...entry })),
+      priceHistory: Object.fromEntries(Object.entries(priceHistory).map(([key, prices]) => [key, [...prices]])),
       villagers: [...merchants.values()].map(merchant => ({
         ...merchant,
         offers: merchant.offers.map(offer => ({
@@ -1287,6 +1307,8 @@ function createTrader({
     const Item = require('prismarine-item')(current.registry);
     const offers = parseOffers(Item, packet);
     knownOffers.set(villagerId(entity), offers);
+    // Not all at once with a save for each: one save if anything was new
+    if (offers.map(offer => notePrice(offer.key, offer.realPrice)).some(Boolean)) saveState();
     merchants.set(villagerId(entity), {
       id: villagerId(entity),
       level: Number(packet.villagerLevel) || null,

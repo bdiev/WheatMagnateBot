@@ -669,6 +669,41 @@ async function main() {
     trader.dispose();
   });
 
+  await test('every price ever seen is remembered, lowest first, past scans and restarts', async () => {
+    const stateFile = path.join(os.tmpdir(), `trader-prices-test-${process.pid}.json`);
+    fs.rmSync(stateFile, { force: true });
+    try {
+      const villager = { trades: [rawTrade('stone', 20, 'emerald', 1, { demand: 40 }), rawTrade('paper', 9, 'emerald', 1)] };
+      const other = { at: [0.5, 64, 2.1], trades: [rawTrade('stone', 20, 'emerald', 1)] };
+      const bot = fakeBot({ villagers: [villager, other] });
+      const trader = createTrader({ stateFile });
+      trader.attachBot(bot);
+      await trader.scan();
+      assert.deepEqual(trader.getStatus().priceHistory, { 'stone+>emerald': [20, 60], 'paper+>emerald': [9] });
+
+      villager.trades[0].demand = 10;
+      other.trades[0].demand = 0;
+      await trader.scan();
+      assert.deepEqual(trader.getStatus().priceHistory['stone+>emerald'], [20, 30, 60], 'a scan adds, and forgets nothing');
+      trader.dispose();
+
+      const reloaded = createTrader({ stateFile });
+      assert.deepEqual(reloaded.getStatus().priceHistory['stone+>emerald'], [20, 30, 60]);
+      assert.deepEqual(reloaded.getStatus().priceHistory['paper+>emerald'], [9]);
+      reloaded.dispose();
+
+      // A state from before the record starts from the villagers it remembers
+      const old = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      delete old.priceHistory;
+      fs.writeFileSync(stateFile, JSON.stringify(old));
+      const upgraded = createTrader({ stateFile });
+      assert.deepEqual(upgraded.getStatus().priceHistory['paper+>emerald'], [9]);
+      upgraded.dispose();
+    } finally {
+      fs.rmSync(stateFile, { force: true });
+    }
+  });
+
   await test('price limits are checked, can be removed, and survive a restart', async () => {
     const stateFile = path.join(os.tmpdir(), `trader-limit-test-${process.pid}.json`);
     fs.rmSync(stateFile, { force: true });

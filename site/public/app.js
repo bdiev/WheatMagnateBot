@@ -12257,6 +12257,17 @@ function traderTradeGroups(villagers) {
   return [...groups.values()].sort((a, b) => a.input1.localeCompare(b.input1) || a.output.localeCompare(b.output));
 }
 
+// Every price the bot has seen for this trade, as what can be chosen for its limit.
+// The prices on screen and a limit set earlier are there even if not in the record
+function traderLimitOptions(trader, group, limit) {
+  const prices = new Set(trader.priceHistory?.[group.key] || []);
+  for (const offer of group.offers) prices.add(offer.price1);
+  if (limit !== null) prices.add(limit);
+  const options = [...prices].sort((a, b) => a - b)
+    .map(price => `<option value="${price}"${price === limit ? ' selected' : ''}>${formatNumber(price)}</option>`);
+  return `<option value=""${limit === null ? ' selected' : ''}>Any</option>${options.join('')}`;
+}
+
 function renderTraderSetup(trader) {
   const roles = traderChestRoles(trader);
   const containers = trader.containers || [];
@@ -12318,7 +12329,7 @@ function renderTraderSetup(trader) {
             <small>${group.plain ? details : 'Special item · not supported'}</small>
           </span>
         </label>
-        ${group.plain ? `<label class="trader-limit"><small>Max</small><input type="number" min="1" max="9999" step="1" inputmode="numeric" placeholder="any" value="${limit ?? ''}" data-trader-limit="${escapeHtml(group.key)}" aria-label="Highest price in ${escapeHtml(traderItemName(group.input1))}"></label>` : ''}
+        ${group.plain ? `<label class="trader-limit"><small>Max</small><select data-trader-limit="${escapeHtml(group.key)}" aria-label="Highest price in ${escapeHtml(traderItemName(group.input1))}">${traderLimitOptions(trader, group, limit)}</select></label>` : ''}
       </div>`;
   };
   const selling = groups.filter(group => group.selling);
@@ -12333,7 +12344,7 @@ function renderTraderSetup(trader) {
           <summary>Other trades (${formatNumber(others.length)}${othersOn ? `, ${formatNumber(othersOn)} on` : ''})</summary>
           <div class="trader-villagers-inner">${others.map(groupRow).join('')}</div>
         </details>` : ''}`
-    : '<p class="trader-empty">No villagers found yet.</p>', [villagers, state.traderDraft?.choices || null, state.traderDraft?.limits || null]);
+    : '<p class="trader-empty">No villagers found yet.</p>', [villagers, trader.priceHistory || null, state.traderDraft?.choices || null, state.traderDraft?.limits || null]);
 
   const table = $('#traderTableStatus');
   if (table) {
@@ -12416,7 +12427,8 @@ function renderTrader(payload = {}) {
   $('#traderTotalTrades').textContent = formatNumber(trader.totalTrades || 0);
   $('#traderSessionTrades').textContent = `this session: ${formatNumber(trader.sessionTrades || 0)}`;
   renderTraderControl(trader);
-  renderTraderSetup(trader);
+  // Redrawing would close a dropdown that is open; the next update catches up
+  if (!document.activeElement?.matches?.('#tab-trader select')) renderTraderSetup(trader);
 }
 
 async function loadTrader() {

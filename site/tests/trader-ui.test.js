@@ -77,6 +77,18 @@ assert.equal(groups.find(group => group.input2 === null && group.plain === false
 assert.match(setup, /id="traderOtherTrades"/);
 assert.match(app, /state\.traderOtherTradesOpen = event\.target\.open/);
 
+// A limit is chosen from the prices the bot has seen, not typed in
+assert.match(setup, /<select data-trader-limit="/);
+assert.doesNotMatch(setup, /type="number"/);
+const traderLimitOptions = new Function('formatNumber', `${app.match(/function traderLimitOptions[\s\S]*?\r?\n}\r?\n/)[0]}; return traderLimitOptions;`)(String);
+const limitGroup = { key: 'stone+>emerald', offers: [{ price1: 64 }, { price1: 19 }] };
+const optionValues = html => [...html.matchAll(/<option value="(\d*)"/g)].map(match => match[1]);
+assert.deepEqual(optionValues(traderLimitOptions({ priceHistory: { 'stone+>emerald': [20, 30, 64] } }, limitGroup, null)), ['', '19', '20', '30', '64'], 'seen and current prices, lowest first');
+assert.deepEqual(optionValues(traderLimitOptions({}, limitGroup, 25)), ['', '19', '25', '64'], 'a limit set earlier stays selectable');
+assert.match(traderLimitOptions({}, limitGroup, 25), /<option value="25" selected>/);
+assert.match(traderLimitOptions({}, limitGroup, null), /<option value="" selected>Any/);
+assert.match(app, /document\.activeElement\?\.matches\?\.\('#tab-trader select'\)/, 'status updates do not close an open dropdown');
+
 // The bot stays out of the game chat: the Trader speaks through the system log only
 for (const [name, source] of [['features/trader/index.js', read('features/trader/index.js')], ['minecraft/container-interaction.js', read('minecraft/container-interaction.js')]]) {
   assert.doesNotMatch(source, /\.chat\(|\.whisper\(|sendMinecraftChat|'chat_message'|'chat_command'|'chat_message'/, `${name} never writes to the chat`);
