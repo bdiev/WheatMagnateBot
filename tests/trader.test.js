@@ -1272,6 +1272,115 @@ async function main() {
       fs.rmSync(stateFile, { force: true });
     }
   });
+
+  await test('a broken state file is kept aside, and a save never leaves half a file', async () => {
+    const stateFile = path.join(os.tmpdir(), `trader-broken-${process.pid}.json`);
+    const cleanup = () => ['', '.broken', '.tmp'].forEach(suffix => fs.rmSync(stateFile + suffix, { force: true }));
+    cleanup();
+    try {
+      const broken = '{"enabled": true, "sources": [';
+      fs.writeFileSync(stateFile, broken, 'utf8');
+      const lines = [];
+      const trader = createTrader({ stateFile, log: message => lines.push(message) });
+      assert.equal(trader.getStatus().enabled, false, 'it starts empty');
+      assert.equal(fs.readFileSync(`${stateFile}.broken`, 'utf8'), broken, 'the unreadable file is kept');
+      assert.ok(lines.some(line => /could not be read/.test(line)), 'and the log says so');
+      trader.configure({ sources: [SOURCE] });
+      assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')).sources, [SOURCE]);
+      assert.equal(fs.existsSync(`${stateFile}.tmp`), false, 'the temporary file is renamed over the state');
+      trader.dispose();
+    } finally {
+      cleanup();
+    }
+  });
+
+  await test('a villager gone since the scan is marked and no longer decides what the bot waits for', async () => {
+    const stays = { trades: [rawTrade('wheat', 1, 'emerald', 1)] };
+    const leaves = { uuid: 'leaves', at: [0.5, 64, 2.1], trades: [rawTrade('paper', 1, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('paper', 10)], villagers: [stays, leaves] });
+    delete bot.entities[leaves.entity.id];
+    const villagers = trader.getStatus().villagers;
+    assert.equal(villagers.find(entry => entry.id === 'leaves').inReach, false);
+    assert.equal(villagers.find(entry => entry.id === 'villager-0').inReach, true);
+    trader.start();
+    // The paper only the missing villager took cannot pay for anything: the
+    // chests are watched, not the villagers
+    await until(() => trader.getStatus().phase === 'waiting_stock', 'waiting for the sources');
+    assert.equal(leaves.trades[0].nbTradeUses, 0);
+    trader.stop({ flush: false });
+    trader.dispose();
+  });
+
+  await test('the cheapest villager gets the stock first, and the uses shown follow the trades', async () => {
+    const dear = { uuid: 'dear', at: [1.5, 64, 0.5], trades: [rawTrade('paper', 5, 'emerald', 1)] };
+    const cheap = { uuid: 'cheap', at: [0.5, 64, 2.1], trades: [rawTrade('paper', 2, 'emerald', 1, { maximumNbTradeUses: 3 })] };
+    const { trader } = await ready({ source: [stack('paper', 6)], villagers: [dear, cheap] });
+    trader.start();
+    await until(() => cheap.trades[0].nbTradeUses === 3, 'the cheap villager');
+    await until(() => trader.getStatus().phase.startsWith('waiting'), 'done');
+    assert.equal(dear.trades[0].nbTradeUses, 0, 'nothing was left for the dear one');
+    const shown = trader.getStatus().villagers.find(entry => entry.id === 'cheap').offers[0];
+    assert.equal(shown.uses, 3, 'the site sees the uses after the trades, not before');
+    trader.stop({ flush: false });
+    trader.dispose();
+  });
+
+  await test('trades spending emeralds share one trip to the sources', async () => {
+    const lines = [];
+    const first = { uuid: 'first', trades: [rawTrade('emerald', 1, 'bread', 1, { maximumNbTradeUses: 2 })] };
+    const second = { uuid: 'second', at: [0.5, 64, 2.1], trades: [rawTrade('emerald', 1, 'bread', 1, { maximumNbTradeUses: 2 })] };
+    const { bot, trader } = await ready({ source: [stack('emerald', 20)], villagers: [first, second] }, { log: message => lines.push(message) });
+    trader.configure({ tradeChoices: { 'emerald+>bread': true } });
+    trader.start();
+    await until(() => first.trades[0].nbTradeUses === 2 && second.trades[0].nbTradeUses === 2, 'both villagers');
+    await until(() => trader.getStatus().phase.startsWith('waiting'), 'done');
+    assert.equal(lines.filter(line => /Trip: took/.test(line)).length, 1, 'one trip for both');
+    assert.equal(bot.sourceItems().find(entry => entry.name === 'emerald').count, 16);
+    trader.stop({ flush: false });
+    trader.dispose();
+  });
+
+  await test('without a crafting table it starts, and the emeralds go to the output as they are', async () => {
+    const villager = { trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 10 })] };
+    const bot = fakeBot({ source: [stack('paper', 20)], villagers: [villager] });
+    bot.setBlock(TABLE, 'air');
+    const trader = createTrader();
+    trader.attachBot(bot);
+    await trader.scan();
+    trader.configure({ sources: [SOURCE], output: OUTPUT });
+    assert.equal(trader.getStatus().craftingTable, null);
+    trader.start();
+    await until(() => villager.trades[0].nbTradeUses === 10, 'the trades');
+    await until(() => bot.outputItems().some(entry => entry.name === 'emerald' && entry.count === 10), 'stored');
+    assert.equal(bot.crafts, 0);
+    assert.equal(bot.count('emerald'), 0);
+    trader.stop({ flush: false });
+    trader.dispose();
+  });
+
+  await test('stopping in the middle of a purchase returns the emeralds taken to pay', async () => {
+    const villager = { trades: [rawTrade('emerald', 1, 'bread', 1)] };
+    const { bot, trader } = await ready({ source: [stack('emerald', 20)], villagers: [villager] });
+    trader.configure({ tradeChoices: { 'emerald+>bread': true } });
+    let opens = 0;
+    const activate = bot.activateEntity;
+    // The first open reads the offers; the second is the trade, which the stop cuts short
+    bot.activateEntity = async entity => {
+      opens += 1;
+      if (opens === 2) {
+        setImmediate(() => trader.stop());
+        return;
+      }
+      return activate(entity);
+    };
+    trader.start();
+    await until(() => opens >= 2 && trader.getStatus().phase === 'idle' && !trader.getStatus().running, 'stopped');
+    await until(() => bot.sourceItems().some(entry => entry.name === 'emerald' && entry.count === 20), 'back in the source');
+    assert.equal(bot.count('emerald'), 0);
+    assert.deepEqual(bot.outputItems().filter(entry => /emerald/.test(entry.name)), [], 'nothing taken passes for earned');
+    assert.equal(bot.crafts, 0);
+    trader.dispose();
+  });
 }
 
 main().then(() => {

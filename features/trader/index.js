@@ -12,15 +12,17 @@
  *      to date as it works, so trips follow each other without asking again. A
  *      trip takes up to 18 stacks of what all enabled trades need, nine slots stay
  *      free for the results, the villagers are served one after another, and what
- *      is left goes back to the sources in one go. Trades spending emeralds get a
- *      trip of their own, so they use the emeralds from the sources and not the
- *      ones just earned
+ *      is left goes back to the sources in one go. Trades spending emeralds share
+ *      a trip of their own, so they use the emeralds from the sources and not the
+ *      ones just earned. Where several villagers offer the same trade, the
+ *      cheapest gets the stock first
  *      A trade can have a price limit: a villager asking more than that for its
  *      first input is left alone until the price has come down
  *   3. Every nine emeralds become an emerald block at the crafting table. The
  *      blocks and the results of other trades go into the output chest. Fewer
  *      than nine emeralds wait in the inventory for the next round, and go into
- *      the output chest when the trader is turned off
+ *      the output chest when the trader is turned off. Without a crafting table
+ *      the emeralds go into the output chest as they are
  *   4. With nothing to trade it opens the villagers one after another, since each
  *      restocks at its own time, and starts a new round as soon as one has a trade
  *      the sources can pay for. Villagers restock (and prices change) only during
@@ -251,6 +253,11 @@ function createTrader({
   const villagerRetryAt = new Map();
   // The source chests of the current trip, in the order they were used
   let lastTakenFrom = [];
+  // What the bot held of each needed item before the current trip took from the
+  // sources; kept until the trip has put back what it did not use, so a stop or a
+  // lost connection in the middle still returns it
+  let pendingTrip = null;
+  let lastReturnLogAt = -Infinity;
   const quietVillagers = new Set();
   const expensiveSeen = new Map();
   // Off for the connection once a server refused the fast craft
@@ -280,22 +287,43 @@ function createTrader({
     return true;
   }
 
+  // A file that cannot be read is kept aside, not overwritten by the next save
   function loadState() {
     if (!stateFile) return {};
+    let text;
     try {
-      return JSON.parse(fs.readFileSync(stateFile, 'utf8')) || {};
+      text = fs.readFileSync(stateFile, 'utf8');
     } catch {
+      return {};
+    }
+    try {
+      return JSON.parse(text) || {};
+    } catch (error) {
+      const broken = `${stateFile}.broken`;
+      try { fs.copyFileSync(stateFile, broken); } catch {}
+      log(`[Trader] The saved state could not be read (${error.message}); it starts empty, the old file is kept as ${path.basename(broken)}.`, 'warn');
       return {};
     }
   }
 
+  // Written next to the file and renamed over it: a crash in the middle of a
+  // write leaves the old state, never half of the new one
   function saveState() {
     if (!stateFile) return;
+    const text = JSON.stringify({
+      ...desired, totalTrades, totalBlocks, containers, merchants: [...merchants.values()], priceHistory
+    }, null, 2);
+    const temporary = `${stateFile}.tmp`;
     try {
       fs.mkdirSync(path.dirname(stateFile), { recursive: true });
-      fs.writeFileSync(stateFile, JSON.stringify({
-        ...desired, totalTrades, totalBlocks, containers, merchants: [...merchants.values()], priceHistory
-      }, null, 2), 'utf8');
+      fs.writeFileSync(temporary, text, 'utf8');
+      try {
+        fs.renameSync(temporary, stateFile);
+      } catch {
+        // Windows refuses the rename while another program holds the file open
+        fs.writeFileSync(stateFile, text, 'utf8');
+        fs.rmSync(temporary, { force: true });
+      }
     } catch (error) {
       log(`[Trader] Could not save state: ${error.message}`, 'warn');
     }
@@ -323,7 +351,15 @@ function createTrader({
     return totals;
   }
 
+  // The villagers in reach now, by UUID; null while the bot is offline and
+  // nobody can tell
+  function presentIds() {
+    if (!bot?.entity) return null;
+    return new Set(reachableVillagers(bot).map(villagerId));
+  }
+
   function getStatus() {
+    const present = presentIds();
     return {
       enabled: desired.enabled,
       desiredEnabled: desired.enabled,
@@ -338,6 +374,7 @@ function createTrader({
       priceHistory: Object.fromEntries(Object.entries(priceHistory).map(([key, prices]) => [key, [...prices]])),
       villagers: [...merchants.values()].map(merchant => ({
         ...merchant,
+        inReach: present ? present.has(merchant.id) : null,
         offers: merchant.offers.map(offer => ({
           ...offer,
           enabled: isEnabled(offer.key, offer.output),
@@ -435,7 +472,8 @@ function createTrader({
     if (!desired.anchor) return 'Trader has no spot yet: press Scan with the bot in place.';
     if (!desired.sources.length) return 'Trader needs at least one source chest.';
     if (!desired.output) return 'Trader needs an output chest.';
-    if (!desired.craftingTable) return 'Trader needs a crafting table.';
+    // A crafting table is optional: without one the emeralds go to the output
+    // chest as they are
     return null;
   }
 
@@ -750,6 +788,9 @@ function createTrader({
   async function runRound(context) {
     const { current } = context;
     assertOnSpot(current);
+    // A trip cut short by a lost connection: what it took goes back first, or
+    // the emeralds taken to pay would pass for earned ones
+    await finishPendingTrip(context);
     if (villagerRefreshDue(current)) checkVillagers = true;
     const chestsRead = checkChests;
     if (checkChests) {
@@ -779,10 +820,11 @@ function createTrader({
     if (!context.active()) return false;
     // Past the checks: the site should not show an old problem for a whole round
     clearError();
+    // Trades spending emeralds share a trip of their own, so they pay with the
+    // emeralds from the sources and never with the ones the selling just earned
     const spendsEmeralds = entry => offerCosts(entry.offer, 1).has(EMERALD);
-    const selling = plan.filter(entry => !spendsEmeralds(entry));
-    const trips = plan.filter(spendsEmeralds).map(entry => [entry]);
-    if (selling.length) trips.push(selling);
+    const trips = [plan.filter(spendsEmeralds), plan.filter(entry => !spendsEmeralds(entry))]
+      .filter(trip => trip.length);
     let worked = false;
     for (const trip of trips) {
       if (!context.active()) return worked;
@@ -841,19 +883,40 @@ function createTrader({
     for (const item of bot?.inventory.items() || []) {
       if (item.name !== EMERALD && isPlainItem(item)) stock.set(item.name, (stock.get(item.name) || 0) + item.count);
     }
-    const plan = [];
+    const candidates = [];
     for (const entity of villagers) {
       if (Date.now() < (villagerRetryAt.get(villagerId(entity)) || 0)) continue;
       for (const offer of knownOffers.get(villagerId(entity)) || []) {
         if (!isEnabled(offer.key, offer.outputItem.name)) continue;
         if (!priceAccepted(entity, offer)) continue;
-        const uses = usesFromStock(offer, stock);
-        if (!uses) continue;
-        for (const [name, count] of offerCosts(offer, uses)) stock.set(name, stock.get(name) - count);
-        plan.push({ entity, offer, uses });
+        candidates.push({ entity, offer });
       }
     }
+    const plan = [];
+    for (const { entity, offer } of cheapestFirst(candidates)) {
+      const uses = usesFromStock(offer, stock);
+      if (!uses) continue;
+      for (const [name, count] of offerCosts(offer, uses)) stock.set(name, stock.get(name) - count);
+      plan.push({ entity, offer, uses });
+    }
     return plan;
+  }
+
+  // Where several villagers offer the same trade, the stock goes to the cheapest
+  // first. Different trades keep their order: their prices are in different items
+  function cheapestFirst(candidates) {
+    const groups = new Map();
+    for (const candidate of candidates) {
+      const group = groups.get(candidate.offer.key) || [];
+      group.push(candidate);
+      groups.set(candidate.offer.key, group);
+    }
+    const unitCost = ({ offer }) => offer.realPrice / Math.max(1, offer.outputCount);
+    return [...groups.values()].flatMap(group => group
+      .map((candidate, order) => ({ candidate, order }))
+      .sort((a, b) => unitCost(a.candidate) - unitCost(b.candidate)
+        || a.candidate.offer.price2 - b.candidate.offer.price2 || a.order - b.order)
+      .map(({ candidate }) => candidate));
   }
 
   // Opens a villager only to read its offers; null when it is resting or refused
@@ -888,7 +951,7 @@ function createTrader({
   }
 
   function affordableOffers() {
-    return enabledOffers().filter(offer => withinPriceLimit(offer.key, offer.price1));
+    return enabledOffers({ present: true }).filter(offer => withinPriceLimit(offer.key, offer.price1));
   }
 
   // Waits by asking the villagers in turn, as each restocks at its own time.
@@ -921,13 +984,14 @@ function createTrader({
         phase = 'waiting_stock';
         continue;
       }
-      if (enabledOffers().length && !villagersMayHaveChanged(current)) {
+      const hasEnabled = enabledOffers({ present: true }).length > 0;
+      if (hasEnabled && !villagersMayHaveChanged(current)) {
         phase = 'waiting_work';
         await pause(workPollMs);
         continue;
       }
       // Prices only come down when villagers restock, so they are asked all the same
-      phase = enabledOffers().length && !affordableOffers().length ? 'waiting_price' : 'waiting';
+      phase = hasEnabled && !affordableOffers().length ? 'waiting_price' : 'waiting';
       const villagers = reachableVillagers(current)
         .filter(entity => Date.now() >= (villagerRetryAt.get(villagerId(entity)) || 0));
       if (!villagers.length) await pause(villagerWatchGapMs);
@@ -966,16 +1030,25 @@ function createTrader({
       .reduce((sum, item) => sum + item.count, 0);
   }
 
-  function enabledOffers() {
+  // With present, only the villagers in reach now: one killed or gone stays in
+  // the record until the next scan, but must not decide what the bot waits for.
+  // Item names come from all of them, so their goods still leave the inventory
+  function enabledOffers({ present = false } = {}) {
+    const ids = present ? presentIds() : null;
     return [...merchants.values()]
+      .filter(merchant => !ids || ids.has(merchant.id))
       .flatMap(merchant => merchant.offers)
       .filter(offer => isEnabled(offer.key, offer.output));
   }
 
   // What the bot leaves in the output chest. Its own gear is never moved: only
   // names coming out of a trade, or going into one, count as the trader's
+  // Emeralds wait in the inventory for a full block, unless there is no table to
+  // make one: then they are a product like any other
   function productNames() {
-    return new Set([EMERALD_BLOCK, ...enabledOffers().map(offer => offer.output).filter(name => name !== EMERALD)]);
+    const compacting = Boolean(desired.craftingTable);
+    return new Set([EMERALD_BLOCK, ...enabledOffers().map(offer => offer.output)
+      .filter(name => !compacting || name !== EMERALD)]);
   }
 
   function inputNames() {
@@ -1027,6 +1100,9 @@ function createTrader({
   // The last step of stop(): nothing that belongs to the trades stays on the bot
   async function flushInventory(context) {
     const { current } = context;
+    // A stop in the middle of a trip spending emeralds: the ones taken to pay go
+    // back to the sources, not into the output chest as if earned
+    if (desired.sources.length) await finishPendingTrip(context);
     const inputs = [...inputNames()].filter(name => carried(current, name) > 0);
     if (inputs.length && desired.sources.length) {
       await returnToSources(context, new Map(inputs.map(name => [name, carried(current, name)])));
@@ -1123,6 +1199,7 @@ function createTrader({
   // throws a result on the ground when it has no room, so room comes first
   async function craftEmeralds(context) {
     const { current } = context;
+    if (!desired.craftingTable) return;
     while (context.active() && carried(current, EMERALD) >= EMERALDS_PER_BLOCK) {
       if (!hasRoomForBlock(current)) await depositProducts(context);
       if (!hasRoomForBlock(current)) throw supplyError('No free inventory slot for the emerald blocks.');
@@ -1186,6 +1263,7 @@ function createTrader({
     // Emeralds the bot already holds were earned and stay out of it; anything else
     // in the inventory is what the last trip left, and goes first
     const before = new Map([...needed.keys()].map(name => [name, name === EMERALD ? carried(current, EMERALD) : 0]));
+    pendingTrip = before;
     const usable = name => carried(current, name) - before.get(name);
     const carriedAtStart = [...needed.keys()].reduce((sum, name) => sum + usable(name), 0);
     const missing = new Map([...needed].map(([name, count]) => [name, count - usable(name)]).filter(([, count]) => count > 0));
@@ -1193,6 +1271,7 @@ function createTrader({
     if (!context.active()) return false;
     const inHand = [...needed.keys()].reduce((sum, name) => sum + Math.max(0, usable(name)), 0);
     if (!inHand) {
+      pendingTrip = null;
       // With room to spare the chest just no longer held it: what the bot
       // remembered is out of date, which the round after this one corrects
       if (current.inventory.emptySlotCount() > RESERVED_FREE_SLOTS) return false;
@@ -1208,10 +1287,7 @@ function createTrader({
       }
       if (affordable > 0) made += await makeTrade(context, entity, offer, affordable);
     }
-    // Ordinary inputs wait for the next trip; tidyInventory returns them if there
-    // is none. What is also a product or was bought with must go back now
-    const inputs = inputNames();
-    await returnTaken(context, new Map([...before].filter(([name]) => !inputs.has(name))));
+    await finishPendingTrip(context);
     if (made) log(`[Trader] Trip: took ${inHand - carriedAtStart} items, made ${made} trades in ${((Date.now() - startedAt) / 1000).toFixed(1)} s.`);
     return made > 0;
   }
@@ -1234,6 +1310,10 @@ function createTrader({
     const made = Math.floor(gained / Math.max(1, offer.outputCount));
     const known = (knownOffers.get(villagerId(entity)) || []).find(entry => entry.key === offer.key);
     if (known) known.uses += made;
+    // The site reads the record, which was taken when the window opened, before
+    // the trade: it should show the uses as the trade left them
+    const shown = merchants.get(villagerId(entity))?.offers.find(entry => entry.key === offer.key);
+    if (shown && made > 0) shown.uses = Math.min(shown.maxUses || Infinity, shown.uses + made);
     if (made > 0) {
       sessionTrades += made;
       totalTrades += made;
@@ -1242,6 +1322,17 @@ function createTrader({
       notifyChange();
     }
     return made;
+  }
+
+  // Ordinary inputs wait for the next trip; tidyInventory returns them if there
+  // is none. What is also a product or was bought with must go back now. The trip
+  // counts as finished only once that is done, so an interrupted return is
+  // repeated by the next round or by the stop
+  async function finishPendingTrip(context) {
+    if (!pendingTrip) return;
+    const inputs = inputNames();
+    await returnTaken(context, new Map([...pendingTrip].filter(([name]) => !inputs.has(name))));
+    if (context.active()) pendingTrip = null;
   }
 
   // Only what was taken goes back: before, the bot may already have held emeralds
@@ -1384,6 +1475,7 @@ function createTrader({
       id: villagerId(entity),
       level: Number(packet.villagerLevel) || null,
       answered: true,
+      lastSeenAt: new Date().toISOString(),
       offers: offers.map(offer => ({
         key: offer.key,
         input1: offer.inputItem1.name,
@@ -1480,15 +1572,24 @@ function createTrader({
 
   async function returnToSources(context, amounts) {
     const { current } = context;
-    const left = new Map(amounts);
+    const carriedBefore = new Map([...amounts.keys()].map(name => [name, carried(current, name)]));
+    // From the inventory, between two chests: a stack that only partly fitted
+    // must still be offered to the next chest
+    const remaining = () => new Map([...amounts]
+      .map(([name, amount]) => [name, amount - (carriedBefore.get(name) - carried(current, name))])
+      .filter(([, count]) => count > 0));
     phase = 'returning';
-    // Back where it came from, the chest used last first: the priorities decide
-    // what is used up first, and nothing moves from one chest to another
-    const order = [...lastTakenFrom.reverse().filter(pos => desired.sources.includes(pos)),
-      ...desired.sources.filter(pos => !lastTakenFrom.includes(pos))];
+    // Back where it came from, the chest used last first, and nothing moves from
+    // one chest to another. By position: a new setup brings new objects
+    const taken = lastTakenFrom.map(positionKey).reverse();
+    const order = [
+      ...taken.map(key => desired.sources.find(pos => positionKey(pos) === key)).filter(Boolean),
+      ...desired.sources.filter(pos => !taken.includes(positionKey(pos)))
+    ];
     lastTakenFrom = [];
     for (const pos of order) {
-      if (![...left.values()].some(count => count > 0)) break;
+      const left = remaining();
+      if (!left.size) break;
       const window = await openContainer(context, pos, 'A source chest');
       try {
         await moveToContainer(context, window, item => left.get(item.name) > 0, moved => {
@@ -1499,6 +1600,14 @@ function createTrader({
       } finally {
         closeWindow(current, window);
       }
+    }
+    if (!context.active()) return;
+    // What stays is used by a later trip or tried again; the log says so, at
+    // most every few minutes
+    const unreturned = [...remaining()];
+    if (unreturned.length && Date.now() - lastReturnLogAt >= stockLogIntervalMs) {
+      lastReturnLogAt = Date.now();
+      log(`[Trader] The source chests are full: ${unreturned.map(([name, count]) => `${count} ${name}`).join(', ')} stayed in the inventory.`, 'warn');
     }
   }
 

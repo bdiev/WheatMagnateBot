@@ -12285,7 +12285,11 @@ function renderTraderSetup(trader) {
     }).join('')
     : '<li class="trader-empty">Nothing yet: put the bot in place and press Scan.</li>', [containers, roles]);
 
-  const villagers = trader.villagers || [];
+  // A villager killed or gone stays in the record until the next scan: its
+  // trades are not shown, only how many are missing. While the bot is offline
+  // (inReach null) nobody can tell, and all of them are shown
+  const villagers = (trader.villagers || []).filter(villager => villager.inReach !== false);
+  const missing = (trader.villagers || []).length - villagers.length;
   const silent = villagers.filter(villager => !villager.offers?.length).length;
   const groups = traderTradeGroups(villagers);
   const range = (low, high) => formatNumber(low) + (high > low ? `–${formatNumber(high)}` : '');
@@ -12318,22 +12322,25 @@ function renderTraderSetup(trader) {
   const selling = groups.filter(group => group.selling);
   const others = groups.filter(group => !group.selling);
   const othersOn = others.filter(group => group.plain && traderTradeEnabled(group)).length;
+  const missingNote = missing
+    ? ` · ${formatNumber(missing)} no longer in reach (gone or killed; scan again to forget ${missing === 1 ? 'it' : 'them'})`
+    : '';
   renderStable('#traderVillagers', villagers.length
     ? `
-      <p class="trader-note">${formatNumber(villagers.length)} ${villagers.length === 1 ? 'villager' : 'villagers'} in reach${silent ? ` · ${formatNumber(silent)} not answering (asleep, busy, or without a job)` : ''}</p>
+      <p class="trader-note">${formatNumber(villagers.length)} ${villagers.length === 1 ? 'villager' : 'villagers'} in reach${silent ? ` · ${formatNumber(silent)} not answering (asleep, busy, or without a job)` : ''}${missingNote}</p>
       ${selling.map(groupRow).join('')}
       ${others.length ? `
         <details id="traderOtherTrades" class="trader-other-trades"${state.traderOtherTradesOpen ? ' open' : ''}>
           <summary>Other trades (${formatNumber(others.length)}${othersOn ? `, ${formatNumber(othersOn)} on` : ''})</summary>
           <div class="trader-villagers-inner">${others.map(groupRow).join('')}</div>
         </details>` : ''}`
-    : '<p class="trader-empty">No villagers found yet.</p>', [villagers, trader.priceHistory || null, state.traderDraft?.choices || null, state.traderDraft?.limits || null]);
+    : `<p class="trader-empty">${missing ? `None of the ${formatNumber(missing)} scanned villagers is in reach now: scan again.` : 'No villagers found yet.'}</p>`, [villagers, missing, trader.priceHistory || null, state.traderDraft?.choices || null, state.traderDraft?.limits || null]);
 
   const table = $('#traderTableStatus');
   if (table) {
     table.textContent = trader.craftingTable
       ? `Crafting table at ${traderPositionKey(trader.craftingTable).replaceAll(',', ' ')}.`
-      : 'No crafting table found yet.';
+      : 'No crafting table in reach: emeralds go to the output chest without making blocks. Place one and scan again to make blocks.';
   }
   const stock = Object.entries(trader.stock || {}).sort((a, b) => b[1] - a[1]);
   const stockText = $('#traderStock');
@@ -12357,7 +12364,8 @@ function renderTraderControl(trader) {
   if (!status) return;
   const connected = Boolean(trader.connected);
   const hasDraft = Boolean(state.traderDraft);
-  const ready = Boolean(trader.anchor && trader.sources?.length && trader.output && trader.craftingTable);
+  // The crafting table is optional: without it the emeralds are stored as they are
+  const ready = Boolean(trader.anchor && trader.sources?.length && trader.output);
   let text;
   if (trader.enabled && !connected) text = 'On · starts when the bot is in game.';
   else if (trader.lastErrorMessage && trader.enabled) text = trader.lastErrorMessage;
@@ -12366,7 +12374,7 @@ function renderTraderControl(trader) {
   else if (!trader.anchor) text = "Scan from the bot's spot first.";
   else if (!trader.sources?.length) text = 'Choose at least one source chest.';
   else if (!trader.output) text = 'Choose the output chest.';
-  else if (!trader.craftingTable) text = 'No crafting table in reach: place one and scan again.';
+  else if (!trader.craftingTable) text = 'Stopped · no crafting table, so emeralds are stored without making blocks.';
   else text = 'Stopped.';
   status.textContent = text;
   status.title = text;
