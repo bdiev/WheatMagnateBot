@@ -86,6 +86,7 @@ async function run() {
       ['whitelisted', whitelistRows[0]]
     ]) {
       assert.equal(row.username, 'CurrentName', `${scope} leaderboard must use the current player name`);
+      assert.equal(row.player_uuid, '11111111-1111-4111-8111-111111111111', `${scope} avatars must receive the profile UUID`);
       assert.equal(Number(row.total_seconds), 1200, `${scope} playtime must include UUID and legacy-name rows`);
       assert.equal(Number(row.total_messages), 123407, `${scope} messages must match the profile baseline calculation`);
       assert.equal(

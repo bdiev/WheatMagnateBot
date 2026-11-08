@@ -9463,13 +9463,55 @@ function maybeLoadMorePlaytimeLeaderboard() {
     : state.playtimeLeaderboards.whitelisted.length;
   if (state.playtimeLeaderboardVisibleCount >= total) return;
 
-  const previousScrollTop = list.scrollTop;
   state.playtimeLeaderboardVisibleCount = Math.min(
     total,
     state.playtimeLeaderboardVisibleCount + MOBILE_LEADERBOARD_BATCH_SIZE
   );
   renderPlaytimeLeaderboard({ force: true });
-  list.scrollTop = previousScrollTop;
+}
+
+function renderPlaytimeLeaderboardRows(list, leaderboard, scope, sort) {
+  if (!list) return false;
+  if (!leaderboard.length) {
+    return renderStable('#playtimeLeaderboard',
+      `<div class="empty">No ${scope === 'global' ? 'global' : 'whitelist'} data found.</div>`,
+      [scope, 'empty']);
+  }
+  delete state.renderSignatures['#playtimeLeaderboard'];
+  const existing = new Map();
+  for (const row of [...list.children]) {
+    if (row.dataset.playerKey) existing.set(row.dataset.playerKey, row);
+    else row.remove();
+  }
+  let changed = false;
+  leaderboard.forEach((player, index) => {
+    const key = String(player.uuid || player.username).toLowerCase();
+    let row = existing.get(key);
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'rank-item leaderboard-item';
+      row.dataset.playerKey = key;
+      row.innerHTML = '<span class="rank-index"></span><span class="leaderboard-player"></span><strong></strong>';
+      changed = true;
+    }
+    existing.delete(key);
+    const identitySignature = stableSignature([player.username, player.uuid, player.isOnline]);
+    if (row.dataset.identitySignature !== identitySignature) {
+      row.querySelector('.leaderboard-player').innerHTML = playerIdentity(player.username, 28, { status: player.isOnline ? 'online' : 'offline', uuid: player.uuid, loading: 'lazy' });
+      row.dataset.identitySignature = identitySignature;
+      changed = true;
+    }
+    const rank = row.querySelector('.rank-index');
+    const stat = row.querySelector('strong');
+    const value = String(playtimeLeaderboardStatValue(player, sort));
+    if (rank.textContent !== String(index + 1)) { rank.textContent = String(index + 1); changed = true; }
+    if (stat.textContent !== value) { stat.textContent = value; changed = true; }
+    // Append batches without replacing existing images or writing scrollTop:
+    // either operation can interrupt touch momentum and move the viewport.
+    if (list.children[index] !== row) { list.insertBefore(row, list.children[index] || null); changed = true; }
+  });
+  for (const row of existing.values()) { row.remove(); changed = true; }
+  return changed;
 }
 
 function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) {
@@ -9497,19 +9539,7 @@ function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) 
   }
 
   const isFirstRender = Boolean(list && list.dataset.leaderboardRendered !== 'true');
-  const didRender = renderStable('#playtimeLeaderboard', leaderboard.length
-    ? leaderboard.map((player, index) => `
-      <div class="rank-item leaderboard-item">
-        <span class="rank-index">${index + 1}</span>
-        <span class="leaderboard-player">
-          ${playerIdentity(player.username, 28, { status: player.isOnline ? 'online' : 'offline', loading: 'lazy' })}
-        </span>
-        <strong>${escapeHtml(playtimeLeaderboardStatValue(player, sort))}</strong>
-      </div>
-    `).join('')
-    : `<div class="empty">No ${scope === 'global' ? 'global' : 'whitelist'} data found.</div>`,
-    [scope, sort, direction, ...leaderboard.map(player => [player.username, player.isOnline, player.playtime, player.messageCount, player.joinDate])]
-  );
+  const didRender = renderPlaytimeLeaderboardRows(list, leaderboard, scope, sort);
 
   if (didRender && list) list.dataset.leaderboardRendered = 'true';
   if (resetScroll || (didRender && isFirstRender)) {

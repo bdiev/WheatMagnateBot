@@ -2384,7 +2384,7 @@ const NEW_PLAYERS_PAGE_LIMIT = 24;
 const PLAYER_STATS_CACHE_TTL_MS = 60_000;
 // Bump when the meaning of cached Player Stats values changes, so a snapshot
 // persisted by an older build is never shown after a deploy.
-const PLAYER_STATS_CACHE_SCHEMA = 4;
+const PLAYER_STATS_CACHE_SCHEMA = 5;
 let playerStatsCacheValue = null;
 let playerStatsCacheExpiresAt = 0;
 let playerStatsCachePromise = null;
@@ -2649,6 +2649,7 @@ async function getPlayerStats() {
       )
       SELECT
         identity.username,
+        identity.player_uuid,
         identity.is_online,
         identity.last_seen,
         identity.registration_at,
@@ -2913,6 +2914,7 @@ async function getPlayerStats() {
     const seconds = toInt(row.total_seconds);
     return {
       username: row.username,
+      uuid: row.player_uuid || null,
       isOnline: Boolean(row.is_online),
       isWhitelisted: Boolean(row.is_whitelisted),
       lastSeen: row.last_seen,

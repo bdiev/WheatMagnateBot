@@ -11646,8 +11646,9 @@ body.kill-aura-modal-open {
 /* Player profile has its own mobile composition instead of shrinking desktop. */
 @media (max-width: 700px) {
   .rank-item.leaderboard-item {
-    content-visibility: auto;
-    contain-intrinsic-size: 48px;
+    /* Batches already bound the DOM size. Keep real row heights so scrolling
+       never swaps estimated sizes for measured ones. */
+    min-height: 48px;
   }
 
   .player-profile-overlay {
