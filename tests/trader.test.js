@@ -438,6 +438,86 @@ async function test(name, run) {
 }
 
 async function main() {
+  await test('startup waits for chunks before opening a saved source chest', async () => {
+    const stateFile = path.join(os.tmpdir(), `trader-startup-chunks-${process.pid}.json`);
+    fs.rmSync(stateFile, { force: true });
+    const villager = { trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 9 })] };
+    const prepared = await ready({ source: [stack('paper', 32)], villagers: [villager] }, { stateFile });
+    const { bot } = prepared;
+    let trader = prepared.trader;
+    let releaseChunks;
+    try {
+      trader.start();
+      await until(() => trader.getStatus().sessionTrades === 9 && trader.getStatus().phase === 'waiting', 'first session round');
+      const startedAt = trader.getStatus().sessionStartedAt;
+      trader.dispose();
+      bot.waitForChunksToLoad = () => new Promise(resolve => { releaseChunks = resolve; });
+      let opens = 0;
+      const activate = bot.activateBlock;
+      bot.activateBlock = async block => { opens += 1; return activate(block); };
+      villager.trades[0].nbTradeUses = 0;
+      trader = createTrader({ stateFile });
+      trader.attachBot(bot);
+      trader.onSpawn();
+      await until(() => releaseChunks, 'waiting for chunks');
+      await wait(20);
+      assert.equal(opens, 0, 'no container interactions before chunk readiness');
+      assert.equal(trader.getStatus().sessionTrades, 9);
+      releaseChunks();
+      await until(() => trader.getStatus().sessionTrades === 18 && trader.getStatus().phase === 'waiting', 'trades resume after loading');
+      assert.equal(trader.getStatus().sessionStartedAt, startedAt);
+      assert.ok(opens > 0);
+    } finally {
+      releaseChunks?.();
+      trader.dispose();
+      fs.rmSync(stateFile, { force: true });
+    }
+  });
+
+  await test('stopping during chunk loading cancels the deferred Trader resume', async () => {
+    const { bot, trader } = await ready({ source: [stack('paper', 16)], villagers: [{ trades: [rawTrade('paper', 1, 'emerald', 1)] }] });
+    let releaseChunks;
+    let opens = 0;
+    bot.waitForChunksToLoad = () => new Promise(resolve => { releaseChunks = resolve; });
+    bot.activateBlock = async () => { opens += 1; };
+    try {
+      trader.start();
+      await until(() => releaseChunks, 'waiting for chunks');
+      trader.stop({ flush: false });
+      releaseChunks();
+      await wait(20);
+      assert.equal(opens, 0);
+      assert.equal(trader.getStatus().sessionTrades, 0);
+      assert.equal(trader.getStatus().running, false);
+    } finally {
+      releaseChunks?.();
+      trader.dispose();
+    }
+  });
+
+  await test('a source chest ignoring the first click is reopened without leaking listeners', async () => {
+    const villager = { trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 9 })] };
+    const { bot, trader } = await ready({ source: [stack('paper', 16)], villagers: [villager] });
+    const activate = bot.activateBlock;
+    let sourceAttempts = 0;
+    bot.activateBlock = async block => {
+      if (block.position.equals(new Vec3(SOURCE.x, SOURCE.y, SOURCE.z)) && ++sourceAttempts === 1) return;
+      return activate(block);
+    };
+    try {
+      trader.start();
+      await until(() => trader.getStatus().sessionBlocks === 1 && trader.getStatus().phase === 'waiting', 'retry opened the source and traded');
+      assert.ok(sourceAttempts >= 3, 'the source is retried and then revisited for resources');
+      trader.stop({ flush: false });
+      await until(() => bot.listenerCount('windowOpen') === 0 && bot._client.listenerCount('trade_list') === 0, 'pending listener cleanup after stop');
+      assert.equal(bot.listenerCount('windowOpen'), 0);
+      assert.equal(bot._client.listenerCount('trade_list'), 0);
+      assert.equal(trader.getStatus().lastErrorMessage, null);
+    } finally {
+      trader.dispose();
+    }
+  });
+
   await test('gold blocks: one source stack becomes ingots before trading, without a crafting table', async () => {
     const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
     const { bot, trader } = await ready({ source: [stack('gold_block', 64), stack('gold_block', 64)], villagers: [villager] });
@@ -1674,6 +1754,47 @@ async function main() {
     };
     return bot;
   }
+
+  await test('after a restart a saved chest floor refused by the server falls back to the other floor', async () => {
+    const stateFile = path.join(os.tmpdir(), `trader-source-floor-retry-${process.pid}.json`);
+    fs.rmSync(stateFile, { force: true });
+    const villager = { at: [1.5, 67, 1.5], trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 9 })] };
+    const bot = twoFloorBot({ source: [stack('paper', 16)], villagers: [villager] });
+    bot.setBlock(OUTPUT, 'chest');
+    let trader = createTrader({ stateFile, climbTickMs: 0 });
+    try {
+      trader.attachBot(bot);
+      trader.configure({ mode: 'floors', floors: [64, 67] });
+      await trader.scan();
+      trader.configure({ sources: [SOURCE], output: OUTPUT });
+      trader.detachBot();
+      trader.start();
+      trader.dispose();
+      bot.entity.position.set(0.5, 64, 0.5);
+      const attempts = [];
+      const activate = bot.activateBlock;
+      bot.activateBlock = async block => {
+        if (block.position.equals(new Vec3(SOURCE.x, SOURCE.y, SOURCE.z))) {
+          attempts.push(bot.entity.position.y);
+          if (bot.entity.position.y === 64) return;
+        }
+        return activate(block);
+      };
+      trader = createTrader({ stateFile, climbTickMs: 0 });
+      trader.attachBot(bot);
+      trader.onSpawn();
+      await until(() => trader.getStatus().sessionBlocks === 1 && trader.getStatus().phase === 'waiting', 'trading resumed through the other floor');
+      assert.deepEqual(attempts.slice(0, 3), [64, 64, 67]);
+      const sourceFloor = containers => containers.find(entry => entry.x === SOURCE.x && entry.y === SOURCE.y && entry.z === SOURCE.z)?.floor;
+      assert.equal(sourceFloor(trader.getStatus().containers), 67);
+      assert.equal(sourceFloor(JSON.parse(fs.readFileSync(stateFile, 'utf8')).containers), 67, 'the successful floor is persisted');
+      assert.equal(trader.getStatus().enabled, true);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+      fs.rmSync(stateFile, { force: true });
+    }
+  });
 
   await test('two floors: the scan reads both, and the bot climbs the scaffolding to whatever it uses', async () => {
     const villager = { at: [1.5, UPPER, 1.5], trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 9 })] };

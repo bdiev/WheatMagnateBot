@@ -1072,8 +1072,17 @@ function createTrader({
     const context = { current, active: () => isCurrent(generation, current) };
     await flushing;
     let restockSeen = false;
+    let worldReady = typeof current.waitForChunksToLoad !== 'function';
     while (context.active()) {
       try {
+        if (!worldReady) {
+          phase = 'reading';
+          await withTimeout(current.waitForChunksToLoad(), 15_000, 'Trader is waiting for the world to load after reconnecting.');
+          if (!context.active()) break;
+          if (current.waitForTicks) await current.waitForTicks(2);
+          if (!context.active()) break;
+          worldReady = true;
+        }
         const worked = await runRound(context);
         clearError();
         const fruitless = restockSeen && !worked;
@@ -2105,33 +2114,57 @@ function createTrader({
     const { current } = context;
     if (!context.active()) throw new Error('Trader stopped.');
     if (!pos) throw supplyError(`${label} is not set.`);
-    const block = current.blockAt(new Vec3(pos.x, pos.y, pos.z));
-    if (!block || !STORAGE_BLOCKS.has(block.name)) {
-      throw supplyError(`${label} at ${positionKey(pos)} is not there.`);
-    }
-    if (!here) await goToFloor(context, blockFloor(current, pos));
-    closeOpenWindow(current);
-    current.setControlState?.('sneak', false);
-    if (!here && floorsActive() && !canClick(current, block)) {
-      // Hidden from the floor it was put on: the other floor may see it
-      const other = desired.floors.find(floor => floor !== currentFloor(current));
-      await goToFloor(context, other);
-      if (canClick(current, block)) {
-        const scanned = containers.find(entry => samePosition(entry, pos));
-        if (scanned) {
-          scanned.floor = other;
-          saveState();
+    const preferred = here ? currentFloor(current) : blockFloor(current, pos);
+    const floors = !here && floorsActive()
+      ? [preferred, ...desired.floors.filter(floor => floor !== preferred)] : [preferred];
+    let lastError;
+    for (const floor of floors) {
+      if (!here) await goToFloor(context, floor);
+      // A saved floor is a hint. After reconnecting the server may refuse an
+      // otherwise visible click from it; try the other floor before giving up.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (!context.active()) throw new Error('Trader stopped.');
+        closeOpenWindow(current);
+        current.setControlState?.('sneak', false);
+        if (current.waitForTicks) await current.waitForTicks(2);
+        if (!context.active()) throw new Error('Trader stopped.');
+        const block = current.blockAt(new Vec3(pos.x, pos.y, pos.z));
+        if (!block || !STORAGE_BLOCKS.has(block.name)) {
+          throw supplyError(`${label} at ${positionKey(pos)} is not there.`);
         }
-        log(`[Trader] ${label} at ${positionKey(pos)} is used from Y ${other} now.`);
+        let interaction;
+        try {
+          interaction = aimAt(current, block);
+        } catch (error) {
+          lastError = error;
+          break;
+        }
+        const { direction, cursor } = interaction;
+        await current.lookAt(block.position.plus(cursor), true);
+        if (current.waitForTicks) await current.waitForTicks(2);
+        if (!context.active()) throw new Error('Trader stopped.');
+        try {
+          const window = await waitForContainerWindow(current, block, direction, cursor, `${label} at ${positionKey(pos)} did not open.`);
+          if (!context.active()) {
+            closeWindow(current, window);
+            throw new Error('Trader stopped.');
+          }
+          // Persist a new floor only after the server actually opens the chest.
+          const scanned = !here && containers.find(entry => samePosition(entry, pos));
+          if (scanned && floorsActive() && scanned.floor !== floor) {
+            scanned.floor = floor;
+            saveState();
+            log(`[Trader] ${label} at ${positionKey(pos)} is used from Y ${floor} now.`);
+          }
+          await syncWindowState(current, window);
+          return window;
+        } catch (error) {
+          if (!context.active()) throw error;
+          lastError = error;
+        }
       }
     }
-    const { direction, cursor } = aimAt(current, block);
-    await current.lookAt(block.position.plus(cursor), true);
-    if (current.waitForTicks) await current.waitForTicks(2);
-    const window = await waitForContainerWindow(current, block, direction, cursor, `${label} at ${positionKey(pos)} did not open.`);
-    // Some servers fill a container a moment after opening it
-    await syncWindowState(current, window);
-    return window;
+    throw supplyError(`${lastError.message} Bot feet at ${positionKey(feetPosition(current))}.`);
   }
 
   async function waitForContainerWindow(current, block, direction, cursor, message,

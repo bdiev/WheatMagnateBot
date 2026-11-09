@@ -12227,7 +12227,7 @@ function traderFloorsSet(trader) {
   return Array.isArray(trader.floors) && trader.floors.length === 2;
 }
 
-// "Floor 1" for the lower Y, "Floor 2" for the upper; empty on a one-spot farm
+// Floor labels follow the saved order; empty on a one-spot farm.
 function traderFloorLabel(trader, floor) {
   if (!traderOnFloors(trader) || !traderFloorsSet(trader)) return '';
   const index = trader.floors.indexOf(floor);
@@ -12382,7 +12382,7 @@ function renderTraderSetup(trader) {
       const label = `${container.double ? 'Double ' : ''}${traderItemName(container.name)}`;
       const floor = traderFloorLabel(trader, container.floor);
       return `
-        <li class="trader-row">
+        <li class="trader-row" data-trader-chest-role="${escapeHtml(roles[key] || 'unused')}">
           ${itemIcon({ name: container.name })}
           <span class="trader-row-name"><strong>${escapeHtml(label)}</strong><small>${floor ? `<span class="trader-floor-tag">${escapeHtml(floor)}</span> · ` : ''}${escapeHtml(key.replaceAll(',', ' '))}</small></span>
           <select data-trader-role="${escapeHtml(key)}" aria-label="Role of ${escapeHtml(label)}">${options(key)}</select>
@@ -12421,7 +12421,7 @@ function renderTraderSetup(trader) {
             <small>${group.plain ? details : 'Special item · not supported'}</small>
           </span>
         </label>
-        ${group.plain ? `<label class="trader-limit"><small>Max</small><select data-trader-limit="${escapeHtml(group.key)}" aria-label="Highest price in ${escapeHtml(traderItemName(group.input1))}">${traderLimitOptions(trader, group, limit)}</select></label>` : ''}
+        ${group.plain ? `<label class="trader-limit"><small>Max price</small><select data-trader-limit="${escapeHtml(group.key)}" aria-label="Highest price in ${escapeHtml(traderItemName(group.input1))}">${traderLimitOptions(trader, group, limit)}</select></label>` : ''}
       </div>`;
   };
   const selling = groups.filter(group => group.selling);
@@ -12464,7 +12464,7 @@ function renderTraderSetup(trader) {
     save.textContent = 'Save Setup';
   }
   const saveStatus = $('#traderSaveStatus');
-  if (saveStatus) saveStatus.textContent = hasDraft ? 'You have unsaved changes.' : '';
+  if (saveStatus) saveStatus.textContent = hasDraft ? 'You have unsaved changes.' : 'No unsaved changes.';
 }
 
 function renderTraderControl(trader) {
@@ -12472,7 +12472,7 @@ function renderTraderControl(trader) {
   if (!status) return;
   const connected = Boolean(trader.connected);
   const hasDraft = Boolean(state.traderDraft);
-  // The crafting table is optional: without it the emeralds are stored as they are
+  // The crafting table is optional: without it loose emeralds stay in inventory.
   const needsFloors = traderOnFloors(trader) && !traderFloorsSet(trader);
   const ready = Boolean(!needsFloors && trader.anchor && trader.sources?.length && trader.output);
   let text;
@@ -12484,7 +12484,7 @@ function renderTraderControl(trader) {
   else if (!trader.anchor) text = traderOnFloors(trader) ? 'Scan from the scaffolding column first.' : "Scan from the bot's spot first.";
   else if (!trader.sources?.length) text = 'Choose at least one source chest.';
   else if (!trader.output) text = 'Choose the output chest.';
-  else if (!trader.craftingTable) text = 'Stopped · no crafting table, so emeralds are stored without making blocks.';
+  else if (!trader.craftingTable) text = 'Stopped · no crafting table, so loose emeralds stay in the inventory.';
   else text = 'Stopped.';
   status.textContent = text;
   status.title = text;
