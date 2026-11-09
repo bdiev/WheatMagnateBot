@@ -12,7 +12,8 @@ function positionKey(pos) {
   return `${pos.x},${pos.y},${pos.z}`;
 }
 
-function containerInteraction(current, block, reach = STORAGE_REACH) {
+// ignore: blocks the ray goes through, as the scaffolding a bot stands in
+function containerInteraction(current, block, reach = STORAGE_REACH, { ignore = null } = {}) {
   const eye = current.entity.position.offset(0, current.entity.eyeHeight || 1.62, 0);
   const faces = [
     new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(0, 0, -1),
@@ -33,11 +34,19 @@ function containerInteraction(current, block, reach = STORAGE_REACH) {
         }
       }
     }
+    const matcher = ignore && ((candidate, iter) => {
+      if (ignore(candidate)) return false;
+      const crossing = iter?.intersect?.(candidate.shapes, candidate.position);
+      if (!crossing) return false;
+      candidate.face = crossing.face;
+      candidate.intersect = crossing.pos;
+      return true;
+    });
     let firstHit;
     for (const point of points) {
       const delta = block.position.plus(point).minus(eye);
       if (delta.norm() > reach) continue;
-      const hit = current.world.raycast(eye, delta.unit(), delta.norm() + 0.05);
+      const hit = current.world.raycast(eye, delta.unit(), delta.norm() + 0.05, matcher);
       if (firstHit === undefined) firstHit = hit;
       if (hit?.position?.equals(block.position) && faces[hit.face] && hit.intersect) {
         return { direction: faces[hit.face], cursor: hit.intersect.minus(block.position) };

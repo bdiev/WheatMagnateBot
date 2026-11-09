@@ -845,11 +845,13 @@ function createTrader({
     const seen = new Set();
     const found = [];
     let table = null;
-    for (const floor of order) {
+    const height = current.entity.eyeHeight || 1.62;
+    for (const [index, floor] of order.entries()) {
       if (!context.active()) break;
       await goToFloor(context, floor);
       phase = 'scanning';
-      const here = await findContainers(context, seen);
+      const later = order.slice(index + 1).map(other => new Vec3(desired.anchor.x + 0.5, other + height, desired.anchor.z + 0.5));
+      const here = await findContainers(context, seen, later);
       for (const entry of here) entry.floor = floor;
       found.push(...here);
       table ||= findCraftingTable(current);
@@ -909,16 +911,21 @@ function createTrader({
   // Each chest once, however many blocks it takes. The block states say which
   // blocks belong together; what the server opens is the proof where they don't:
   // both halves of a double chest open the same 54 slots
-  async function findContainers(context, seen = new Set()) {
+  // laterEyes: where the bot will look from next. A chest hidden from here but
+  // in reach of one of them is left for it
+  async function findContainers(context, seen = new Set(), laterEyes = []) {
     const { current } = context;
     const found = [];
     for (const block of findBlocksInReach(current, [...STORAGE_BLOCKS])) {
       const key = positionKey(block.position);
       if (seen.has(key)) continue;
-      // On two floors a chest hidden from this one is left for the other floor
-      if (floorsActive() && !canClick(current, block)) {
-        log(`[Trader] Scan: ${block.name} at ${key} is not visible from Y ${currentFloor(current)}.`);
-        continue;
+      const centre = block.position.offset(0.5, 0.5, 0.5);
+      if (laterEyes.some(eye => eye.distanceTo(centre) <= STORAGE_REACH)) {
+        const hidden = hiddenBy(current, block);
+        if (hidden) {
+          log(`[Trader] Scan: ${block.name} at ${key} is not visible from Y ${currentFloor(current)} (${hidden}), trying the other floor.`);
+          continue;
+        }
       }
       seen.add(key);
       const partner = chestPartner(block);
@@ -963,18 +970,31 @@ function createTrader({
 
   function findCraftingTable(current) {
     const blocks = findBlocksInReach(current, [TABLE_BLOCK]);
-    const block = floorsActive() ? blocks.find(entry => canClick(current, entry)) : blocks[0];
+    const block = (floorsActive() && blocks.find(entry => canClick(current, entry))) || blocks[0];
     return block ? plainPosition(block.position) : null;
   }
 
-  // Whether the bot sees a surface of the block from where it stands
-  function canClick(current, block) {
+  // Where to click a block. On two floors the bot looks out of its own column:
+  // the scaffolding around its eyes is not in the way
+  function aimAt(current, block) {
+    const anchor = floorsActive() ? desired.anchor : null;
+    const ignore = anchor && (candidate => candidate.name === SCAFFOLDING
+      && candidate.position.x === anchor.x && candidate.position.z === anchor.z);
+    return containerInteraction(current, block, STORAGE_REACH, { ignore });
+  }
+
+  // Why the bot sees no surface of the block from where it stands, or null
+  function hiddenBy(current, block) {
     try {
-      containerInteraction(current, block);
-      return true;
-    } catch {
-      return false;
+      aimAt(current, block);
+      return null;
+    } catch (error) {
+      return error.message;
     }
+  }
+
+  function canClick(current, block) {
+    return hiddenBy(current, block) === null;
   }
 
   function villagerId(entity) {
@@ -1439,7 +1459,7 @@ function createTrader({
   async function craftByDrag(context, table) {
     const { current } = context;
     if (!current.registry.supportFeature?.('stateIdUsed')) return false;
-    const { direction, cursor } = containerInteraction(current, table);
+    const { direction, cursor } = aimAt(current, table);
     await current.lookAt(table.position.plus(cursor), true);
     if (current.waitForTicks) await current.waitForTicks(2);
     const window = await waitForContainerWindow(current, table, direction, cursor,
@@ -1981,7 +2001,7 @@ function createTrader({
         log(`[Trader] ${label} at ${positionKey(pos)} is used from Y ${other} now.`);
       }
     }
-    const { direction, cursor } = containerInteraction(current, block);
+    const { direction, cursor } = aimAt(current, block);
     await current.lookAt(block.position.plus(cursor), true);
     if (current.waitForTicks) await current.waitForTicks(2);
     const window = await waitForContainerWindow(current, block, direction, cursor, `${label} at ${positionKey(pos)} did not open.`);

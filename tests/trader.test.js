@@ -1479,6 +1479,51 @@ async function main() {
     trader.dispose();
   });
 
+  await test('two floors: the scaffolding the bot stands in does not hide the chests', async () => {
+    const { RaycastIterator } = require('prismarine-world/src/iterators');
+    const shapes = registry.blockCollisionShapes ?? require('minecraft-data')('1.21.4').blockCollisionShapes;
+    const scaffolding = shapes.shapes[shapes.blocks.scaffolding];
+    const bot = twoFloorBot({ villagers: [] });
+    // The column goes on above the upper floor, so the eye is in it on both
+    for (let y = UPPER; y < UPPER + 3; y += 1) bot.setBlock({ x: 0, y, z: 0 }, 'scaffolding');
+    // Above the eye downstairs: the ray to it leaves through the top of the scaffolding
+    const HIGH = { x: -1, y: 68, z: 0 };
+    bot.setChestSize(HIGH, 27, []);
+    bot.setBlock(HIGH, 'chest');
+    const blockAt = bot.blockAt;
+    bot.blockAt = pos => {
+      const block = blockAt(pos);
+      block.shapes = block.name === 'air' ? [] : block.name === 'scaffolding' ? scaffolding : [[0, 0, 0, 1, 1, 1]];
+      return block;
+    };
+    // The game's ray, as mineflayer's world casts it
+    bot.world = {
+      raycast(from, direction, range, matcher = null) {
+        const iter = new RaycastIterator(from, direction, range);
+        for (let pos = iter.next(); pos; pos = iter.next()) {
+          const block = bot.blockAt(new Vec3(pos.x, pos.y, pos.z));
+          if (matcher) {
+            if (matcher(block, iter)) return block;
+            continue;
+          }
+          const intersect = iter.intersect(block.shapes, block.position);
+          if (intersect) return Object.assign(block, { face: intersect.face, intersect: intersect.pos });
+        }
+        return null;
+      }
+    };
+    const trader = createTrader({ climbTickMs: 0 });
+    trader.attachBot(bot);
+    trader.configure({ mode: 'floors', floors: [64, UPPER] });
+    const status = await trader.scan();
+    const floorOf = pos => status.containers.find(entry => entry.x === pos.x && entry.y === pos.y && entry.z === pos.z)?.floor;
+    assert.equal(floorOf(SOURCE), 64, 'the chest downstairs is seen from inside the column');
+    assert.equal(floorOf(UPPER_OUTPUT), UPPER, 'and the one upstairs too');
+    assert.equal(floorOf(HIGH), 64, 'and one above the eye');
+    assert.deepEqual(status.craftingTable, TABLE);
+    trader.dispose();
+  });
+
   await test('two floors: a column without scaffolding is named, and the bot does not move', async () => {
     const bot = twoFloorBot({ villagers: [] });
     bot.setBlock({ x: 0, y: 66, z: 0 }, 'air');
