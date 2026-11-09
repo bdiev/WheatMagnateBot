@@ -57,6 +57,8 @@ assert.match(app, /body\.payload = \{ mode: traderMode \}/);
 assert.match(app, /body\.payload = traderFloorsPayload\(\)/);
 assert.match(app, /scan\.disabled = !connected \|\| trader\.enabled \|\| trader\.scanning \|\| needsFloors/, 'no scan before the floors are known');
 assert.match(app, /input\.dataset\.dirty === '1'/, 'a Y being typed survives status updates');
+assert.match(app, /state\.traderFloorsSaved = \[\.\.\.body\.payload\.floors\]/, 'saved Ys stay until the bot reports them');
+assert.doesNotMatch(app, /if \(traderFloors\) \{\s*for \(const input/, 'a status already on its way does not put the old Ys back');
 assert.match(setup, /escapeHtml\(floor\)/, 'the floor of a chest is put on the page escaped');
 
 // No manual order: the fullest chest is used first, and the tab says so

@@ -12247,6 +12247,12 @@ function renderTraderFarm(trader) {
   }
   const floors = $('#traderFloors');
   if (floors) floors.hidden = !floorsMode;
+  // Saved floors stay as typed until the bot reports them
+  const saved = state.traderFloorsSaved;
+  if (saved && traderFloorsSet(trader) && trader.floors[0] === saved[0] && trader.floors[1] === saved[1]) {
+    state.traderFloorsSaved = null;
+    for (const input of document.querySelectorAll('#tab-trader [data-trader-floor]')) delete input.dataset.dirty;
+  }
   [$('#traderFloor1'), $('#traderFloor2')].forEach((input, index) => {
     if (!input || input.dataset.dirty === '1' || document.activeElement === input) return;
     const value = traderFloorsSet(trader) ? trader.floors[index] : index === 0 ? trader.botPosition?.y : null;
@@ -12854,9 +12860,10 @@ async function handleAdminBotCommand(event) {
     // A scan asks every villager, and one that does not answer takes seconds;
     // on two floors it climbs between them too
     await waitForAdminBotCommand(queued.command.id, commandType === 'trader_scan' ? 180_000 : undefined);
-    // Typed floors are kept until saved; the setup on screen belongs to the farm
+    // Typed floors stay on screen until the bot's status shows them: an update
+    // already on its way is older. The setup on screen belongs to the farm
     if (traderFloors) {
-      for (const input of document.querySelectorAll('#tab-trader [data-trader-floor]')) delete input.dataset.dirty;
+      state.traderFloorsSaved = [...body.payload.floors].sort((a, b) => a - b);
     } else if (commandType === 'trader_scan' || commandType === 'trader_configure') {
       state.traderDraft = null;
     }
