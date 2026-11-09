@@ -1417,7 +1417,7 @@ async function main() {
     await assert.rejects(trader.scan(), /Y of both floors/);
     assert.throws(() => trader.configure({ floors: [64, 64] }), /different Ys/);
     trader.configure({ floors: [UPPER, 64] });
-    assert.deepEqual(trader.getStatus().floors, [64, UPPER], 'the lower floor is floor 1');
+    assert.deepEqual(trader.getStatus().floors, [UPPER, 64], 'floor numbers follow the configured order');
 
     const status = await trader.scan();
     const floorOf = pos => status.containers.find(entry => entry.x === pos.x && entry.y === pos.y && entry.z === pos.z)?.floor;
@@ -1529,13 +1529,37 @@ async function main() {
     bot.setBlock({ x: 0, y: 66, z: 0 }, 'air');
     const trader = createTrader({ climbTickMs: 0 });
     trader.attachBot(bot);
-    trader.configure({ mode: 'floors', floors: [64, UPPER] });
+    trader.configure({ mode: 'floors', floors: [UPPER, 64] });
     await assert.rejects(trader.scan(), /No scaffolding at 0 66 0/);
     assert.equal(bot.moves.length, 0);
     bot.entity.position = new Vec3(0.5, 90, 0.5);
     bot.setBlock({ x: 0, y: 66, z: 0 }, 'scaffolding');
-    await assert.rejects(trader.scan(), /scaffolding column on floor 1 \(Y 64\) or floor 2 \(Y 72\)/);
+    await assert.rejects(trader.scan(), /scaffolding column on floor 1 \(Y 72\) or floor 2 \(Y 64\)/);
     trader.dispose();
+  });
+
+  await test('swapping floor Ys preserves their order through saves, farm switches and restarts', () => {
+    const stateFile = path.join(os.tmpdir(), `trader-floor-order-test-${process.pid}.json`);
+    fs.rmSync(stateFile, { force: true });
+    let trader;
+    try {
+      trader = createTrader({ stateFile });
+      trader.configure({ mode: 'floors', floors: [149, 152] });
+      assert.deepEqual(trader.configure({ floors: [152, 149] }).floors, [152, 149]);
+      trader.configure({ mode: 'single' });
+      assert.deepEqual(trader.configure({ mode: 'floors' }).floors, [152, 149]);
+      trader.dispose();
+      trader = createTrader({ stateFile });
+      assert.deepEqual(trader.getStatus().floors, [152, 149]);
+      assert.deepEqual(trader.configure({ floors: [149, 152] }).floors, [149, 152]);
+      assert.throws(() => trader.configure({ floors: [152, -4096] }), /at most/);
+      trader.dispose();
+      trader = createTrader({ stateFile });
+      assert.deepEqual(trader.getStatus().floors, [149, 152]);
+    } finally {
+      trader?.dispose();
+      fs.rmSync(stateFile, { force: true });
+    }
   });
 
   await test('each farm keeps its own setup through a switch and a restart', async () => {

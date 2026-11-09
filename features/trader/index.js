@@ -157,10 +157,10 @@ function samePosition(a, b) {
   return Boolean(a && b) && a.x === b.x && a.y === b.y && a.z === b.z;
 }
 
-// Two different whole Ys, lowest first, not too far apart to climb
+// Two different whole Ys in the user's order, not too far apart to climb
 function validFloors(floors) {
   return Array.isArray(floors) && floors.length === 2 && floors.every(Number.isInteger)
-    && floors[0] < floors[1] && floors[1] - floors[0] <= MAX_FLOOR_GAP;
+    && floors[0] !== floors[1] && Math.abs(floors[1] - floors[0]) <= MAX_FLOOR_GAP;
 }
 
 // One farm's setup as saved: the spot, the chests, the choices and the scan
@@ -515,7 +515,8 @@ function createTrader({
   // The column the bot climbs: scaffolding from the lower floor up to the block
   // it stands on at the upper one
   function assertColumn(current) {
-    const [low, high] = desired.floors;
+    const low = Math.min(...desired.floors);
+    const high = Math.max(...desired.floors);
     const { x, z } = desired.anchor;
     for (let y = low; y < high; y += 1) {
       const block = current.blockAt(new Vec3(x, y, z));
@@ -739,16 +740,16 @@ function createTrader({
   // The Ys the bot stands at on each floor. New floors need a new scan
   function setFloors(floors) {
     if (desired.mode !== MODE_FLOORS) throw new Error('Floors are only for the two-floor farm.');
-    const sorted = Array.isArray(floors) ? floors.map(Number).sort((a, b) => a - b) : null;
-    if (!sorted || sorted.length !== 2 || !sorted.every(Number.isInteger)) throw new Error('Give the Y of both floors as whole numbers.');
-    if (sorted[0] === sorted[1]) throw new Error('The two floors need different Ys.');
-    if (!validFloors(sorted)) throw new Error(`The floors can be at most ${MAX_FLOOR_GAP} blocks apart.`);
-    if (desired.floors && desired.floors[0] === sorted[0] && desired.floors[1] === sorted[1]) return;
+    const next = Array.isArray(floors) ? floors.map(Number) : null;
+    if (!next || next.length !== 2 || !next.every(Number.isInteger)) throw new Error('Give the Y of both floors as whole numbers.');
+    if (next[0] === next[1]) throw new Error('The two floors need different Ys.');
+    if (!validFloors(next)) throw new Error(`The floors can be at most ${MAX_FLOOR_GAP} blocks apart.`);
+    if (desired.floors && desired.floors[0] === next[0] && desired.floors[1] === next[1]) return;
     if (desired.enabled || running) throw new Error('Stop the Trader before changing the floors.');
     if (scanning) throw new Error('Trader is still scanning.');
-    desired.floors = sorted;
+    desired.floors = next;
     desired.anchor = null;
-    log(`[Trader] Floors at Y ${sorted[0]} and Y ${sorted[1]}; scan from the column next.`);
+    log(`[Trader] Floors at Y ${next[0]} and Y ${next[1]}; scan from the column next.`);
   }
 
   function configure({ mode, floors, sources, output, craftingTable, tradeChoices, priceLimits } = {}) {
@@ -834,9 +835,10 @@ function createTrader({
     const { current } = context;
     if (!floorsActive()) throw new Error('Enter the Y of both floors first.');
     const feet = feetPosition(current);
-    const [low, high] = desired.floors;
+    const low = Math.min(...desired.floors);
+    const high = Math.max(...desired.floors);
     if (feet.y < low - 1 || feet.y > high + 1) {
-      throw new Error(`Put the bot in its scaffolding column on floor 1 (Y ${low}) or floor 2 (Y ${high}), then scan.`);
+      throw new Error(`Put the bot in its scaffolding column on floor 1 (Y ${desired.floors[0]}) or floor 2 (Y ${desired.floors[1]}), then scan.`);
     }
     const y = current.entity.position.y;
     const order = [...desired.floors].sort((a, b) => Math.abs(a - y) - Math.abs(b - y));
@@ -1098,7 +1100,7 @@ function createTrader({
     if (!anchor || !feet) return;
     if (feet.x === anchor.x && feet.z === anchor.z) {
       // Anywhere in its column: the next floor it needs is climbed to from there
-      if (floorsActive() && feet.y >= desired.floors[0] - 1 && feet.y <= desired.floors[1] + 1) return;
+      if (floorsActive() && feet.y >= Math.min(...desired.floors) - 1 && feet.y <= Math.max(...desired.floors) + 1) return;
       if (!floorsActive() && Math.abs(feet.y - anchor.y) <= 1) return;
     }
     const spot = floorsActive() ? `column at ${anchor.x} ${anchor.z}` : `spot ${positionKey(anchor)}`;

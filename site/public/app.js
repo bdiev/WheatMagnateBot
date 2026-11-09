@@ -12373,7 +12373,7 @@ function renderTraderSetup(trader) {
   const options = key => [['', 'Not used'], ['source', 'Source'], ['output', 'Output']]
     .map(([value, label]) => `<option value="${value}"${(roles[key] || '') === value ? ' selected' : ''}>${label}</option>`)
     .join('');
-  // Sources first, then the output; on two floors the lower floor first in each
+  // Sources first, then the output; on two floors the configured floor 1 first in each
   const rank = container => ({ source: 0, output: 1 })[roles[traderPositionKey(container)]] ?? 2;
   const floorRank = container => (traderOnFloors(trader) && traderFloorsSet(trader) ? trader.floors.indexOf(container.floor) : 0);
   renderStable('#traderContainers', containers.length
@@ -12863,7 +12863,7 @@ async function handleAdminBotCommand(event) {
     // Typed floors stay on screen until the bot's status shows them: an update
     // already on its way is older. The setup on screen belongs to the farm
     if (traderFloors) {
-      state.traderFloorsSaved = [...body.payload.floors].sort((a, b) => a - b);
+      state.traderFloorsSaved = [...body.payload.floors];
     } else if (commandType === 'trader_scan' || commandType === 'trader_configure') {
       state.traderDraft = null;
     }
