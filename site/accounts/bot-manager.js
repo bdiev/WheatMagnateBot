@@ -1,10 +1,9 @@
 'use strict';
 
 class BotManager {
-  constructor({ registry, runtimeFactory, maxConcurrentBots = 3, startDelayMs = 10_000, startJitterMs = 3_000, random = Math.random, isPriorityAccount = () => false } = {}) {
+  constructor({ registry, runtimeFactory, startDelayMs = 10_000, startJitterMs = 3_000, random = Math.random, isPriorityAccount = () => false } = {}) {
     this.registry = registry;
     this.runtimeFactory = runtimeFactory;
-    this.maxConcurrentBots = Math.max(1, Number(maxConcurrentBots) || 3);
     this.startDelayMs = Math.max(0, Number(startDelayMs) || 0);
     this.startJitterMs = Math.max(0, Number(startJitterMs) || 0);
     this.random = typeof random === 'function' ? random : Math.random;
@@ -97,8 +96,6 @@ class BotManager {
     if (this.startPromises.has(accountId)) return this.startPromises.get(accountId);
     const account = this.registry.get(accountId);
     if (!account) throw Object.assign(new Error('Minecraft account not found.'), { statusCode: 404 });
-    const active = [...this.runtimes.values()].filter(runtime => !['stopped','error'].includes(runtime.status));
-    if (active.length >= this.maxConcurrentBots && !this.runtimes.has(accountId)) throw Object.assign(new Error('Concurrent bot limit reached.'), { statusCode: 409 });
     let runtime = this.runtimes.get(accountId);
     if (!runtime) {
       runtime = this.runtimeFactory(account);

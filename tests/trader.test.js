@@ -1451,15 +1451,26 @@ async function main() {
     assert.deepEqual(chatMessages, [], 'nothing reached the game chat');
   });
 
-  await test('the setup, the choices and the totals survive a restart', async () => {
+  await test('the session survives reconnects and restarts, and resets only on a new enable', async () => {
     const stateFile = path.join(os.tmpdir(), `trader-test-${process.pid}.json`);
     fs.rmSync(stateFile, { force: true });
     try {
       const villager = { trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 9 })] };
-      const { trader } = await ready({ source: [stack('paper', 20)], villagers: [villager] }, { stateFile });
+      const { bot, trader } = await ready({ source: [stack('paper', 20)], villagers: [villager] }, { stateFile });
       trader.configure({ tradeChoices: { 'a+>b': true } });
       trader.start();
-      await until(() => trader.getStatus().totalBlocks === 1, 'a block');
+      await until(() => trader.getStatus().totalBlocks === 1 && trader.getStatus().phase === 'waiting', 'a block');
+      const sessionStartedAt = trader.getStatus().sessionStartedAt;
+      assert.ok(sessionStartedAt);
+      trader.start();
+      assert.equal(trader.getStatus().sessionTrades, 9, 'repeated start does not reset an enabled session');
+      trader.detachBot();
+      trader.attachBot(bot);
+      trader.onSpawn();
+      assert.equal(trader.getStatus().sessionTrades, 9, 'reconnect keeps trades');
+      assert.equal(trader.getStatus().sessionBlocks, 1, 'reconnect keeps blocks');
+      assert.equal(trader.getStatus().sessionStartedAt, sessionStartedAt);
+      await until(() => trader.getStatus().phase === 'waiting', 'resumed after reconnect');
       trader.dispose();
 
       const reloaded = createTrader({ stateFile });
@@ -1470,10 +1481,61 @@ async function main() {
       assert.deepEqual(status.craftingTable, TABLE);
       assert.equal(status.totalBlocks, 1);
       assert.equal(status.totalTrades, 9);
+      assert.equal(status.sessionTrades, 9);
+      assert.equal(status.sessionBlocks, 1);
+      assert.equal(status.sessionStartedAt, sessionStartedAt);
       assert.equal(status.villagers[0].offers[0].key, 'paper+>emerald');
       assert.equal(status.running, false, 'it waits for a spawn');
+      villager.trades[0].nbTradeUses = 0;
+      reloaded.attachBot(bot);
+      reloaded.onSpawn();
+      await until(() => reloaded.getStatus().sessionTrades === 18 && reloaded.getStatus().sessionBlocks === 2
+        && reloaded.getStatus().phase === 'waiting', 'restarted process adds to the same session');
+      assert.equal(reloaded.getStatus().sessionStartedAt, sessionStartedAt);
+      reloaded.stop({ flush: false });
+      assert.equal(reloaded.getStatus().sessionTrades, 18, 'stop keeps the completed session visible');
       reloaded.dispose();
+
+      const stopped = createTrader({ stateFile });
+      try {
+        assert.equal(stopped.getStatus().enabled, false);
+        assert.equal(stopped.getStatus().sessionTrades, 18, 'disabled session survives a restart too');
+        assert.equal(stopped.getStatus().sessionBlocks, 2);
+        assert.equal(stopped.getStatus().sessionStartedAt, sessionStartedAt);
+        const next = stopped.start();
+        assert.equal(next.sessionTrades, 0, 'a new enable resets the session even while offline');
+        assert.equal(next.sessionBlocks, 0);
+        assert.notEqual(next.sessionStartedAt, sessionStartedAt);
+        assert.equal(next.totalTrades, 18, 'lifetime trades stay unchanged');
+        assert.equal(next.totalBlocks, 2);
+        const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+        assert.equal(saved.sessionStartedAt, next.sessionStartedAt);
+        assert.equal(saved.sessionTrades, 0);
+        assert.equal(saved.sessionBlocks, 0);
+      } finally {
+        stopped.dispose();
+      }
     } finally {
+      fs.rmSync(stateFile, { force: true });
+    }
+  });
+
+  await test('legacy enabled state initializes a session once when the bot resumes', () => {
+    const stateFile = path.join(os.tmpdir(), `trader-legacy-session-${process.pid}.json`);
+    fs.writeFileSync(stateFile, JSON.stringify({ enabled: true, totalTrades: 20, totalBlocks: 3 }));
+    const trader = createTrader({ stateFile });
+    try {
+      trader.attachBot(fakeBot());
+      trader.onSpawn();
+      const status = trader.getStatus();
+      assert.equal(status.sessionTrades, 0);
+      assert.equal(status.sessionBlocks, 0);
+      assert.ok(status.sessionStartedAt);
+      assert.equal(status.totalTrades, 20);
+      assert.equal(status.totalBlocks, 3);
+      assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).sessionStartedAt, status.sessionStartedAt);
+    } finally {
+      trader.dispose();
       fs.rmSync(stateFile, { force: true });
     }
   });

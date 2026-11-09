@@ -277,9 +277,11 @@ function createTrader({
   }
   let totalTrades = Math.max(0, Number(saved.totalTrades) || 0);
   let totalBlocks = Math.max(0, Number(saved.totalBlocks) || 0);
-  let sessionTrades = 0;
-  let sessionBlocks = 0;
-  let sessionStartedAt = null;
+  // A session follows the enabled switch, across reconnects and process restarts.
+  let sessionTrades = Math.max(0, Number(saved.sessionTrades) || 0);
+  let sessionBlocks = Math.max(0, Number(saved.sessionBlocks) || 0);
+  let sessionStartedAt = typeof saved.sessionStartedAt === 'string' && Number.isFinite(Date.parse(saved.sessionStartedAt))
+    ? saved.sessionStartedAt : null;
   // What each villager offered when last opened, by UUID; saved, so the bot knows
   // after a restart which items in its inventory belong to the trades
   const merchants = new Map(active.merchants.map(entry => [entry.id, entry]));
@@ -367,7 +369,8 @@ function createTrader({
   function saveState() {
     if (!stateFile) return;
     const text = JSON.stringify({
-      ...desired, totalTrades, totalBlocks, containers, merchants: [...merchants.values()], priceHistory, farms,
+      ...desired, totalTrades, totalBlocks, sessionTrades, sessionBlocks, sessionStartedAt,
+      containers, merchants: [...merchants.values()], priceHistory, farms,
       purchaseEmeralds: pendingTrip?.has(EMERALD) && bot
         ? Math.max(0, carried(bot, EMERALD) - pendingTrip.get(EMERALD)) : purchaseEmeralds
     }, null, 2);
@@ -674,6 +677,11 @@ function createTrader({
     const missing = missingSetup();
     if (missing) throw new Error(missing);
     if (scanning) throw new Error('Trader is still scanning.');
+    if (!desired.enabled) {
+      sessionTrades = 0;
+      sessionBlocks = 0;
+      sessionStartedAt = new Date().toISOString();
+    }
     desired.enabled = true;
     lastErrorMessage = null;
     outputFull = false;
@@ -1043,9 +1051,11 @@ function createTrader({
     const generation = ++loopGeneration;
     const current = bot;
     running = true;
-    sessionTrades = 0;
-    sessionBlocks = 0;
-    sessionStartedAt = new Date().toISOString();
+    // Older state files have no session timestamp. Initialize it once on resume.
+    if (!sessionStartedAt) {
+      sessionStartedAt = new Date().toISOString();
+      saveState();
+    }
     dragCraftWorks = true;
     knownOffers.clear();
     checkVillagers = true;

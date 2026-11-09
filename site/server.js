@@ -3927,8 +3927,6 @@ async function handleAccountsApi(req, currentUser, url) {
   }
   if (collection && req.method === 'POST') {
     assertAdminUser(currentUser);
-    const max = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
-    if (registry.list().length >= max) throw Object.assign(new Error('Minecraft account limit reached.'), { statusCode: 409 });
     const input = cleanAccountInput(await readJsonBody(req, 32 * 1024));
     if (input.role === 'pearl_loader' && registry.list().some(account => account.role === 'pearl_loader')) {
       throw Object.assign(new Error('Only one bot can have the Pearl Loader role.'), { statusCode:409 });

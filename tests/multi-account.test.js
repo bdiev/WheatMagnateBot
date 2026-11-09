@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { AccountRegistry } = require('../site/accounts/account-registry');
 const { ActiveAccountContext } = require('../site/accounts/active-account-context');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
@@ -26,7 +27,7 @@ async function main(){
   const context=new ActiveAccountContext(registry); assert.equal(context.current().id,first.id); context.select(second.id); assert.equal(context.current().id,second.id); await registry.remove(second.id); assert.equal(context.current().id,first.id,'deleted selection falls back to first account');
 
   await registry.add(second); const bots=[]; const factoryOptions=[];
-  const manager=new BotManager({registry,startDelayMs:0,startJitterMs:0,maxConcurrentBots:2,runtimeFactory:account=>new MinecraftBotRuntime({account,authCacheRoot:path.join('data','auth-cache'),botFactory:options=>{factoryOptions.push(options);const bot=new EventEmitter();bot.pathfinder={};bot.quit=()=>{};bots.push(bot);return bot;}})});
+  const manager=new BotManager({registry,startDelayMs:0,startJitterMs:0,runtimeFactory:account=>new MinecraftBotRuntime({account,authCacheRoot:path.join('data','auth-cache'),botFactory:options=>{factoryOptions.push(options);const bot=new EventEmitter();bot.pathfinder={};bot.quit=()=>{};bots.push(bot);return bot;}})});
   const [a,b]=await Promise.all([manager.start(first.id),manager.start(second.id)]); assert.equal(a.accountId,first.id);assert.equal(b.accountId,second.id);assert.equal(bots.length,2,'runtimes do not share Mineflayer instances');
   assert.equal(manager.getPrimaryContext()?.accountId,first.id,'primary context is resolved by account metadata');
   assert.equal(manager.getContext(second.id)?.accountId,second.id);
@@ -112,7 +113,6 @@ async function main(){
     registry,
     startDelayMs:30,
     startJitterMs:0,
-    maxConcurrentBots:2,
     runtimeFactory:account=>({
       accountId:account.id,isPrimary:Boolean(account.isDefault),bot:null,status:'stopped',
       async start(){return this.connectionGate(async()=>{this.status='connecting';staggerStarts.push(Date.now());return {accountId:this.accountId,status:this.status};});},
@@ -165,7 +165,6 @@ async function main(){
     registry,
     startDelayMs:0,
     startJitterMs:0,
-    maxConcurrentBots:2,
     runtimeFactory:account=>({
       accountId:account.id,isPrimary:Boolean(account.isDefault),bot:null,status:'stopped',
       async start(){this.status='connected';return this.getStatus();},
@@ -205,6 +204,50 @@ async function main(){
   assert.ok(farmShutdownCalls.indexOf('farm-paused')<farmShutdownCalls.indexOf('lever:true'),
     'a managed Obsidian loop pauses before the protection lever is switched on');
   await farmShutdownRuntime.destroy();
+
+  // Account creation and sequential starts must both work past the old caps,
+  // including installations which still have the old environment settings.
+  const manyAccounts=Array.from({length:9},(_,index)=>({
+    ...second,id:`00000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`,
+    username:`Bot${index+1}`,displayName:`Bot ${index+1}`,sortOrder:index,isDefault:index===0
+  }));
+  const unlimitedRegistry=new AccountRegistry(new MemoryRepository(manyAccounts));
+  await unlimitedRegistry.load();
+  const serverSource=fs.readFileSync(path.join(__dirname,'..','site','server.js'),'utf8');
+  const accountsHandlerSource=serverSource.slice(serverSource.indexOf('async function handleAccountsApi('),
+    serverSource.indexOf('\nasync function loadLiveDashboardStats('));
+  const newAccount={...second,id:'00000000-0000-4000-8000-000000000010',username:'Bot10',displayName:'Bot 10',enabled:false};
+  const handleAccounts=vm.runInNewContext(`(${accountsHandlerSource})`,{
+    process:{env:{MAX_BOT_ACCOUNTS:'1',MAX_CONCURRENT_BOTS:'1'}},
+    getAccountRegistry:async()=>unlimitedRegistry,
+    assertAdminUser:user=>assert.equal(user.role,'admin'),
+    cleanAccountInput:input=>input,
+    readJsonBody:async()=>newAccount,
+    pickUniqueAccountColor:()=> '#abcdef',
+    recordSystemLog:async()=>{}
+  });
+  const created=await handleAccounts({method:'POST'},{role:'admin',username:'Admin'},new URL('http://localhost/api/accounts'));
+  assert.equal(created.statusCode,201,'a tenth Minecraft account can be added despite legacy cap settings');
+  assert.equal(unlimitedRegistry.list().length,10);
+  const unlimitedManager=new BotManager({
+    registry:unlimitedRegistry,startDelayMs:0,startJitterMs:0,
+    runtimeFactory:account=>({
+      accountId:account.id,isPrimary:Boolean(account.isDefault),status:'stopped',
+      async start(){this.status='connected';return this.getStatus();},
+      async destroy(){this.status='stopped';},
+      getStatus(){return {accountId:this.accountId,status:this.status};}
+    })
+  });
+  try {
+    // Sequential starts catch the old cap; parallel starts could race past it.
+    for (const account of unlimitedRegistry.list()) await unlimitedManager.start(account.id);
+    assert.equal(unlimitedManager.runtimes.size,10,'every account can run simultaneously');
+    assert.ok(unlimitedManager.statuses().every(status=>status.status==='connected'));
+    await unlimitedManager.start(newAccount.id);
+    assert.equal(unlimitedManager.runtimes.size,10,'repeated starts still reuse the existing runtime');
+  } finally {
+    await unlimitedManager.shutdown();
+  }
   console.log('Multi-account tests passed.');
 }
 

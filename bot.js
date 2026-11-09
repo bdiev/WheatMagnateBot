@@ -187,8 +187,6 @@ function commandLeaseRecoveryDue(scope) {
   commandLeaseRecoveryAt.set(scope, now);
   return true;
 }
-const MAX_BOT_ACCOUNTS = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
-const MAX_CONCURRENT_BOTS = Math.max(1, Number(process.env.MAX_CONCURRENT_BOTS) || 3);
 const configuredBotStartDelayMs = Number(process.env.BOT_START_DELAY_MS);
 const configuredBotStartJitterMs = Number(process.env.BOT_START_JITTER_MS);
 const BOT_START_DELAY_MS = Number.isFinite(configuredBotStartDelayMs) && configuredBotStartDelayMs >= 0
@@ -7468,10 +7466,8 @@ async function initializeMultiAccountManager() {
       criticalsEnabled: Boolean(row.criticals_enabled)
     }
   ]));
-  if (accounts.length > MAX_BOT_ACCOUNTS) console.warn(`[Accounts] ${accounts.length} accounts exceed MAX_BOT_ACCOUNTS=${MAX_BOT_ACCOUNTS}.`);
   multiBotManager = new BotManager({
     registry: multiAccountRegistry,
-    maxConcurrentBots: MAX_CONCURRENT_BOTS,
     startDelayMs: BOT_START_DELAY_MS,
     startJitterMs: BOT_START_JITTER_MS,
     // A player is waiting for the Pearl Loader; farm reconnects can wait

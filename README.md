@@ -20,8 +20,8 @@ AccountRepository -> AccountRegistry -> BotManager
 
 Resource controls:
 
-- `MAX_BOT_ACCOUNTS` (default `8`) limits stored account metadata.
-- `MAX_CONCURRENT_BOTS` (default `3`) limits simultaneous runtimes.
+There is no application limit on stored Minecraft accounts or simultaneously running bots.
+
 - `BOT_START_DELAY_MS` (default `10000`) is the minimum interval between Minecraft login handshakes. Set `15000`–`30000` for stricter server/proxy rate limits.
 - `BOT_START_JITTER_MS` (default `3000`) adds random delay so reconnects cannot form a synchronized wave.
 - `MINECRAFT_KEEP_ALIVE_TIMEOUT_MS` (default `60000`, minimum `30000`) controls how long a missing server keep-alive is tolerated before reconnecting.
