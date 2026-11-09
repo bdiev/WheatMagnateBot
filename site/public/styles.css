@@ -12073,7 +12073,32 @@ body.kill-aura-modal-open {
   .account-switcher:not(.expanded) .account-avatar:not(.active),
   .account-switcher:not(.expanded) .account-add { display:none; }
   .account-switcher.expanded { z-index:180; }
-  .account-switcher.expanded .account-switcher-list { position:absolute; top:-8px; left:-8px; width:max-content; min-width:58px; max-width:calc(100vw - 32px); height:auto; display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:2px solid var(--line); border-radius:var(--button-radius); overflow:visible; background:var(--panel); box-shadow:var(--shadow); animation: mc-pop-in 200ms cubic-bezier(.2, .9, .2, 1) both; }
+  .account-switcher.expanded .account-switcher-list {
+    position:fixed;
+    top:var(--account-switcher-top,120px);
+    left:max(12px,env(safe-area-inset-left,0px));
+    right:max(12px,env(safe-area-inset-right,0px));
+    width:auto;
+    max-width:none;
+    height:auto;
+    max-height:calc(100dvh - var(--account-switcher-top,120px) - 16px - env(safe-area-inset-bottom,0px));
+    display:grid;
+    grid-template-columns:repeat(auto-fill,42px);
+    justify-content:space-between;
+    gap:12px 10px;
+    padding:12px;
+    border:2px solid var(--line);
+    border-radius:var(--button-radius);
+    overflow-x:hidden;
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    touch-action:pan-y;
+    scrollbar-width:thin;
+    background:var(--panel);
+    box-shadow:var(--shadow);
+    animation:mc-list-in 180ms ease both;
+  }
+  .account-switcher.expanded .account-add { position:static; }
   .account-switcher .account-avatar[data-account-id] { touch-action:manipulation; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
   .account-form-row { grid-template-columns:1fr; }
   .account-modal-overlay { place-items:end center; padding:0; }

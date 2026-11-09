@@ -365,7 +365,7 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   };
 
   bot.transfer = async ({ window, itemType, count, sourceStart, sourceEnd, destStart, destEnd }) => {
-    assert.equal(sourceEnd, sourceStart + 1, 'partial returns use one known inventory stack');
+    assert.equal(sourceEnd, sourceStart + 1, 'partial transfers use one known inventory stack');
     const item = window.slots[sourceStart];
     assert.equal(item.type, itemType);
     const amount = Math.min(count, item.count);
@@ -518,6 +518,68 @@ async function main() {
     }
   });
 
+  await test('gold unpacking continues directly to trading without batch sleeps or an empty ingot chest tour', async () => {
+    const villagers = Array.from({ length: 10 }, () => ({ trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] }));
+    const bot = fakeBot({ source: [stack('gold_block', 64), stack('gold_block', 64)], villagers });
+    const secondSource = { x: 0, y: 64, z: -2 };
+    bot.setBlock(secondSource, 'chest');
+    bot.setChestSize(secondSource, 27, []);
+    const logs = [];
+    const trader = createTrader({ settleMs: 1500, log: message => logs.push(message) });
+    let firstTrade = false;
+    let sourceVisitsAfterCraft = 0;
+    try {
+      trader.attachBot(bot);
+      await trader.scan();
+      trader.configure({ sources: [SOURCE, secondSource], output: OUTPUT, craftingTable: null });
+      const activateBlock = bot.activateBlock;
+      bot.activateBlock = async block => {
+        if (bot.goldCrafts === 64 && !firstTrade) sourceVisitsAfterCraft += 1;
+        return activateBlock(block);
+      };
+      const activateEntity = bot.activateEntity;
+      bot.activateEntity = async entity => {
+        if (bot.goldCrafts > 0) {
+          assert.equal(bot.goldCrafts, 64, 'the stack is fully unpacked before the first trade');
+          firstTrade = true;
+        }
+        return activateEntity(entity);
+      };
+      trader.start();
+      await until(() => firstTrade, 'trade starts without the 1500 ms batch fallback pauses', 1200);
+      trader.stop({ flush: false });
+      assert.equal(sourceVisitsAfterCraft, 0, '576 ingots are used immediately even when the plan needs 640');
+      assert.equal(logs.filter(line => /Unpacked/.test(line)).length, 1, 'completion is logged once for the entire stack');
+      assert.ok(logs.some(line => /Unpacked 64 gold blocks into 576 gold ingots/.test(line)));
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold unpacking waits for delayed inventory confirmation before trading', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('gold_block', 4)], villagers: [villager] });
+    const craft = bot.craft;
+    let pending;
+    bot.craft = async (...args) => {
+      if (args[0].result?.id === registry.itemsByName.gold_ingot.id) {
+        pending = new Promise((resolve, reject) => setTimeout(() => craft(...args).then(resolve, reject), 40));
+      } else await craft(...args);
+    };
+    try {
+      trader.start();
+      await until(() => villager.trades[0].nbTradeUses === 9, 'server confirmed the ingots and they were traded');
+      trader.stop({ flush: false });
+      assert.equal(trader.getStatus().lastErrorMessage, null);
+      assert.equal(bot.goldCrafts, 4);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      await pending;
+      trader.dispose();
+    }
+  });
+
   await test('gold blocks: one source stack becomes ingots before trading, without a crafting table', async () => {
     const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
     const { bot, trader } = await ready({ source: [stack('gold_block', 64), stack('gold_block', 64)], villagers: [villager] });
@@ -607,15 +669,79 @@ async function main() {
     }
   });
 
-  await test('gold blocks: insufficient expansion space leaves the source untouched', async () => {
+  await test('gold blocks: a tight inventory takes and unpacks only the portion that fits', async () => {
     const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
     const { bot, trader } = await ready({
-      inventory: Array.from({ length: 18 }, () => stack('cobblestone', 64)),
+      inventory: Array.from({ length: 28 }, () => stack('cobblestone', 64)),
       source: [stack('gold_block', 64)], villagers: [villager]
     });
     try {
       trader.start();
-      await until(() => /free inventory slots.*gold blocks/.test(trader.getStatus().lastErrorMessage || ''), 'waiting for gold expansion space');
+      await until(() => villager.trades[0].nbTradeUses === 16 && trader.getStatus().phase === 'waiting', 'trading a smaller gold batch');
+      trader.stop({ flush: false });
+      assert.equal(bot.goldCrafts, 49, 'seven ingot stacks fit with one result slot reserved');
+      assert.equal(bot.sourceItems().find(item => item.name === 'gold_block').count, 15, 'blocks that do not fit stay in the source');
+      assert.equal(bot.count('gold_ingot'), 49 * 9 - 64);
+      assert.equal(bot.count('cobblestone'), 28 * 64, 'other carried resources stay untouched');
+      assert.ok(bot.inventory.emptySlotCount() >= 1);
+      assert.equal(trader.getStatus().lastErrorMessage, null);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold blocks: an already carried stack is unpacked in fitting portions', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({
+      inventory: [...Array.from({ length: 28 }, () => stack('cobblestone', 64)), stack('gold_block', 64)],
+      villagers: [villager]
+    });
+    try {
+      trader.start();
+      await until(() => villager.trades[0].nbTradeUses === 16 && trader.getStatus().phase === 'waiting', 'carried gold traded with limited room');
+      trader.stop({ flush: false });
+      assert.equal(bot.goldCrafts, 42);
+      assert.equal(bot.count('gold_block'), 22, 'the rest of the carried stack waits for the next round');
+      assert.equal(bot.count('gold_ingot'), 42 * 9 - 64);
+      assert.deepEqual(bot.sourceItems(), []);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold blocks: other carried inputs are sold first when unpacking has no room', async () => {
+    const gold = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1, { maximumNbTradeUses: 2 })] };
+    const paper = { trades: [rawTrade('paper', 64, 'emerald', 1, { maximumNbTradeUses: 3 })] };
+    const { bot, trader } = await ready({
+      inventory: [...Array.from({ length: 32 }, () => stack('cobblestone', 64)), ...Array.from({ length: 3 }, () => stack('paper', 64))],
+      source: [stack('gold_block', 64)], villagers: [gold, paper]
+    });
+    try {
+      trader.start();
+      await until(() => gold.trades[0].nbTradeUses === 2 && paper.trades[0].nbTradeUses === 3
+        && trader.getStatus().phase === 'waiting', 'paper trades release space for gold');
+      trader.stop({ flush: false });
+      assert.equal(bot.count('paper'), 0);
+      assert.equal(bot.goldCrafts, 14);
+      assert.equal(bot.count('cobblestone'), 32 * 64);
+      assert.equal(trader.getStatus().lastErrorMessage, null);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold blocks: no room for even one conversion leaves the source untouched', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({
+      inventory: Array.from({ length: 35 }, () => stack('cobblestone', 64)),
+      source: [stack('gold_block', 64)], villagers: [villager]
+    });
+    try {
+      trader.start();
+      await until(() => /No inventory space.*one gold block/.test(trader.getStatus().lastErrorMessage || ''), 'waiting for one conversion slot');
       trader.stop({ flush: false });
       assert.equal(bot.sourceItems().find(item => item.name === 'gold_block').count, 64);
       assert.equal(bot.goldCrafts, 0);
@@ -1203,7 +1329,7 @@ async function main() {
     assert.equal(bot.count('emerald'), 8);
     assert.equal(bot.count('stone'), 0, 'the last trip uses its inputs exactly');
     assert.equal(bot.sourceItems().reduce((sum, entry) => sum + entry.count, 0), 27 * 64 - 1600);
-    assert.ok(lines.some(line => /Trip: took 1152 items, made \d+ trades in/.test(line)), 'the log tells how a trip went');
+    assert.ok(!lines.some(line => /Trip: took/.test(line)), 'routine trip summaries are not logged');
     assert.deepEqual(bot.dropped, []);
     trader.dispose();
   });
@@ -1677,11 +1803,20 @@ async function main() {
     const first = { uuid: 'first', trades: [rawTrade('emerald', 1, 'bread', 1, { maximumNbTradeUses: 2 })] };
     const second = { uuid: 'second', at: [0.5, 64, 2.1], trades: [rawTrade('emerald', 1, 'bread', 1, { maximumNbTradeUses: 2 })] };
     const { bot, trader } = await ready({ source: [stack('emerald', 20)], villagers: [first, second] }, { log: message => lines.push(message) });
+    let sourcePickups = 0;
+    const click = bot.clickWindow;
+    bot.clickWindow = async (slot, button, mode) => {
+      const window = bot.currentWindow;
+      if (window?.stored === bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`)
+        && slot < window.inventoryStart && mode === 1) sourcePickups += 1;
+      return click(slot, button, mode);
+    };
     trader.configure({ tradeChoices: { 'emerald+>bread': true } });
     trader.start();
     await until(() => first.trades[0].nbTradeUses === 2 && second.trades[0].nbTradeUses === 2, 'both villagers');
     await until(() => trader.getStatus().phase.startsWith('waiting'), 'done');
-    assert.equal(lines.filter(line => /Trip: took/.test(line)).length, 1, 'one trip for both');
+    assert.equal(sourcePickups, 1, 'one resource pickup serves both villagers');
+    assert.equal(lines.filter(line => /Trip: took/.test(line)).length, 0, 'routine trip summaries are not logged');
     assert.equal(bot.count('emerald'), 16);
     assert.equal(bot.sourceItems().filter(entry => entry.name === 'emerald').length, 0);
     trader.stop({ flush: false });

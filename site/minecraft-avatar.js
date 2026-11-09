@@ -14,13 +14,15 @@ function minecraftAvatarSources(identity) {
 
 async function fetchOk(fetchImpl, url, signal, accept) {
   const response = await fetchImpl(url, { signal, headers: { Accept: accept } });
-  if (!response.ok) throw new Error(`Avatar source returned HTTP ${response.status}.`);
+  if (!response.ok || response.status === 204) {
+    throw Object.assign(new Error(`Avatar source returned HTTP ${response.status}.`), { statusCode: response.status });
+  }
   return response;
 }
 
 async function resolveOfficialMinecraftSkin({ username, uuid, fetchImpl = fetch, signal, includeBody = false } = {}) {
   let compactUuid = String(uuid || '').replace(/-/g, '').trim().toLowerCase();
-  if (!compactUuid) {
+  const resolveUsername = async () => {
     const profileResponse = await fetchOk(
       fetchImpl,
       `https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(username)}`,
@@ -28,19 +30,32 @@ async function resolveOfficialMinecraftSkin({ username, uuid, fetchImpl = fetch,
       'application/json'
     );
     const profile = await profileResponse.json();
-    compactUuid = String(profile?.id || '').toLowerCase();
-  }
+    return String(profile?.id || '').toLowerCase();
+  };
+  if (!compactUuid) compactUuid = await resolveUsername();
   if (!/^[0-9a-f]{32}$/.test(compactUuid)) throw new Error('Minecraft profile has no valid UUID.');
 
-  const sessionResponse = await fetchOk(
-    fetchImpl,
-    `https://sessionserver.mojang.com/session/minecraft/profile/${compactUuid}`,
-    signal,
-    'application/json'
-  );
-  const session = await sessionResponse.json();
-  const encodedTextures = session?.properties?.find(property => property?.name === 'textures')?.value;
-  const textures = JSON.parse(Buffer.from(String(encodedTextures || ''), 'base64').toString('utf8'));
+  const readTextures = async () => {
+    const sessionResponse = await fetchOk(fetchImpl,
+      `https://sessionserver.mojang.com/session/minecraft/profile/${compactUuid}`, signal, 'application/json');
+    const session = await sessionResponse.json();
+    const encodedTextures = session?.properties?.find(property => property?.name === 'textures')?.value;
+    if (!encodedTextures) throw Object.assign(new Error('Minecraft profile has no skin textures.'), { code: 'MISSING_TEXTURES' });
+    return JSON.parse(Buffer.from(String(encodedTextures), 'base64').toString('utf8'));
+  };
+  let textures;
+  try {
+    textures = await readTextures();
+  } catch (error) {
+    // Server/offline UUIDs can differ from the Mojang account UUID. Resolve
+    // the name when that profile is missing, without doubling rate-limited calls.
+    if (!uuid || !/^[A-Za-z0-9_]{1,16}$/.test(username || '')
+      || !([204, 404].includes(error.statusCode) || error.code === 'MISSING_TEXTURES')) throw error;
+    const resolvedUuid = await resolveUsername();
+    if (!/^[0-9a-f]{32}$/.test(resolvedUuid) || resolvedUuid === compactUuid) throw error;
+    compactUuid = resolvedUuid;
+    textures = await readTextures();
+  }
   const skin = textures?.textures?.SKIN;
   const skinUrl = new URL(skin?.url);
   if (skinUrl.hostname !== 'textures.minecraft.net') throw new Error('Minecraft profile returned an invalid skin URL.');
@@ -78,11 +93,19 @@ async function resolveOfficialMinecraftSkin({ username, uuid, fetchImpl = fetch,
   return { ...result, body };
 }
 
-async function renderOfficialMinecraftAvatar({ username, uuid, fetchImpl = fetch, signal } = {}) {
-  const resolvedSkin = await resolveOfficialMinecraftSkin({ username, uuid, fetchImpl, signal, includeBody: true });
-  const skin = resolvedSkin.body;
+async function renderOfficialMinecraftAvatar({ username, uuid, textureHash, fetchImpl = fetch, signal } = {}) {
+  let skin;
+  if (textureHash) {
+    if (!/^[a-z0-9_-]{1,128}$/i.test(textureHash)) throw new Error('Invalid Minecraft skin hash.');
+    const response = await fetchOk(fetchImpl, `https://textures.minecraft.net/texture/${textureHash}`, signal, 'image/png');
+    skin = Buffer.from(await response.arrayBuffer());
+  } else {
+    const resolvedSkin = await resolveOfficialMinecraftSkin({ username, uuid, fetchImpl, signal, includeBody: true });
+    skin = resolvedSkin.body;
+  }
+  if (!skin.length || skin.length > 256 * 1024) throw new Error('Minecraft skin has invalid size.');
   const metadata = await sharp(skin).metadata();
-  if ((metadata.width || 0) < 48 || (metadata.height || 0) < 16) throw new Error('Minecraft skin has invalid dimensions.');
+  if (metadata.width !== 64 || ![32, 64].includes(metadata.height)) throw new Error('Minecraft skin has invalid dimensions.');
 
   const face = await sharp(skin).extract({ left: 8, top: 8, width: 8, height: 8 }).ensureAlpha().png().toBuffer();
   const outerLayer = await sharp(skin).extract({ left: 40, top: 8, width: 8, height: 8 }).ensureAlpha().png().toBuffer();
@@ -106,4 +129,56 @@ async function renderOfficialMinecraftAvatar({ username, uuid, fetchImpl = fetch
     .toBuffer();
 }
 
-module.exports = { minecraftAvatarSources, renderOfficialMinecraftAvatar, resolveOfficialMinecraftSkin };
+function createMinecraftAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 * 60 * 60_000,
+  fallbackTtlMs = 60_000, retryMs = 15_000, maxEntries = 1024 } = {}) {
+  const cache = new Map();
+  const pending = new Map();
+  const store = (key, entry) => {
+    cache.delete(key);
+    cache.set(key, entry);
+    if (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+    return entry;
+  };
+  return async function loadMinecraftAvatar({ username, uuid, textureHash } = {}) {
+    const identity = String(uuid || username || '').replace(/-/g, '').toLowerCase();
+    const cacheKey = `v6:${identity}:${textureHash || 'unknown'}`;
+    const cached = cache.get(cacheKey);
+    if (cached && cached.expiresAt > now()) {
+      if (!cached.body) throw cached.error;
+      return cached;
+    }
+    if (pending.has(cacheKey)) return pending.get(cacheKey);
+    const request = (async () => {
+      try {
+        const body = await renderOfficialMinecraftAvatar({ username, uuid, textureHash, fetchImpl, signal: AbortSignal.timeout(8_000) });
+        return store(cacheKey, { body, verified: true, expiresAt: now() + ttlMs });
+      } catch { /* Preserve a verified skin during an API/CDN outage. */ }
+      if (cached?.body && cached.verified) {
+        return store(cacheKey, { ...cached, expiresAt: now() + fallbackTtlMs });
+      }
+      // A known texture is authoritative. A name/UUID renderer may silently
+      // return Steve instead, so never replace that texture with its default.
+      const sources = textureHash ? [] : minecraftAvatarSources(uuid || username);
+      for (const source of sources) {
+        try {
+          const response = await fetchOk(fetchImpl, source, AbortSignal.timeout(3_000), 'image/png');
+          if (!/^image\/png\b/i.test(response.headers.get('content-type') || '')) continue;
+          const body = Buffer.from(await response.arrayBuffer());
+          if (body.length < 250 || body.length > 128 * 1024) continue;
+          const metadata = await sharp(body).metadata();
+          if (metadata.format !== 'png' || metadata.width !== 64 || metadata.height !== 64) continue;
+          return store(cacheKey, { body, verified: false, expiresAt: now() + fallbackTtlMs });
+        } catch { /* Try the next provider. */ }
+      }
+      if (cached?.body) return store(cacheKey, { ...cached, expiresAt: now() + retryMs });
+      const error = Object.assign(new Error('Minecraft avatar is temporarily unavailable.'), { statusCode: 502 });
+      store(cacheKey, { error, body: null, expiresAt: now() + retryMs });
+      throw error;
+    })();
+    pending.set(cacheKey, request);
+    try { return await request; }
+    finally { if (pending.get(cacheKey) === request) pending.delete(cacheKey); }
+  };
+}
+
+module.exports = { createMinecraftAvatarLoader, minecraftAvatarSources, renderOfficialMinecraftAvatar, resolveOfficialMinecraftSkin };

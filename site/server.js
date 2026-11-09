@@ -27,7 +27,7 @@ const { createAreaExplorerService } = require('./area-explorer');
 const { createXaeroRegionMapService } = require('./xaero-region-map');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
-const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./minecraft-avatar');
+const { createMinecraftAvatarLoader } = require('./minecraft-avatar');
 const { fetchNameMcCapeTexture } = require('./namemc-capes');
 const { createPlayerSkinHistoryService } = require('./player-skin-history');
 const { dashedMinecraftUuid,resolveMinecraftProfile } = require('./player-profile-identity');
@@ -98,7 +98,7 @@ let accountRegistry = null;
 let resourceRequestService = null;
 let areaExplorerService = null;
 let xaeroRegionMapService = null;
-const minecraftAvatarCache = new Map();
+const loadMinecraftAvatar = createMinecraftAvatarLoader();
 const minecraftSkinCache = new Map();
 const playerSkinHistory = createPlayerSkinHistoryService({ pool });
 const minecraftIconCache = new MinecraftIconCache({
@@ -398,60 +398,35 @@ function displayGameChatMessage(value) {
   return normalizeGreenChatMessage(value);
 }
 
-// A PNG this small can only be a near-solid fill (some avatar providers
-// return a blank/black square instead of a real render for bot-style
-// accounts that never authenticated with Mojang). Real face renders with
-// skin tone, eyes and hair detail never compress this far, so skip it and
-// let the caller fall through to the next provider/model instead.
-const MIN_PLAUSIBLE_AVATAR_BYTES = 250;
-
 async function sendMinecraftAvatar(res, url) {
   const username = String(url.searchParams.get('username') || '').trim();
   if (!/^[A-Za-z0-9_]{1,16}$/.test(username)) { sendError(res,400,'Invalid Minecraft username.'); return; }
-  const compactUuid = String(url.searchParams.get('uuid') || '').replace(/-/g, '').trim().toLowerCase();
+  let compactUuid = String(url.searchParams.get('uuid') || '').replace(/-/g, '').trim().toLowerCase();
   if (compactUuid && !/^[0-9a-f]{32}$/.test(compactUuid)) { sendError(res,400,'Invalid Minecraft UUID.'); return; }
   let textureHash = String(url.searchParams.get('skin') || '').trim().toLowerCase();
   if (textureHash && !/^[a-z0-9_-]{1,128}$/.test(textureHash)) { sendError(res,400,'Invalid Minecraft skin hash.'); return; }
-  if (!textureHash && compactUuid && pool) {
+  if (!textureHash && pool) {
     try {
-      const currentSkin = await pool.query(`
-        SELECT texture_hash FROM player_skin_history
-        WHERE player_uuid=$1::uuid
-        ORDER BY last_seen DESC,id DESC LIMIT 1
-      `, [compactUuid]);
-      textureHash = String(currentSkin.rows[0]?.texture_hash || '').toLowerCase();
+      // Most list/chat heads only have a name. Use the same stored skin as the
+      // profile page, instead of asking Mojang again for every such surface.
+      if (!compactUuid) {
+        const identity = await resolveStoredPlayerIdentity(username);
+        compactUuid = String(identity?.player_uuid || '').replace(/-/g, '').toLowerCase();
+      }
+      if (compactUuid) {
+        const currentSkin = await pool.query(`
+          SELECT texture_hash FROM player_skin_history
+          WHERE player_uuid=$1::uuid
+          ORDER BY last_seen DESC,id DESC LIMIT 1
+        `, [compactUuid]);
+        textureHash = String(currentSkin.rows[0]?.texture_hash || '').toLowerCase();
+      }
     } catch { /* Avatar delivery can continue while stored skin history is unavailable. */ }
   }
-  const avatarIdentity = compactUuid || username;
-  const cacheKey = `v5:${avatarIdentity.toLowerCase()}:${textureHash || 'unknown'}`;
-  const cached = minecraftAvatarCache.get(cacheKey);
-  if (cached && Date.now()-cached.storedAt < 6*60*60_000) {
-    res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':cached.body.length}); res.end(cached.body); return;
-  }
   try {
-    const body = await renderOfficialMinecraftAvatar({
-      username,
-      uuid: compactUuid,
-      signal: AbortSignal.timeout(8_000)
-    });
-    minecraftAvatarCache.set(cacheKey,{body,storedAt:Date.now()});
-    if (minecraftAvatarCache.size > 200) minecraftAvatarCache.delete(minecraftAvatarCache.keys().next().value);
+    const { body } = await loadMinecraftAvatar({ username, uuid: compactUuid, textureHash });
     res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
-  } catch { /* The official profile or skin service is temporarily unavailable. */ }
-  // Include the outer head layer on both fallback providers, and ask MCHeads
-  // for both skin models when the official Mojang services are unavailable.
-  const sources = minecraftAvatarSources(avatarIdentity);
-  for (const source of sources) {
-    try {
-      const response = await fetch(source,{signal:AbortSignal.timeout(5_000),headers:{Accept:'image/png'}});
-      if (!response.ok) continue;
-      const body = Buffer.from(await response.arrayBuffer());
-      if (body.length < MIN_PLAUSIBLE_AVATAR_BYTES || body.length > 128*1024) continue;
-      minecraftAvatarCache.set(cacheKey,{body,storedAt:Date.now()});
-      if (minecraftAvatarCache.size > 200) minecraftAvatarCache.delete(minecraftAvatarCache.keys().next().value);
-      res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
-    } catch { /* Try the next avatar provider/model. */ }
-  }
+  } catch { /* Do not cache a provider outage as a successful default head. */ }
   sendError(res,502,'Minecraft avatar is temporarily unavailable.');
 }
 

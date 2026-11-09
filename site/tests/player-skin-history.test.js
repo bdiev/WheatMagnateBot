@@ -17,6 +17,7 @@ const botCapeHistoryMigration = fs.readFileSync(path.join(root, 'database/migrat
 const siteCapeMetadataMigration = fs.readFileSync(path.join(root, 'site/migrations/055_player_cape_metadata.sql'), 'utf8');
 const botCapeMetadataMigration = fs.readFileSync(path.join(root, 'database/migrations/055_player_cape_metadata.sql'), 'utf8');
 const serverSource = fs.readFileSync(path.join(root, 'site/server.js'), 'utf8');
+const avatarSource = fs.readFileSync(path.join(root, 'site/minecraft-avatar.js'), 'utf8');
 const historySource = fs.readFileSync(path.join(root, 'site/player-skin-history.js'), 'utf8');
 const botSource = fs.readFileSync(path.join(root, 'bot.js'), 'utf8');
 const runtimeSource = fs.readFileSync(path.join(root, 'site/accounts/minecraft-bot-runtime.js'), 'utf8');
@@ -36,8 +37,8 @@ assert.match(historySource, /ON CONFLICT\(player_uuid,cape_hash\)[\s\S]*cape_url
 assert.match(historySource, /resolveNameMcCapes[\s\S]*cape_source=EXCLUDED\.cape_source/, 'all NameMC profile capes must be imported with their metadata');
 assert.match(botSource, /createPlayerSkinHistoryService\(\{ pool,forceCapeRefresh:true \}\)/, 'every join refresh must bypass the NameMC profile cache');
 assert.match(serverSource, /currentCapeHash = await playerSkinHistory\.refreshOnce\(identity\)[\s\S]*return readPlayerSkinHistory\(identity/, 'the wardrobe must refresh the current skin before returning saved history');
-assert.match(serverSource, /textureHash[\s\S]*const cacheKey = `v5:\$\{avatarIdentity\.toLowerCase\(\)\}:\$\{textureHash \|\| 'unknown'\}`/, 'avatar caching must be versioned by the current skin texture');
-assert.match(serverSource, /renderOfficialMinecraftAvatar[\s\S]*const sources = minecraftAvatarSources/, 'site avatars must prefer the official Mojang texture over third-party renderers');
+assert.match(avatarSource, /const cacheKey = `v6:\$\{identity\}:\$\{textureHash \|\| 'unknown'\}`/, 'avatar caching must be versioned by the current skin texture');
+assert.match(avatarSource, /renderOfficialMinecraftAvatar[\s\S]*const sources = textureHash \? \[\] : minecraftAvatarSources/, 'site avatars must prefer the official Mojang texture over third-party renderers');
 assert.match(serverSource, /const displayCapeRows = \[\.\.\.capeResult\.rows\]/, 'the wardrobe must show the complete saved Mojang and NameMC cape history');
 assert.doesNotMatch(serverSource, /nameMcCapeRows\.length[\s\S]*cape_source !== 'namemc'/, 'NameMC imports must not hide older Mojang cape observations');
 assert.match(historySource, /activeRefreshes\.get[\s\S]*activeRefreshes\.set/, 'concurrent external skin refreshes must be deduplicated');

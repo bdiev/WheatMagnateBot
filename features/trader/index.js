@@ -1626,30 +1626,35 @@ function createTrader({
     return current.inventory.items().some(item => item.name === EMERALD_BLOCK && item.count < (item.stackSize || 64));
   }
 
-  // Unpack at most one stack per trip. The 2x2 inventory recipe needs no table;
-  // leave room for all nine stacks of ingots as well as the trading results.
-  async function prepareGoldIngots(context, needed) {
+  // Unpack up to one stack per trip, or a smaller batch that fits. Keep room
+  // for the planned trade results, including when other inputs stay carried.
+  async function prepareGoldIngots(context, needed, reservedSlots) {
     const { current } = context;
     if (carried(current, GOLD_INGOT) + (totalStock().get(GOLD_INGOT) || 0) >= needed) return;
     if (!carried(current, GOLD_BLOCK) && !(totalStock().get(GOLD_BLOCK) > 0)) return;
     const stackSize = current.registry.itemsByName[GOLD_BLOCK].stackSize;
     const ingotStackSize = current.registry.itemsByName[GOLD_INGOT].stackSize;
-    const ingotSlots = Math.ceil(stackSize * INGOTS_PER_GOLD_BLOCK / ingotStackSize);
-    if (!carried(current, GOLD_BLOCK)) {
-      if (current.inventory.emptySlotCount() <= RESERVED_FREE_SLOTS + ingotSlots) {
-        throw supplyError('Not enough free inventory slots to unpack a stack of gold blocks and keep room for trade results.');
-      }
-      // A positive need takes one whole source stack, then stops.
-      await takeFromSources(context, new Map([[GOLD_BLOCK, 1]]), { reservedSlots: RESERVED_FREE_SLOTS + ingotSlots });
-    }
-    if (!context.active()) return;
-    let remaining = Math.min(stackSize, carried(current, GOLD_BLOCK));
-    const capacity = Math.max(0, current.inventory.emptySlotCount() - RESERVED_FREE_SLOTS) * ingotStackSize
+    const ingotRoom = () => (current.inventory.emptySlotCount() - reservedSlots) * ingotStackSize
       + current.inventory.items().filter(item => item.name === GOLD_INGOT && isPlainItem(item))
         .reduce((sum, item) => sum + ingotStackSize - item.count, 0);
-    if (capacity < remaining * INGOTS_PER_GOLD_BLOCK) {
-      throw supplyError('Not enough free inventory slots for the gold ingots and trade results.');
+    if (!carried(current, GOLD_BLOCK)) {
+      const take = Math.min(stackSize, Math.floor(ingotRoom() / INGOTS_PER_GOLD_BLOCK));
+      if (take <= 0 || current.inventory.emptySlotCount() === 0) {
+        // Sell carried inputs first; their trades can release crafting space.
+        return false;
+      }
+      await takeFromSources(context, new Map([[GOLD_BLOCK, take]]), { reservedSlots: 0, wholeStacks: false });
     }
+    if (!context.active()) return;
+    const blocks = carried(current, GOLD_BLOCK);
+    let remaining = Math.min(stackSize, blocks, Math.max(0, Math.floor(ingotRoom() / INGOTS_PER_GOLD_BLOCK)));
+    // Consuming all carried blocks releases their inventory slots too.
+    const blockSlots = current.inventory.items().filter(item => item.name === GOLD_BLOCK && isPlainItem(item)).length;
+    if (blocks <= stackSize && blocks * INGOTS_PER_GOLD_BLOCK <= ingotRoom() + blockSlots * ingotStackSize) remaining = blocks;
+    if (blocks > 0 && remaining === 0) {
+      return false;
+    }
+    let unpacked = 0;
     while (remaining > 0 && context.active()) {
       const blockId = current.registry.itemsByName[GOLD_BLOCK].id;
       const recipe = current.recipesFor(current.registry.itemsByName[GOLD_INGOT].id, null, 1, null)
@@ -1669,7 +1674,11 @@ function createTrader({
       } finally {
         closeOpenWindow(current);
       }
-      await sleep(settleMs);
+      // Craft clicks already wait for server updates. Continue as soon as the
+      // inventory confirms the result, rather than sleeping after each batch.
+      await waitFor(() => !context.active()
+        || (blocksBefore - carried(current, GOLD_BLOCK) === count
+          && carried(current, GOLD_INGOT) - ingotsBefore === count * INGOTS_PER_GOLD_BLOCK), SLOT_READY_TIMEOUT_MS);
       if (!context.active()) return;
       const used = blocksBefore - carried(current, GOLD_BLOCK);
       const made = carried(current, GOLD_INGOT) - ingotsBefore;
@@ -1677,16 +1686,16 @@ function createTrader({
         throw supplyError('The server did not unpack the gold blocks into ingots.');
       }
       remaining -= used;
-      log(`[Trader] Unpacked ${used} gold blocks into ${made} gold ingots.`);
+      unpacked += used;
       notifyChange();
     }
+    if (unpacked && context.active()) log(`[Trader] Unpacked ${unpacked} gold blocks into ${unpacked * INGOTS_PER_GOLD_BLOCK} gold ingots.`);
   }
 
   // One visit to the sources for everything in the plan, then the villagers one
   // after another. What did not fit in this trip is for the next round
   async function makeTrip(context, plan) {
     const { current } = context;
-    const startedAt = Date.now();
     const needed = new Map();
     for (const { offer, uses } of plan) {
       for (const [name, count] of offerCosts(offer, uses)) needed.set(name, (needed.get(name) || 0) + count);
@@ -1696,15 +1705,34 @@ function createTrader({
     const before = new Map([...needed.keys()].map(name => [name, name === EMERALD ? Math.max(0, carried(current, EMERALD) - purchaseEmeralds) : 0]));
     pendingTrip = before;
     const usable = name => carried(current, name) - before.get(name);
-    const carriedAtStart = [...needed.keys()].reduce((sum, name) => sum + usable(name), 0);
+    let goldBlocked = false;
     if (needed.has(GOLD_INGOT)) {
       before.set(GOLD_BLOCK, 0);
-      await prepareGoldIngots(context, needed.get(GOLD_INGOT));
+      const outputs = new Map();
+      for (const { offer, uses } of plan) {
+        const name = offer.outputItem.name;
+        outputs.set(name, (outputs.get(name) || 0) + offer.outputCount * uses);
+      }
+      let resultSlots = 0;
+      for (const [name, count] of outputs) {
+        const size = current.registry.itemsByName[name]?.stackSize || 64;
+        const room = current.inventory.items().filter(item => item.name === name && isPlainItem(item))
+          .reduce((sum, item) => sum + size - item.count, 0);
+        resultSlots += Math.ceil(Math.max(0, count - room) / size);
+      }
+      goldBlocked = await prepareGoldIngots(context, needed.get(GOLD_INGOT), Math.max(1, Math.min(RESERVED_FREE_SLOTS, resultSlots))) === false;
       if (!context.active()) return false;
     }
-    const missing = new Map([...needed].map(([name, count]) => [name, count - usable(name)]).filter(([, count]) => count > 0));
+    const stock = totalStock();
+    // A gold-block stack may cover only part of a large plan. Missing ingots
+    // absent from the sources wait for the next trip, without another chest tour.
+    const missing = new Map([...needed].map(([name, count]) => [name, count - usable(name)])
+      .filter(([name, count]) => count > 0 && (stock.get(name) || 0) > 0));
     if (missing.size) await takeFromSources(context, missing);
     if (!context.active()) return false;
+    if (goldBlocked && !plan.some(({ offer }) => [...offerCosts(offer, 1)].every(([name, cost]) => usable(name) >= cost))) {
+      throw supplyError('No inventory space to unpack even one gold block while keeping room for trade results.');
+    }
     saveState();
     const inHand = [...needed.keys()].reduce((sum, name) => sum + Math.max(0, usable(name)), 0);
     if (!inHand) {
@@ -1725,7 +1753,6 @@ function createTrader({
       if (affordable > 0) made += await makeTrade(context, entity, offer, affordable);
     }
     await finishPendingTrip(context);
-    if (made) log(`[Trader] Trip: took ${inHand - carriedAtStart} items, made ${made} trades in ${((Date.now() - startedAt) / 1000).toFixed(1)} s.`);
     return made > 0;
   }
 
@@ -1973,7 +2000,7 @@ function createTrader({
   // next fullest, until enough is taken, the trip is full, or only the reserved
   // slots are free. With more than one source they are looked into first, as
   // hoppers may have filled them since
-  async function takeFromSources(context, needed, { reservedSlots = RESERVED_FREE_SLOTS } = {}) {
+  async function takeFromSources(context, needed, { reservedSlots = RESERVED_FREE_SLOTS, wholeStacks = true } = {}) {
     const { current } = context;
     const left = new Map(needed);
     let stacks = 0;
@@ -1994,8 +2021,15 @@ function createTrader({
         for (const stack of window.slots.slice(0, window.inventoryStart)) {
           if (!stack || !isPlainItem(stack) || !(left.get(stack.name) > 0)) continue;
           if (stacks >= MAX_STACKS_PER_TRIP || freeSlots(window) <= reservedSlots) break;
-          const count = stack.count;
-          if (await shiftClick(context, window, stack.slot)) {
+          const count = wholeStacks ? stack.count : Math.min(stack.count, left.get(stack.name));
+          let moved = false;
+          if (count < stack.count) {
+            await withTimeout(current.transfer({ window, itemType: stack.type, metadata: stack.metadata ?? null, count,
+              sourceStart: stack.slot, sourceEnd: stack.slot + 1, destStart: window.inventoryStart, destEnd: window.inventoryEnd }),
+            CRAFT_TIMEOUT_BASE_MS + count * CLICK_TIMEOUT_MS, 'Taking gold blocks took too long.');
+            moved = true;
+          } else moved = await shiftClick(context, window, stack.slot);
+          if (moved) {
             left.set(stack.name, left.get(stack.name) - count);
             stacks += 1;
             if (!lastTakenFrom.includes(pos)) lastTakenFrom.push(pos);

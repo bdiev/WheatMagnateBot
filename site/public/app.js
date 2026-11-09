@@ -915,7 +915,7 @@ function playerHeadUrl(username, size = 32, { uuid = null, skinHash = null } = {
   const uuidQuery = /^[0-9a-f]{32}$/.test(compactUuid) ? `&uuid=${encodeURIComponent(compactUuid)}` : '';
   const normalizedSkinHash = String(skinHash || '').trim().toLowerCase();
   const skinQuery = /^[a-z0-9_-]{1,128}$/.test(normalizedSkinHash) ? `&skin=${encodeURIComponent(normalizedSkinHash)}` : '';
-  return `/api/minecraft-avatar?username=${safeUsername}${uuidQuery}${skinQuery}&v=5`;
+  return `/api/minecraft-avatar?username=${safeUsername}${uuidQuery}${skinQuery}&v=6`;
 }
 
 function playerProfileAccentKey(profile) {
@@ -1709,6 +1709,14 @@ let accountLongPressTimer = null;
 let accountLongPressConsumedUntil = 0;
 function cancelAccountLongPress() { clearTimeout(accountLongPressTimer); accountLongPressTimer=null; }
 
+function positionMobileAccountSwitcher() {
+  const switcher = $('#accountSwitcher');
+  if (!switcher?.classList.contains('expanded') || !matchMedia('(max-width: 700px)').matches) return;
+  const height = window.visualViewport?.height || window.innerHeight;
+  const top = Math.max(12, Math.min(switcher.getBoundingClientRect().bottom + 8, height - 96));
+  switcher.style.setProperty('--account-switcher-top', `${Math.round(top)}px`);
+}
+
 function setMobileAccountSwitcherOpen(open) {
   const switcher = $('#accountSwitcher');
   if (!switcher) return;
@@ -1718,6 +1726,7 @@ function setMobileAccountSwitcherOpen(open) {
     setWhisperOpen(false);
   }
   switcher.classList.toggle('expanded',Boolean(open));
+  positionMobileAccountSwitcher();
   switcher.setAttribute('aria-expanded',String(Boolean(open)));
   document.body.classList.toggle('account-switcher-open',Boolean(open));
   const backdrop = $('#accountSwitcherBackdrop');
@@ -14636,6 +14645,7 @@ let viewportRedrawFrame = null;
 let viewportRedrawTimer = null;
 let lastViewportLayout = `${document.documentElement.clientWidth}:${window.devicePixelRatio || 1}`;
 function scheduleViewportRedraw({ force = false } = {}) {
+  positionMobileAccountSwitcher();
   const nextViewportLayout = `${document.documentElement.clientWidth}:${window.devicePixelRatio || 1}`;
   if (!force && nextViewportLayout === lastViewportLayout) return;
   lastViewportLayout = nextViewportLayout;
