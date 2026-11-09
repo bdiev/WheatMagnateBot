@@ -312,6 +312,7 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
           }
           bot.onGoldBatchCrafted?.();
         }
+        bot.afterGoldClick?.(data, window);
         if (window === bot.inventory) {
           const grid = window.slots.slice(1, 5).filter(Boolean);
           window.slots[0] = grid.length === 1 && ['gold_block', 'gold_ingot'].includes(grid[0].name)
@@ -555,6 +556,82 @@ async function main() {
       assert.equal(bot.listenerCount('windowOpen'), 0);
       assert.equal(bot._client.listenerCount('trade_list'), 0);
       assert.equal(trader.getStatus().lastErrorMessage, null);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold transfer: a hopper refill after returning the 46 leftovers does not stop trading', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({
+      inventory: [...Array.from({ length: 32 }, () => stack('cobblestone', 64)), stack('gold_ingot', 30)],
+      source: [stack('gold_block', 64)], villagers: [villager]
+    });
+    let refilled = false;
+    bot.afterGoldClick = (packet, window) => {
+      if (!refilled && window.stored && packet.mode === 0 && packet.slot === 0
+        && !window.selectedItem && window.slots[0]?.name === 'gold_block' && window.slots[0].count === 46) {
+        window.slots[0].count += 1;
+        refilled = true;
+      }
+    };
+    try {
+      trader.start();
+      await until(() => villager.trades[0].nbTradeUses === 16 && trader.getStatus().phase === 'waiting', 'a source refill is not an inconsistent transfer');
+      assert.ok(refilled);
+      assert.equal(bot.sourceItems().find(item => item.name === 'gold_block').count, 47);
+      assert.equal(bot.count('gold_ingot'), 128);
+      assert.equal(bot.nuggetCrafts || 0, 0);
+      assert.equal(trader.getStatus().lastErrorMessage, null);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold transfer: a fully refilled source returns leftovers to another chest slot', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({
+      inventory: [...Array.from({ length: 32 }, () => stack('cobblestone', 64)), stack('gold_ingot', 30)],
+      source: [stack('gold_block', 64)], villagers: [villager]
+    });
+    let refilled = false;
+    bot.afterGoldClick = (packet, window) => {
+      if (!refilled && window.stored && packet.mode === 0 && packet.slot === 0
+        && window.selectedItem?.name === 'gold_block' && window.selectedItem.count === 64) {
+        window.slots[0] = stack('gold_block', 64, { slot: 0 });
+        refilled = true;
+      }
+    };
+    try {
+      trader.start();
+      await until(() => villager.trades[0].nbTradeUses === 16 && trader.getStatus().phase === 'waiting', 'leftovers are returned within the chest');
+      assert.ok(refilled);
+      assert.equal(bot.sourceItems().filter(item => item.name === 'gold_block').reduce((sum, item) => sum + item.count, 0), 110);
+      assert.equal(bot.count('gold_block'), 0, 'the 46 unused blocks do not get merged into the requested batch');
+      assert.equal(bot.goldCrafts, 18);
+      assert.equal(bot.count('gold_ingot'), 128);
+      assert.equal(bot.nuggetCrafts || 0, 0);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold transfer: a refused destination still pauses with all gold preserved', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('gold_block', 64)], villagers: [villager] });
+    bot.rejectGoldClick = (packet, window) => window.stored && packet.mode === 0
+      && packet.slot >= window.inventoryStart && window.selectedItem?.name === 'gold_block';
+    try {
+      trader.start();
+      await until(() => !trader.getStatus().running && /inconsistent gold transfer/.test(trader.getStatus().lastErrorMessage || ''), 'real transfer mismatch pauses Trader');
+      assert.match(trader.getStatus().lastErrorMessage, /target expected 64 gold_block, got 0 empty/);
+      assert.equal(bot.currentWindow.slots[0].count, 64);
+      assert.equal(bot.currentWindow.selectedItem, null);
+      assert.equal(bot.goldCrafts, 0);
+      assert.equal(villager.trades[0].nbTradeUses, 0);
+      assert.deepEqual(bot.dropped, []);
     } finally {
       trader.dispose();
     }

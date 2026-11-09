@@ -38,19 +38,20 @@ async function click(current, window, slot, mouseButton, mode, timeoutMs = 5000)
 
 const sync = (current, window) => click(current, window, -999, 2, 5);
 
-function destination(window, item, preferred = null) {
+function destination(window, item, preferred = null, { start = window.inventoryStart, end = window.inventoryEnd, exclude = [] } = {}) {
   const slots = [];
   if (preferred !== null) slots.push(preferred);
-  for (let slot = window.inventoryStart; slot < window.inventoryEnd; slot += 1) slots.push(slot);
+  for (let slot = start; slot < end; slot += 1) slots.push(slot);
   return slots.find(slot => {
+    if (exclude.includes(slot)) return false;
     const held = window.slots[slot];
     return !held || (isPlain(item) && isPlain(held) && held.type === item.type && held.count < held.stackSize);
   });
 }
 
-async function parkCursor(current, window, preferred = null) {
+async function parkCursor(current, window, preferred = null, options = {}) {
   while (window.selectedItem) {
-    const slot = destination(window, window.selectedItem, preferred);
+    const slot = destination(window, window.selectedItem, preferred, options);
     if (slot === undefined) throw inventoryError('Gold remains on the cursor: no safe slot is free. Trader stopped without dropping it.');
     const before = window.selectedItem.count;
     await click(current, window, slot, 0, 0);
@@ -63,18 +64,23 @@ async function moveItems(current, window, sourceSlot, targetSlot, count, active 
   if (window.selectedItem) throw inventoryError('The cursor must be empty before moving gold.');
   const source = window.slots[sourceSlot];
   const target = window.slots[targetSlot];
-  if (!isPlain(source) || !Number.isInteger(count) || count < 1 || count > source.count
+  if (sourceSlot === targetSlot || !isPlain(source) || !Number.isInteger(count) || count < 1 || count > source.count
     || (target && (!isPlain(target) || target.type !== source.type || target.count + count > target.stackSize))) {
     throw inventoryError('The gold stack changed before moving it.');
   }
   const type = source.type;
   const before = source.count;
   const targetBefore = target?.count || 0;
+  const sourceContainer = String(window.type).startsWith('minecraft:generic') && sourceSlot < window.inventoryStart;
+  // Hoppers can refill the source slot between any two snapshots. Return
+  // leftovers within that chest, never by adding them to the requested batch.
+  const returnSlots = sourceContainer
+    ? { start: 0, end: window.inventoryStart, exclude: [targetSlot] } : { exclude: [targetSlot] };
   let confirmed = true;
   try {
     if (!active()) throw inventoryError('Gold movement was cancelled.');
     await click(current, window, sourceSlot, 0, 0);
-    if (window.selectedItem?.type !== type || window.selectedItem.count !== before || window.slots[sourceSlot]) {
+    if (window.selectedItem?.type !== type || window.selectedItem.count !== before || (!sourceContainer && window.slots[sourceSlot])) {
       throw inventoryError('The server did not confirm picking up the gold stack.');
     }
     if (count === before) {
@@ -90,17 +96,21 @@ async function moveItems(current, window, sourceSlot, targetSlot, count, active 
         }
       }
     }
-    await parkCursor(current, window, sourceSlot);
+    await parkCursor(current, window, sourceSlot, returnSlots);
     if (window.slots[targetSlot]?.type !== type || window.slots[targetSlot].count !== targetBefore + count
-      || (window.slots[sourceSlot]?.count || 0) !== before - count) {
-      throw inventoryError('The server returned an inconsistent gold transfer.');
+      || (!sourceContainer && (window.slots[sourceSlot]?.count || 0) !== before - count)) {
+      const targetState = window.slots[targetSlot];
+      const sourceState = window.slots[sourceSlot];
+      throw inventoryError(`The server returned an inconsistent gold transfer (${window.type}, slot ${sourceSlot} -> ${targetSlot}; `
+        + `target expected ${targetBefore + count} ${source.name}, got ${targetState?.count || 0} ${targetState?.name || 'empty'}; `
+        + `source ${sourceState?.count || 0} ${sourceState?.name || 'empty'}).`);
     }
   } catch (error) {
     if (error.inventoryUnconfirmed) confirmed = false;
     throw error;
   } finally {
     // Even on cancellation, return the cursor before any caller closes a chest.
-    if (confirmed && window.selectedItem) await parkCursor(current, window, sourceSlot);
+    if (confirmed && window.selectedItem) await parkCursor(current, window, sourceSlot, returnSlots);
   }
 }
 
