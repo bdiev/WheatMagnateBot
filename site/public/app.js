@@ -12448,7 +12448,7 @@ function renderTraderSetup(trader) {
   if (table) {
     table.textContent = trader.craftingTable
       ? `Crafting table at ${traderPositionKey(trader.craftingTable).replaceAll(',', ' ')}.${traderOnFloors(trader) ? ' The bot uses it from the nearer floor.' : ''}`
-      : 'No crafting table in reach: emeralds go to the output chest without making blocks. Place one and scan again to make blocks.';
+      : 'No crafting table in reach: emeralds stay in the inventory between rounds. Place one and scan again to make blocks.';
   }
   const stock = Object.entries(trader.stock || {}).sort((a, b) => b[1] - a[1]);
   const stockText = $('#traderStock');

@@ -364,6 +364,16 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
     else window.slots[slot] = null;
   };
 
+  bot.transfer = async ({ window, itemType, count, sourceStart, sourceEnd, destStart, destEnd }) => {
+    assert.equal(sourceEnd, sourceStart + 1, 'partial returns use one known inventory stack');
+    const item = window.slots[sourceStart];
+    assert.equal(item.type, itemType);
+    const amount = Math.min(count, item.count);
+    const left = insert(window, { ...item, count: amount }, destStart, destEnd);
+    item.count -= amount - left;
+    if (!item.count) window.slots[sourceStart] = null;
+  };
+
   // The game chat is off limits: every test run fails if anything reaches it
   bot.chat = message => { chatMessages.push(message); };
   bot.whisper = (username, message) => { chatMessages.push(message); };
@@ -433,25 +443,87 @@ async function main() {
     const { bot, trader } = await ready({ source: [stack('gold_block', 64), stack('gold_block', 64)], villagers: [villager] });
     trader.configure({ craftingTable: null });
     const activate = bot.activateEntity;
+    let checkedGold = false;
     bot.activateEntity = async entity => {
-      if (bot.goldCrafts > 0) {
+      if (bot.goldCrafts > 0 && !checkedGold) {
         assert.equal(bot.goldCrafts, 64, 'the entire stack is unpacked before trading');
         assert.equal(bot.count('gold_ingot'), 576);
         assert.ok(bot.inventory.emptySlotCount() >= 9, 'room remains for trade results');
+        checkedGold = true;
       }
       return activate(entity);
     };
     try {
       trader.start();
       await until(() => villager.trades[0].nbTradeUses === 16, 'selling unpacked gold');
+      await until(() => trader.getStatus().phase.startsWith('waiting'), 'waiting with leftover gold');
+      assert.equal(bot.count('gold_ingot'), 512, 'leftover ingots stay in inventory');
+      assert.equal(bot.count('emerald'), 16, 'loose emeralds stay without a table');
+      assert.ok(!bot.sourceItems().some(item => item.name === 'gold_ingot'), 'no ingots are returned after the round');
+      villager.trades[0].nbTradeUses = 0;
+      await until(() => trader.getStatus().totalTrades === 32, 'trading retained gold after restock');
       trader.stop({ flush: false });
       await until(() => !trader.getStatus().running, 'gold trip stopped');
       assert.equal(bot.goldCrafts, 64, 'only one stack is taken');
       assert.equal(bot.sourceItems().filter(item => item.name === 'gold_block').reduce((sum, item) => sum + item.count, 0), 64);
-      assert.equal(bot.count('gold_ingot') + bot.sourceItems().filter(item => item.name === 'gold_ingot').reduce((sum, item) => sum + item.count, 0), 512);
+      assert.equal(bot.count('gold_ingot'), 448, 'the next round uses retained ingots');
       assert.deepEqual(bot.dropped, []);
     } finally {
       trader.dispose();
+    }
+  });
+
+  await test('leftovers accumulate through restocks and only full emerald blocks are deposited', async () => {
+    const villager = { trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 4 })] };
+    const { bot, trader } = await ready({ source: [stack('paper', 64)], villagers: [villager] });
+    try {
+      trader.start();
+      for (const total of [4, 8, 12]) {
+        await until(() => trader.getStatus().totalTrades === total && trader.getStatus().phase === 'waiting', `waiting after ${total} sales`);
+        assert.equal(bot.count('paper'), 64 - total);
+        assert.equal(bot.count('emerald'), total % 9);
+        assert.deepEqual(bot.sourceItems(), [], 'resources are not returned between rounds');
+        assert.ok(!bot.outputItems().some(item => item.name === 'emerald'), 'loose emeralds are not deposited');
+        if (total < 12) villager.trades[0].nbTradeUses = 0;
+      }
+      assert.equal(bot.outputItems().find(item => item.name === 'emerald_block').count, 1);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('purchase leftovers survive a restart, pay after restock and remain separate from earnings', async () => {
+    const stateFile = path.join(os.tmpdir(), `trader-purchase-leftovers-${process.pid}.json`);
+    fs.rmSync(stateFile, { force: true });
+    const villager = { trades: [rawTrade('emerald', 2, 'bread', 1, { maximumNbTradeUses: 2 })] };
+    const prepared = await ready({ inventory: [stack('emerald', 8)], source: [stack('emerald', 20)], villagers: [villager] }, { stateFile });
+    const { bot } = prepared;
+    let trader = prepared.trader;
+    try {
+      trader.configure({ tradeChoices: { 'emerald+>bread': true } });
+      trader.start();
+      await until(() => trader.getStatus().totalTrades === 2 && trader.getStatus().phase === 'waiting', 'purchase leftovers retained');
+      assert.equal(bot.count('emerald'), 24, '16 purchase emeralds remain alongside 8 earned emeralds');
+      assert.equal(bot.crafts, 0, 'purchase funds are not compacted');
+      assert.deepEqual(bot.sourceItems(), []);
+      trader.stop({ flush: false });
+      trader.dispose();
+      trader = createTrader({ stateFile });
+      trader.attachBot(bot);
+      villager.trades[0].nbTradeUses = 0;
+      trader.start();
+      await until(() => trader.getStatus().totalTrades === 4 && trader.getStatus().phase === 'waiting', 'retained funds reused after restart');
+      assert.equal(bot.count('emerald'), 20);
+      assert.equal(bot.crafts, 0);
+      trader.stop();
+      await until(() => bot.count('emerald') === 0 && trader.getStatus().phase === 'idle', 'explicit stop flushed resources');
+      assert.equal(bot.sourceItems().find(item => item.name === 'emerald').count, 12, 'only the remaining purchase funds return');
+      assert.equal(bot.outputItems().find(item => item.name === 'emerald').count, 8, 'earned emeralds go to the output on explicit stop');
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+      fs.rmSync(stateFile, { force: true });
     }
   });
 
@@ -836,7 +908,7 @@ async function main() {
     const line = /Villager dear asks 60 for stone\+>emerald, above the limit of 30/;
     await wait(40);
     assert.equal(lines.filter(entry => line.test(entry)).length, 1, 'once per price, though it is asked again and again');
-    assert.equal(bot.count('stone'), 0, 'nothing is held back for it');
+    assert.equal(bot.count('stone'), 24, 'leftovers wait for a restock or a better price');
 
     dear.trades[0].demand = 0;
     await until(() => dear.trades[0].nbTradeUses === 3, 'trades when the price has fallen');
@@ -857,7 +929,7 @@ async function main() {
       return activateEntity(entity);
     };
     trader.start();
-    await until(() => opens >= 2 && bot.count('stone') === 0 && bot.sourceItems().length === 1, 'the stone is back');
+    await until(() => opens >= 2 && bot.count('stone') === 64 && bot.sourceItems().length === 0, 'the stone stays on the bot');
     await until(() => trader.getStatus().phase === 'waiting_price', 'waiting for the price');
     assert.equal(villager.trades[0].nbTradeUses, 0);
     assert.equal(bot.written.includes('select_trade'), false);
@@ -1042,14 +1114,14 @@ async function main() {
     await until(() => villagers.every(villager => villager.trades[0].nbTradeUses === 16) && trader.getStatus().phase === 'waiting', 'all sold', 8000);
     assert.equal(mostStacks, 18, 'a trip carries 18 stacks');
     assert.ok(fewestFree >= 9, `9 slots stay free, saw ${fewestFree}`);
-    // One look at the start, a visit to take per trip, and the rest back at the end
+    // One look at the start and a visit to take per trip; no leftover return.
     assert.ok(sourceOpens <= 5, `the chests are not read between trips: ${sourceOpens}`);
-    assert.ok(returnClicks <= 1, `the last stack goes back once, after the last trip: ${returnClicks}`);
+    assert.equal(returnClicks, 0, 'inputs are never returned between rounds');
     // Five to read the offers once, then only the six visits that trade
     assert.ok(villagerOpens <= 11, `the villagers are not asked again between trips: ${villagerOpens}`);
     assert.equal(bot.outputItems().find(entry => entry.name === 'emerald_block').count, 8, '80 trades make 8 blocks');
     assert.equal(bot.count('emerald'), 8);
-    assert.equal(bot.count('stone'), 0, 'what is left goes back');
+    assert.equal(bot.count('stone'), 0, 'the last trip uses its inputs exactly');
     assert.equal(bot.sourceItems().reduce((sum, entry) => sum + entry.count, 0), 27 * 64 - 1600);
     assert.ok(lines.some(line => /Trip: took 1152 items, made \d+ trades in/.test(line)), 'the log tells how a trip went');
     assert.deepEqual(bot.dropped, []);
@@ -1071,9 +1143,9 @@ async function main() {
     };
     trader.start();
     await until(() => villagers.every(villager => villager.trades[0].nbTradeUses === 10) && trader.getStatus().phase === 'waiting', 'all sold');
-    assert.equal(bot.count('stone'), 0);
-    assert.equal(bot.sourceItems().reduce((sum, entry) => sum + entry.count, 0), 3 * 64 - 140);
-    assert.equal(back.filter(name => name === 'stone').length, 1, 'once, when nothing is left to sell');
+    assert.equal(bot.count('stone'), 3 * 64 - 140);
+    assert.equal(bot.sourceItems().reduce((sum, entry) => sum + entry.count, 0), 0);
+    assert.equal(back.filter(name => name === 'stone').length, 0, 'leftovers stay even after all trades are exhausted');
     trader.dispose();
   });
 
@@ -1132,7 +1204,7 @@ async function main() {
     bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`)[0] = stack('paper', 64);
     villager.trades[0].inputItem1.itemCount = 4;
     await until(() => villager.trades[0].nbTradeUses === 3, 'sold after the chest was read again');
-    await until(() => bot.sourceItems()[0]?.count === 64 - 12, 'at the new price');
+    await until(() => bot.count('paper') === 64 - 12, 'the remaining paper stays at the new price');
     trader.dispose();
   });
 
@@ -1167,10 +1239,10 @@ async function main() {
     assert.equal(bot.count('emerald'), 2, 'fewer than nine emeralds wait');
     assert.equal(bot.count('diamond_sword'), 1);
     assert.equal(bot.count('bread'), 5);
-    assert.equal(bot.count('paper'), 0, 'unused paper went back');
-    assert.deepEqual(bot.sourceItems().map(entry => [entry.name, entry.count]), [['paper', 44]]);
+    assert.equal(bot.count('paper'), 44, 'unused paper stays for the next restock');
+    assert.deepEqual(bot.sourceItems(), []);
     assert.equal(trader.getStatus().sessionTrades, 20);
-    assert.equal(trader.getStatus().stock.paper, 44);
+    assert.equal(trader.getStatus().stock.paper || 0, 0);
     assert.deepEqual(bot.dropped, []);
     trader.dispose();
   });
@@ -1192,8 +1264,8 @@ async function main() {
     await until(() => villager.trades[1].nbTradeUses === 4 && trader.getStatus().phase === 'waiting', 'the chosen trade');
     assert.deepEqual(bot.outputItems().map(entry => [entry.name, entry.count]), [['bread', 8]]);
     assert.equal(bot.crafts, 0, 'emeralds taken for a purchase are never crafted');
-    assert.equal(bot.count('emerald'), 0, 'the rest went back to the source');
-    assert.equal(bot.sourceItems().find(entry => entry.name === 'emerald').count, 28);
+    assert.equal(bot.count('emerald'), 28, 'purchase funds stay for the next restock');
+    assert.equal(bot.sourceItems().filter(entry => entry.name === 'emerald').length, 0);
     trader.dispose();
   });
 
@@ -1468,12 +1540,13 @@ async function main() {
     await until(() => first.trades[0].nbTradeUses === 2 && second.trades[0].nbTradeUses === 2, 'both villagers');
     await until(() => trader.getStatus().phase.startsWith('waiting'), 'done');
     assert.equal(lines.filter(line => /Trip: took/.test(line)).length, 1, 'one trip for both');
-    assert.equal(bot.sourceItems().find(entry => entry.name === 'emerald').count, 16);
+    assert.equal(bot.count('emerald'), 16);
+    assert.equal(bot.sourceItems().filter(entry => entry.name === 'emerald').length, 0);
     trader.stop({ flush: false });
     trader.dispose();
   });
 
-  await test('without a crafting table it starts, and the emeralds go to the output as they are', async () => {
+  await test('without a crafting table loose emeralds stay on the bot between rounds', async () => {
     const villager = { trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 10 })] };
     const bot = fakeBot({ source: [stack('paper', 20)], villagers: [villager] });
     bot.setBlock(TABLE, 'air');
@@ -1484,9 +1557,10 @@ async function main() {
     assert.equal(trader.getStatus().craftingTable, null);
     trader.start();
     await until(() => villager.trades[0].nbTradeUses === 10, 'the trades');
-    await until(() => bot.outputItems().some(entry => entry.name === 'emerald' && entry.count === 10), 'stored');
+    await until(() => trader.getStatus().phase.startsWith('waiting'), 'waiting with loose emeralds');
     assert.equal(bot.crafts, 0);
-    assert.equal(bot.count('emerald'), 0);
+    assert.equal(bot.count('emerald'), 10);
+    assert.deepEqual(bot.outputItems(), []);
     trader.stop({ flush: false });
     trader.dispose();
   });
