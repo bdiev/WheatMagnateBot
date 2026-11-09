@@ -90,6 +90,7 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   bot.slots = new Array(46).fill(null);
   inventory.forEach((entry, index) => { bot.slots[9 + index] = { ...entry, slot: 9 + index }; });
   bot.inventory = {
+    id: 0, type: 'minecraft:inventory', slots: bot.slots, inventoryStart: 9, inventoryEnd: 45, selectedItem: null,
     items: () => bot.slots.filter((entry, slot) => entry && slot >= 9 && slot < 45),
     emptySlotCount: () => bot.slots.slice(9, 45).filter(entry => !entry).length
   };
@@ -101,6 +102,7 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   bot.clicks = 0;
   bot.dragPackets = 0;
   bot.refuseDrag = false;
+  bot.safeClicks = [];
   bot.oldCrafts = 0;
   bot.dropped = [];
   bot.crafts = 0;
@@ -270,6 +272,59 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   client.write = (name, data) => {
     bot.written.push(name);
     if (name === 'window_click') {
+      if (data.mode !== 5 || data.windowId === 0 || String(bot.currentWindow?.type).startsWith('minecraft:generic')) {
+        const window = bot.currentWindow || bot.inventory;
+        assert.equal(data.windowId, window.id);
+        assert.equal(data.stateId, -1, 'safe gold clicks always ask for an authoritative snapshot');
+        bot.safeClicks.push({ ...data });
+        const ignored = bot.rejectGoldClick?.(data, window);
+        if (data.mode === 0 && data.slot < 0) {
+          bot.dropped.push(window.selectedItem?.name);
+          window.selectedItem = null;
+        } else if (data.mode === 0 && !ignored) {
+          const target = window.slots[data.slot];
+          const held = window.selectedItem;
+          if (!held) {
+            window.selectedItem = target ? { ...target } : null;
+            window.slots[data.slot] = null;
+          } else if (!target || (target.type === held.type && target.count < target.stackSize)) {
+            const moved = Math.min(data.mouseButton === 1 ? 1 : held.count, held.stackSize - (target?.count || 0));
+            window.slots[data.slot] = { ...held, count: (target?.count || 0) + moved, slot: data.slot };
+            held.count -= moved;
+            if (!held.count) window.selectedItem = null;
+          } else {
+            window.slots[data.slot] = { ...held, slot: data.slot };
+            window.selectedItem = { ...target };
+          }
+        } else if (data.mode === 1 && !ignored) {
+          assert.equal(window, bot.inventory);
+          assert.equal(data.slot, 0);
+          while (window.slots[0]) {
+            const ingredient = window.slots[1];
+            const result = window.slots[0];
+            const room = window.slots.slice(9, 45).reduce((sum, item) => sum + (!item ? 64 : item.type === result.type ? 64 - item.count : 0), 0);
+            if (room < result.count) break;
+            if (--ingredient.count === 0) window.slots[1] = null;
+            assert.equal(insert(window, result, 9, 45), 0);
+            if (result.name === 'gold_ingot') bot.goldCrafts += 1;
+            else bot.nuggetCrafts = (bot.nuggetCrafts || 0) + 1;
+            window.slots[0] = window.slots[1] ? { ...result } : null;
+          }
+          bot.onGoldBatchCrafted?.();
+        }
+        if (window === bot.inventory) {
+          const grid = window.slots.slice(1, 5).filter(Boolean);
+          window.slots[0] = grid.length === 1 && ['gold_block', 'gold_ingot'].includes(grid[0].name)
+            ? stack(grid[0].name === 'gold_block' ? 'gold_ingot' : 'gold_nugget', 9) : null;
+          if (bot.wrongGoldResult && grid[0]?.name === 'gold_block') window.slots[0] = stack('gold_nugget', 9);
+          for (let slot = 9; slot < 45; slot += 1) if (window.slots[slot]) window.slots[slot].slot = slot;
+        }
+        const snapshot = () => bot.emit(`setWindowItems:${window.id}`);
+        if (bot.suppressGoldSnapshot?.(data, window)) return;
+        if (bot.safeClickDelayMs) setTimeout(snapshot, bot.safeClickDelayMs);
+        else setImmediate(snapshot);
+        return;
+      }
       dragClick(bot.currentWindow, data);
       return;
     }
@@ -388,20 +443,7 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   // Like mineflayer, a result without room is thrown on the ground
   bot.craft = async (recipe, count, table) => {
     if (recipe.result?.id === registry.itemsByName.gold_ingot.id) {
-      assert.equal(table, null, 'gold blocks are unpacked in the inventory');
-      assert.equal(bot.currentWindow, null, 'containers are closed before unpacking gold');
-      for (let done = 0; done < count; done += 1) {
-        const block = bot.inventory.items().find(item => item.name === 'gold_block');
-        assert.ok(block, 'unpacking consumes an actual gold block');
-        if (--block.count === 0) bot.slots[block.slot] = null;
-        const left = insert({ slots: bot.slots }, stack('gold_ingot', 9), 9, 45);
-        if (left) bot.dropped.push('gold_ingot');
-        for (let slot = 9; slot < 45; slot += 1) {
-          if (bot.slots[slot]) bot.slots[slot].slot = slot;
-        }
-        bot.goldCrafts += 1;
-      }
-      return;
+      assert.fail('Gold must never use Mineflayer craft(), which can drop cursor leftovers.');
     }
     assert.equal(table.name, 'crafting_table');
     assert.equal(bot.currentWindow, null, 'crafting starts with no window open');
@@ -518,6 +560,98 @@ async function main() {
     }
   });
 
+  await test('gold safety: rejected cursor return preserves the exact 46 leftover blocks and pauses trading', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({
+      inventory: [...Array.from({ length: 32 }, () => stack('cobblestone', 64)), stack('gold_ingot', 30)],
+      source: [stack('gold_block', 64)], villagers: [villager]
+    });
+    bot.rejectGoldClick = (packet, window) => packet.mode === 0 && window.stored
+      && packet.slot === 0 && window.selectedItem?.name === 'gold_block' && window.selectedItem.count === 46;
+    try {
+      trader.start();
+      await until(() => !trader.getStatus().running && /gold cursor/.test(trader.getStatus().lastErrorMessage || ''), 'unsafe cursor state pauses Trader');
+      const window = bot.currentWindow;
+      assert.ok(window, 'the source stays open until its cursor can be returned safely');
+      assert.equal(window.selectedItem.count, 46);
+      assert.equal(window.slots.slice(window.inventoryStart, window.inventoryEnd).filter(item => item?.name === 'gold_block').reduce((sum, item) => sum + item.count, 0), 18);
+      const clicks = bot.safeClicks.length;
+      await wait(30);
+      assert.equal(bot.safeClicks.length, clicks, 'a failed inventory operation is not retried automatically');
+      assert.equal(villager.trades[0].nbTradeUses, 0);
+      assert.deepEqual(bot.dropped, []);
+      bot.rejectGoldClick = null;
+      trader.start();
+      await until(() => villager.trades[0].nbTradeUses === 16 && trader.getStatus().phase === 'waiting', 'explicit restart recovers the cursor and trades');
+      assert.equal(bot.sourceItems().find(item => item.name === 'gold_block').count, 46);
+      assert.equal(bot.count('gold_ingot'), 128);
+      assert.equal(bot.nuggetCrafts || 0, 0);
+      assert.deepEqual(bot.dropped, []);
+      assert.ok(!bot.safeClicks.some(packet => packet.slot < 0 && packet.mode !== 5), 'no drop click is ever sent');
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold safety: a missing server confirmation stops all further clicks and keeps the chest open', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('gold_block', 64)], villagers: [villager] });
+    bot.suppressGoldSnapshot = (packet, window) => packet.mode === 0 && packet.slot === 0
+      && window.stored && window.selectedItem?.name === 'gold_block';
+    try {
+      trader.start();
+      await until(() => !trader.getStatus().running && /did not confirm the gold inventory/.test(trader.getStatus().lastErrorMessage || ''), 'missing confirmation pauses Trader', 7000);
+      assert.ok(bot.currentWindow, 'an unconfirmed cursor never triggers chest closure');
+      assert.equal(bot.currentWindow.selectedItem.count, 64);
+      const clicks = bot.safeClicks.length;
+      await wait(30);
+      assert.equal(bot.safeClicks.length, clicks, 'no speculative recovery clicks are sent after a timeout');
+      assert.equal(bot.goldCrafts, 0);
+      assert.equal(villager.trades[0].nbTradeUses, 0);
+      assert.equal(bot.listenerCount(`setWindowItems:${bot.currentWindow.id}`), 0, 'timed-out listeners are removed');
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold safety: a nugget result is rejected before the result slot is clicked', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('gold_block', 64)], villagers: [villager] });
+    bot.wrongGoldResult = true;
+    try {
+      trader.start();
+      await until(() => !trader.getStatus().running && /Unexpected gold recipe/.test(trader.getStatus().lastErrorMessage || ''), 'nugget result pauses Trader');
+      assert.equal(bot.count('gold_block'), 64, 'all ingredients return from the grid to inventory');
+      assert.equal(bot.count('gold_nugget'), 0);
+      assert.equal(bot.nuggetCrafts || 0, 0);
+      assert.equal(bot.inventory.selectedItem, null);
+      assert.ok([1, 2, 3, 4].every(slot => !bot.inventory.slots[slot]));
+      assert.ok(!bot.safeClicks.some(packet => packet.slot === 0 && packet.mode === 1), 'an unexpected result is never collected');
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold safety: leftover ingots in the crafting grid are recovered without becoming nuggets', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('gold_block', 64)], villagers: [villager] });
+    bot.inventory.slots[1] = stack('gold_ingot', 5, { slot: 1 });
+    try {
+      trader.start();
+      await until(() => villager.trades[0].nbTradeUses === 16 && trader.getStatus().phase === 'waiting', 'old crafting grid is cleared safely');
+      assert.equal(bot.count('gold_ingot'), 64 * 9 + 5 - 64);
+      assert.equal(bot.count('gold_nugget'), 0);
+      assert.equal(bot.nuggetCrafts || 0, 0);
+      assert.equal(bot.inventory.selectedItem, null);
+      assert.ok([1, 2, 3, 4].every(slot => !bot.inventory.slots[slot]));
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
   await test('gold unpacking continues directly to trading without batch sleeps or an empty ingot chest tour', async () => {
     const villagers = Array.from({ length: 10 }, () => ({ trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] }));
     const bot = fakeBot({ source: [stack('gold_block', 64), stack('gold_block', 64)], villagers });
@@ -560,13 +694,7 @@ async function main() {
   await test('gold unpacking waits for delayed inventory confirmation before trading', async () => {
     const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
     const { bot, trader } = await ready({ source: [stack('gold_block', 4)], villagers: [villager] });
-    const craft = bot.craft;
-    let pending;
-    bot.craft = async (...args) => {
-      if (args[0].result?.id === registry.itemsByName.gold_ingot.id) {
-        pending = new Promise((resolve, reject) => setTimeout(() => craft(...args).then(resolve, reject), 40));
-      } else await craft(...args);
-    };
+    bot.safeClickDelayMs = 40;
     try {
       trader.start();
       await until(() => villager.trades[0].nbTradeUses === 9, 'server confirmed the ingots and they were traded');
@@ -575,7 +703,6 @@ async function main() {
       assert.equal(bot.goldCrafts, 4);
       assert.deepEqual(bot.dropped, []);
     } finally {
-      await pending;
       trader.dispose();
     }
   });
@@ -800,11 +927,7 @@ async function main() {
   await test('gold blocks: stopping during unpacking returns both blocks and ingots', async () => {
     const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
     const { bot, trader } = await ready({ source: [stack('gold_block', 64)], villagers: [villager] });
-    const craft = bot.craft;
-    bot.craft = async (...args) => {
-      await craft(...args);
-      if (bot.goldCrafts > 0) trader.stop();
-    };
+    bot.onGoldBatchCrafted = () => trader.stop();
     try {
       trader.start();
       await until(() => bot.sourceItems().some(item => item.name === 'gold_ingot'), 'gold returned after stopping');

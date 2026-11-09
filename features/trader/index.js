@@ -54,6 +54,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Vec3 } = require('vec3');
 const { STORAGE_REACH, containerInteraction, sendContainerClick } = require('../../minecraft/container-interaction');
+const safeGold = require('../../minecraft/safe-gold-crafting');
 
 const STORAGE_BLOCKS = new Set(['chest', 'trapped_chest', 'barrel']);
 const TABLE_BLOCK = 'crafting_table';
@@ -313,6 +314,8 @@ function createTrader({
   // What the bot held before taking resources, to distinguish purchase funds
   // from earnings even when a trip is interrupted.
   let pendingTrip = null;
+  let goldOperation = false;
+  let goldInventoryBlocked = false;
   // Source emeralds kept for later purchases must not be compacted as earnings.
   let purchaseEmeralds = Math.max(0, Number(saved.purchaseEmeralds) || 0);
   let lastReturnLogAt = -Infinity;
@@ -637,7 +640,7 @@ function createTrader({
     loopGeneration += 1;
     for (const cancel of openingCancels) cancel();
     if (running) {
-      try { if (bot?.currentWindow) bot.closeWindow(bot.currentWindow); } catch {}
+      try { if (bot?.currentWindow && !goldOperation && !goldInventoryBlocked && !bot.currentWindow.selectedItem) bot.closeWindow(bot.currentWindow); } catch {}
     }
     running = false;
     nextCheckAt = null;
@@ -1102,6 +1105,15 @@ function createTrader({
         nextCheckAt = null;
       } catch (error) {
         if (!context.active()) break;
+        if (error.code === 'TRADER_INVENTORY_UNSAFE') {
+          goldInventoryBlocked = true;
+          lastErrorMessage = error.message;
+          running = false;
+          phase = 'retrying';
+          log(`[Trader] ${error.message} Trading paused; inspect the inventory before starting Trader again.`, 'error');
+          notifyChange();
+          break;
+        }
         closeOpenWindow(current);
         const changed = lastErrorMessage !== error.message;
         lastErrorMessage = error.message;
@@ -1141,6 +1153,11 @@ function createTrader({
   // One round: tidy up, see what there is, and make every trade that can run
   async function runRound(context) {
     const { current } = context;
+    if (goldInventoryBlocked || current.inventory?.selectedItem
+      || [1, 2, 3, 4].some(slot => current.inventory?.slots?.[slot])) {
+      await safeGold.recoverInventory(current);
+      goldInventoryBlocked = false;
+    }
     assertOnSpot(current);
     // Settle a trip cut short by a lost connection before planning from leftovers.
     purchaseEmeralds = Math.min(purchaseEmeralds, carried(current, EMERALD));
@@ -1462,6 +1479,10 @@ function createTrader({
   // The last step of stop(): nothing that belongs to the trades stays on the bot
   async function flushInventory(context) {
     const { current } = context;
+    if (goldInventoryBlocked || current.inventory?.selectedItem || [1, 2, 3, 4].some(slot => current.inventory?.slots?.[slot])) {
+      await safeGold.recoverInventory(current);
+      goldInventoryBlocked = false;
+    }
     // A stop in the middle of a trip spending emeralds: the ones taken to pay go
     // back to the sources, not into the output chest as if earned
     if (desired.sources.length) await finishPendingTrip(context);
@@ -1656,35 +1677,20 @@ function createTrader({
     }
     let unpacked = 0;
     while (remaining > 0 && context.active()) {
-      const blockId = current.registry.itemsByName[GOLD_BLOCK].id;
-      const recipe = current.recipesFor(current.registry.itemsByName[GOLD_INGOT].id, null, 1, null)
-        ?.find(recipe => !recipe.requiresTable && recipe.result.count === INGOTS_PER_GOLD_BLOCK
-          && recipe.delta.filter(item => item.count < 0).length === 1
-          && recipe.delta.some(item => item.id === blockId && item.count === -1));
-      if (!recipe) throw supplyError('No recipe to unpack gold blocks into ingots.');
-      const count = Math.min(remaining, MAX_CRAFTS_PER_BATCH);
-      const blocksBefore = carried(current, GOLD_BLOCK);
-      const ingotsBefore = carried(current, GOLD_INGOT);
       phase = 'crafting';
       closeOpenWindow(current);
+      let used;
+      goldOperation = true;
       try {
-        await withTimeout(current.craft(recipe, count, null),
-          CRAFT_TIMEOUT_BASE_MS + count * CRAFT_TIMEOUT_PER_CRAFT_MS,
-          'Unpacking gold blocks took too long.');
+        used = await safeGold.unpackGold(current, Math.min(remaining, stackSize), context.active);
+      } catch (error) {
+        goldInventoryBlocked = true;
+        error.code = 'TRADER_INVENTORY_UNSAFE';
+        throw error;
       } finally {
-        closeOpenWindow(current);
+        goldOperation = false;
       }
-      // Craft clicks already wait for server updates. Continue as soon as the
-      // inventory confirms the result, rather than sleeping after each batch.
-      await waitFor(() => !context.active()
-        || (blocksBefore - carried(current, GOLD_BLOCK) === count
-          && carried(current, GOLD_INGOT) - ingotsBefore === count * INGOTS_PER_GOLD_BLOCK), SLOT_READY_TIMEOUT_MS);
       if (!context.active()) return;
-      const used = blocksBefore - carried(current, GOLD_BLOCK);
-      const made = carried(current, GOLD_INGOT) - ingotsBefore;
-      if (used !== count || made !== count * INGOTS_PER_GOLD_BLOCK) {
-        throw supplyError('The server did not unpack the gold blocks into ingots.');
-      }
       remaining -= used;
       unpacked += used;
       notifyChange();
@@ -1898,6 +1904,7 @@ function createTrader({
   // listeners here are removed in every case
   async function openMerchant(context, entity, { here = false } = {}) {
     const { current } = context;
+    if (goldInventoryBlocked) throw Object.assign(new Error('Trader inventory needs recovery before opening a villager.'), { code: 'TRADER_INVENTORY_UNSAFE' });
     if (!here) await goToFloor(context, entityFloor(current, entity));
     closeOpenWindow(current);
     let onOpen;
@@ -2023,11 +2030,19 @@ function createTrader({
           if (stacks >= MAX_STACKS_PER_TRIP || freeSlots(window) <= reservedSlots) break;
           const count = wholeStacks ? stack.count : Math.min(stack.count, left.get(stack.name));
           let moved = false;
-          if (count < stack.count) {
-            await withTimeout(current.transfer({ window, itemType: stack.type, metadata: stack.metadata ?? null, count,
-              sourceStart: stack.slot, sourceEnd: stack.slot + 1, destStart: window.inventoryStart, destEnd: window.inventoryEnd }),
-            CRAFT_TIMEOUT_BASE_MS + count * CLICK_TIMEOUT_MS, 'Taking gold blocks took too long.');
-            moved = true;
+          if (!wholeStacks) {
+            const target = window.slots.findIndex((item, slot) => slot >= window.inventoryStart && slot < window.inventoryEnd
+              && (!item || (isPlainItem(item) && item.type === stack.type && item.count + count <= item.stackSize)));
+            if (target < 0) break;
+            goldOperation = true;
+            try {
+              await safeGold.moveItems(current, window, stack.slot, target, count, context.active);
+              moved = true;
+            } catch (error) {
+              goldInventoryBlocked = true;
+              error.code = 'TRADER_INVENTORY_UNSAFE';
+              throw error;
+            } finally { goldOperation = false; }
           } else moved = await shiftClick(context, window, stack.slot);
           if (moved) {
             left.set(stack.name, left.get(stack.name) - count);
@@ -2137,6 +2152,7 @@ function createTrader({
   }
 
   function closeWindow(current, window) {
+    if (window?.selectedItem || goldInventoryBlocked) return;
     try { if (window && current.currentWindow === window) current.closeWindow(window); } catch {}
   }
 
@@ -2146,6 +2162,7 @@ function createTrader({
 
   async function openContainer(context, pos, label, { here = false } = {}) {
     const { current } = context;
+    if (goldInventoryBlocked) throw Object.assign(new Error('Trader inventory needs recovery before opening a container.'), { code: 'TRADER_INVENTORY_UNSAFE' });
     if (!context.active()) throw new Error('Trader stopped.');
     if (!pos) throw supplyError(`${label} is not set.`);
     const preferred = here ? currentFloor(current) : blockFloor(current, pos);
