@@ -1453,6 +1453,32 @@ async function main() {
     trader.dispose();
   });
 
+  await test('two floors: a chest hidden from one floor is scanned from the other', async () => {
+    const HIDDEN = { x: -2, y: 66, z: 1 };
+    const bot = twoFloorBot({ villagers: [] });
+    bot.setChestSize(HIDDEN, 27, []);
+    bot.setBlock(HIDDEN, 'chest');
+    // From the floor at Y 64 another chest stands in the way of HIDDEN
+    bot.world = {
+      raycast(eye, direction, range) {
+        const end = eye.plus(direction.scaled(range - 0.05));
+        const position = end.floored();
+        if (eye.y < 67 && position.equals(new Vec3(HIDDEN.x, HIDDEN.y, HIDDEN.z))) {
+          return { name: 'chest', position: new Vec3(-1, 66, 1), face: 5, intersect: end };
+        }
+        return { name: bot.blockAt(position)?.name, position, face: 1, intersect: end };
+      }
+    };
+    const trader = createTrader({ climbTickMs: 0 });
+    trader.attachBot(bot);
+    trader.configure({ mode: 'floors', floors: [64, 68] });
+    const status = await trader.scan();
+    const hidden = status.containers.find(entry => entry.x === HIDDEN.x && entry.y === HIDDEN.y && entry.z === HIDDEN.z);
+    assert.ok(hidden, 'the hidden chest is still found');
+    assert.equal(hidden.floor, 68, 'and used from the floor that sees it');
+    trader.dispose();
+  });
+
   await test('two floors: a column without scaffolding is named, and the bot does not move', async () => {
     const bot = twoFloorBot({ villagers: [] });
     bot.setBlock({ x: 0, y: 66, z: 0 }, 'air');

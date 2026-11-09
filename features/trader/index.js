@@ -915,6 +915,11 @@ function createTrader({
     for (const block of findBlocksInReach(current, [...STORAGE_BLOCKS])) {
       const key = positionKey(block.position);
       if (seen.has(key)) continue;
+      // On two floors a chest hidden from this one is left for the other floor
+      if (floorsActive() && !canClick(current, block)) {
+        log(`[Trader] Scan: ${block.name} at ${key} is not visible from Y ${currentFloor(current)}.`);
+        continue;
+      }
       seen.add(key);
       const partner = chestPartner(block);
       if (partner) seen.add(positionKey(partner));
@@ -957,8 +962,19 @@ function createTrader({
   }
 
   function findCraftingTable(current) {
-    const block = findBlocksInReach(current, [TABLE_BLOCK])[0];
+    const blocks = findBlocksInReach(current, [TABLE_BLOCK]);
+    const block = floorsActive() ? blocks.find(entry => canClick(current, entry)) : blocks[0];
     return block ? plainPosition(block.position) : null;
+  }
+
+  // Whether the bot sees a surface of the block from where it stands
+  function canClick(current, block) {
+    try {
+      containerInteraction(current, block);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function villagerId(entity) {
@@ -1952,6 +1968,19 @@ function createTrader({
     if (!here) await goToFloor(context, blockFloor(current, pos));
     closeOpenWindow(current);
     current.setControlState?.('sneak', false);
+    if (!here && floorsActive() && !canClick(current, block)) {
+      // Hidden from the floor it was put on: the other floor may see it
+      const other = desired.floors.find(floor => floor !== currentFloor(current));
+      await goToFloor(context, other);
+      if (canClick(current, block)) {
+        const scanned = containers.find(entry => samePosition(entry, pos));
+        if (scanned) {
+          scanned.floor = other;
+          saveState();
+        }
+        log(`[Trader] ${label} at ${positionKey(pos)} is used from Y ${other} now.`);
+      }
+    }
     const { direction, cursor } = containerInteraction(current, block);
     await current.lookAt(block.position.plus(cursor), true);
     if (current.waitForTicks) await current.waitForTicks(2);
