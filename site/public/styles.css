@@ -14773,6 +14773,11 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   flex: 1 1 100%;
 }
 
+#tab-trader .trader-floors .trader-note-warning {
+  color: var(--warn);
+  font-weight: 600;
+}
+
 #tab-trader .trader-floor-tag {
   font-weight: 600;
   color: var(--trader-accent-strong);

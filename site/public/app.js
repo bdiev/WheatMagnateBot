@@ -12257,6 +12257,14 @@ function renderTraderFarm(trader) {
     floorsButton.textContent = 'Save Floors';
     floorsButton.disabled = locked;
   }
+  // A locked button says why, under the Ys
+  const note = $('#traderFloors .trader-note');
+  if (note) {
+    note.textContent = !locked ? 'Feet Y on each floor, as F3 shows it.'
+      : trader.scanning ? 'Wait for the scan to end to change the floors.'
+        : 'Stop the Trader to change the floors.';
+    note.classList.toggle('trader-note-warning', locked);
+  }
   const status = $('#traderFarmStatus');
   if (status) {
     status.textContent = !floorsMode
