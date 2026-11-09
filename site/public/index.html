@@ -892,6 +892,28 @@
           </article>
         </section>
 
+        <section class="panel trader-farm-panel">
+          <div class="panel-head">
+            <div class="aura-control-title">
+              <span class="aura-control-icon" aria-hidden="true"><img src="/items/Scaffolding.png" alt=""></span>
+              <div>
+                <h2>Farm</h2>
+                <p id="traderFarmStatus" aria-live="polite">Each farm keeps its own chests and trades.</p>
+              </div>
+            </div>
+            <div class="trader-mode-switch" role="group" aria-label="Farm type">
+              <button class="ghost-button" type="button" data-bot-command="trader_configure" data-trader-mode="single" aria-pressed="true">One spot</button>
+              <button class="ghost-button" type="button" data-bot-command="trader_configure" data-trader-mode="floors" aria-pressed="false">Two floors</button>
+            </div>
+          </div>
+          <div id="traderFloors" class="trader-floors" hidden>
+            <label><span>Floor 1 Y</span><input id="traderFloor1" type="number" inputmode="numeric" step="1" data-trader-floor></label>
+            <label><span>Floor 2 Y</span><input id="traderFloor2" type="number" inputmode="numeric" step="1" data-trader-floor></label>
+            <button id="traderFloorsButton" class="trader-primary-button" type="button" data-bot-command="trader_configure" data-trader-floors>Save Floors</button>
+            <p class="trader-note">Feet Y on each floor, as F3 shows it.</p>
+          </div>
+        </section>
+
         <section class="farm-admin-grid trader-admin-grid">
           <section class="panel admin-command-panel">
             <div class="panel-head">

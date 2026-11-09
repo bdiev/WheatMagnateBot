@@ -31,6 +31,15 @@
  *      opened slowly even then. With the sources too empty for any trade it looks
  *      into them every ten seconds instead, and goes on as soon as they are filled
  *
+ * Two kinds of farm, each with a setup of its own that a switch keeps:
+ *   - single: everything is in reach of one spot, as above
+ *   - floors: the spot is a column of scaffolding through two floors, with
+ *     chests and villagers on both. The site asks for the Y of each floor first;
+ *     the scan reads both, and the bot climbs to the floor of whatever it opens
+ *     next, the floor it is on first. mineflayer's physics takes scaffolding for
+ *     a solid block, so the climb is driven here, at the speeds of the game: up
+ *     as when holding jump, down while sneaking
+ *
  * Chests and villagers are only ever used with shift-clicks. The server refused
  * cursor drags in chests, and mineflayer's bot.trade carries the result on the
  * cursor and throws it on the ground when the inventory is full; a shift-click on
@@ -100,6 +109,21 @@ const CONTAINER_TIMEOUT_MS = 5_000;
 const MERCHANT_TIMEOUT_MS = 5_000;
 // Only where the server cannot be asked; see syncWindowState
 const SETTLE_MS = 300;
+const MODE_SINGLE = 'single';
+const MODE_FLOORS = 'floors';
+const MODES = [MODE_SINGLE, MODE_FLOORS];
+const SCAFFOLDING = 'scaffolding';
+const MAX_FLOOR_GAP = 64;
+// Climbing in the game: holding jump in scaffolding sets 0.2 a tick, which
+// gravity and drag bring down to this; sneaking slides down at most 0.15
+const CLIMB_STEP = (0.2 - 0.08) * 0.98;
+const DESCENT_MAX = 0.15;
+const GRAVITY = 0.08;
+const AIR_DRAG = 0.98;
+const CLIMB_TICK_MS = 50;
+// The server putting the bot back this many times means it refuses the climb
+const CLIMB_PUSHBACKS = 5;
+const ON_FLOOR = 0.2;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -131,6 +155,29 @@ function plainPosition(pos) {
 
 function samePosition(a, b) {
   return Boolean(a && b) && a.x === b.x && a.y === b.y && a.z === b.z;
+}
+
+// Two different whole Ys, lowest first, not too far apart to climb
+function validFloors(floors) {
+  return Array.isArray(floors) && floors.length === 2 && floors.every(Number.isInteger)
+    && floors[0] < floors[1] && floors[1] - floors[0] <= MAX_FLOOR_GAP;
+}
+
+// One farm's setup as saved: the spot, the chests, the choices and the scan
+function readFarm(source = {}) {
+  return {
+    anchor: validPosition(source.anchor) ? plainPosition(source.anchor) : null,
+    floors: validFloors(source.floors) ? [...source.floors] : null,
+    sources: Array.isArray(source.sources) ? source.sources.filter(validPosition).map(plainPosition).slice(0, MAX_SOURCES) : [],
+    output: validPosition(source.output) ? plainPosition(source.output) : null,
+    craftingTable: validPosition(source.craftingTable) ? plainPosition(source.craftingTable) : null,
+    // What the site chose per trade; a trade without a choice follows defaultEnabled
+    tradeChoices: source.tradeChoices && typeof source.tradeChoices === 'object' ? { ...source.tradeChoices } : {},
+    // The most a trade may cost in its first input; a trade without one has no limit
+    priceLimits: source.priceLimits && typeof source.priceLimits === 'object' ? { ...source.priceLimits } : {},
+    containers: Array.isArray(source.containers) ? source.containers.filter(validPosition) : [],
+    merchants: (Array.isArray(source.merchants) ? source.merchants : []).filter(entry => entry?.id && Array.isArray(entry.offers))
+  };
 }
 
 // A trade is known by its items: its place in the list shifts when the villager
@@ -204,20 +251,27 @@ function createTrader({
   villagerCooldownMs = VILLAGER_COOLDOWN_MS, settleMs = SETTLE_MS,
   villagerWatchGapMs = VILLAGER_WATCH_GAP_MS, watchBackoffMs = WATCH_BACKOFF_MS, stockPollMs = STOCK_POLL_MS,
   stockLogIntervalMs = STOCK_LOG_INTERVAL_MS, villagerRefreshMs = VILLAGER_REFRESH_MS,
-  workPollMs = WORK_POLL_MS
+  workPollMs = WORK_POLL_MS, climbTickMs = CLIMB_TICK_MS
 } = {}) {
   const saved = loadState();
+  // The active farm's setup is kept at the top of the file, as before there
+  // were two kinds; the other farm's waits in farms until switched back to
+  const active = readFarm(saved);
   const desired = {
     enabled: Boolean(saved.enabled),
-    anchor: validPosition(saved.anchor) ? plainPosition(saved.anchor) : null,
-    sources: Array.isArray(saved.sources) ? saved.sources.filter(validPosition).map(plainPosition).slice(0, MAX_SOURCES) : [],
-    output: validPosition(saved.output) ? plainPosition(saved.output) : null,
-    craftingTable: validPosition(saved.craftingTable) ? plainPosition(saved.craftingTable) : null,
-    // What the site chose per trade; a trade without a choice follows defaultEnabled
-    tradeChoices: saved.tradeChoices && typeof saved.tradeChoices === 'object' ? { ...saved.tradeChoices } : {},
-    // The most a trade may cost in its first input; a trade without one has no limit
-    priceLimits: saved.priceLimits && typeof saved.priceLimits === 'object' ? { ...saved.priceLimits } : {}
+    mode: MODES.includes(saved.mode) ? saved.mode : MODE_SINGLE,
+    floors: active.floors,
+    anchor: active.anchor,
+    sources: active.sources,
+    output: active.output,
+    craftingTable: active.craftingTable,
+    tradeChoices: active.tradeChoices,
+    priceLimits: active.priceLimits
   };
+  const farms = {};
+  for (const mode of MODES) {
+    if (mode !== desired.mode && saved.farms?.[mode] && typeof saved.farms[mode] === 'object') farms[mode] = saved.farms[mode];
+  }
   let totalTrades = Math.max(0, Number(saved.totalTrades) || 0);
   let totalBlocks = Math.max(0, Number(saved.totalBlocks) || 0);
   let sessionTrades = 0;
@@ -225,9 +279,7 @@ function createTrader({
   let sessionStartedAt = null;
   // What each villager offered when last opened, by UUID; saved, so the bot knows
   // after a restart which items in its inventory belong to the trades
-  const merchants = new Map((Array.isArray(saved.merchants) ? saved.merchants : [])
-    .filter(entry => entry?.id && Array.isArray(entry.offers))
-    .map(entry => [entry.id, entry]));
+  const merchants = new Map(active.merchants.map(entry => [entry.id, entry]));
   // Every price each trade ever asked for its first input, lowest first, for the
   // site to offer as limits. Never forgotten; a new scan does not touch it
   const priceHistory = {};
@@ -237,7 +289,7 @@ function createTrader({
   for (const merchant of merchants.values()) {
     for (const offer of merchant.offers) notePrice(offer.key, offer.price1);
   }
-  let containers = Array.isArray(saved.containers) ? saved.containers.filter(validPosition) : [];
+  let containers = active.containers;
   let bot = null;
   let running = false;
   let scanning = false;
@@ -311,7 +363,7 @@ function createTrader({
   function saveState() {
     if (!stateFile) return;
     const text = JSON.stringify({
-      ...desired, totalTrades, totalBlocks, containers, merchants: [...merchants.values()], priceHistory
+      ...desired, totalTrades, totalBlocks, containers, merchants: [...merchants.values()], priceHistory, farms
     }, null, 2);
     const temporary = `${stateFile}.tmp`;
     try {
@@ -366,6 +418,10 @@ function createTrader({
       running,
       scanning,
       phase,
+      mode: desired.mode,
+      floors: desired.floors && [...desired.floors],
+      // Where the bot stands now, for the site to suggest the floors
+      botPosition: feetPosition(),
       anchor: desired.anchor && { ...desired.anchor },
       sources: desired.sources.map(pos => ({ ...pos })),
       output: desired.output && { ...desired.output },
@@ -405,6 +461,134 @@ function createTrader({
 
   function eyePosition(current) {
     return current.entity.position.offset(0, current.entity.eyeHeight || 1.62, 0);
+  }
+
+  function floorsActive() {
+    return desired.mode === MODE_FLOORS && validFloors(desired.floors);
+  }
+
+  // The floor the bot stands on, or null between floors and on a one-spot farm
+  function currentFloor(current) {
+    if (!floorsActive() || !current?.entity?.position) return null;
+    const y = current.entity.position.y;
+    return desired.floors.find(floor => Math.abs(y - floor) < ON_FLOOR) ?? null;
+  }
+
+  // Where the bot's eye can be: one place on a one-spot farm, one per floor in
+  // the column otherwise. Here: only where it is now
+  function viewpoints(current, { here = false } = {}) {
+    if (here || !floorsActive() || !desired.anchor) return [{ floor: currentFloor(current), eye: eyePosition(current) }];
+    const height = current.entity.eyeHeight || 1.62;
+    return desired.floors.map(floor => ({
+      floor, eye: new Vec3(desired.anchor.x + 0.5, floor + height, desired.anchor.z + 0.5)
+    }));
+  }
+
+  function nearestViewpoint(current, distanceFrom, options) {
+    return viewpoints(current, options)
+      .map(view => ({ floor: view.floor, distance: distanceFrom(view.eye) }))
+      .sort((a, b) => a.distance - b.distance)[0];
+  }
+
+  // The floor a chest is used from: the one the scan found it on, or the nearest
+  function blockFloor(current, pos) {
+    if (!floorsActive()) return null;
+    const scanned = containers.find(entry => samePosition(entry, pos));
+    if (desired.floors.includes(scanned?.floor)) return scanned.floor;
+    return nearestViewpoint(current, eye => eye.distanceTo(new Vec3(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5))).floor;
+  }
+
+  function entityFloor(current, entity) {
+    if (!floorsActive()) return null;
+    return nearestViewpoint(current, eye => distanceToEntity(current, entity, eye)).floor;
+  }
+
+  // The floor the bot is on comes first; the order is kept otherwise
+  function hereFirst(current, list, floorOf) {
+    const floor = currentFloor(current);
+    if (floor === null) return [...list];
+    return list.map((entry, order) => ({ entry, order, away: floorOf(entry) === floor ? 0 : 1 }))
+      .sort((a, b) => a.away - b.away || a.order - b.order)
+      .map(({ entry }) => entry);
+  }
+
+  // The column the bot climbs: scaffolding from the lower floor up to the block
+  // it stands on at the upper one
+  function assertColumn(current) {
+    const [low, high] = desired.floors;
+    const { x, z } = desired.anchor;
+    for (let y = low; y < high; y += 1) {
+      const block = current.blockAt(new Vec3(x, y, z));
+      if (block?.name !== SCAFFOLDING) {
+        throw supplyError(`No scaffolding at ${x} ${y} ${z}: the bot goes between the floors through a column of scaffolding at its spot, from Y ${low} to Y ${high - 1}.`);
+      }
+    }
+  }
+
+  function placeBot(current, x, y, z) {
+    const position = current.entity.position;
+    if (typeof position?.set === 'function') position.set(x, y, z);
+    else current.entity.position = new Vec3(x, y, z);
+    current.entity.velocity?.set?.(0, 0, 0);
+  }
+
+  // Up or down the column to a floor, a game tick at a time: up as when holding
+  // jump, down sneaking, as a player does it. mineflayer's physics is off for
+  // the climb, as it takes scaffolding for a solid block, and still sends the
+  // position every tick. A server that keeps putting the bot back refuses it
+  async function goToFloor(context, floor) {
+    const { current } = context;
+    if (!floorsActive() || floor === null || floor === undefined || currentFloor(current) === floor) return;
+    if (!context.active()) throw new Error('Trader stopped.');
+    if (!desired.anchor) throw supplyError('Trader has no spot yet: press Scan with the bot in its column.');
+    assertColumn(current);
+    closeOpenWindow(current);
+    const phaseBefore = phase;
+    phase = 'climbing';
+    notifyChange();
+    const x = desired.anchor.x + 0.5;
+    const z = desired.anchor.z + 0.5;
+    const up = floor > current.entity.position.y;
+    const physicsBefore = current.physicsEnabled;
+    current.physicsEnabled = false;
+    if (!up) current.setControlState?.('sneak', true);
+    const ticks = Math.ceil(Math.abs(floor - current.entity.position.y) / Math.min(CLIMB_STEP, DESCENT_MAX)) + 40;
+    const deadline = Date.now() + ticks * Math.max(climbTickMs, 1) + 5_000;
+    let velocity = 0;
+    let pushbacks = 0;
+    try {
+      while (Math.abs(current.entity.position.y - floor) > 1e-6) {
+        if (!context.active()) throw new Error('Trader stopped.');
+        if (Date.now() > deadline) throw supplyError(`The bot did not reach the floor at Y ${floor} in time.`);
+        const y = current.entity.position.y;
+        let step;
+        if (up) {
+          step = velocity;
+          velocity = CLIMB_STEP;
+        } else {
+          velocity = Math.max(velocity, -DESCENT_MAX);
+          step = velocity;
+          velocity = (velocity - GRAVITY) * AIR_DRAG;
+        }
+        const next = up ? Math.min(floor, y + step) : Math.max(floor, y + step);
+        placeBot(current, x, next, z);
+        current.entity.onGround = next === floor;
+        await sleep(climbTickMs);
+        if (Math.abs(current.entity.position.y - next) > 0.01) {
+          pushbacks += 1;
+          velocity = 0;
+          if (pushbacks >= CLIMB_PUSHBACKS) {
+            throw supplyError(`The server kept putting the bot back while it ${up ? 'climbed' : 'went down'} to the floor at Y ${floor}.`);
+          }
+        }
+      }
+      // A moment on the floor before standing up from the sneak
+      await sleep(climbTickMs * 2);
+    } finally {
+      if (!up) current.setControlState?.('sneak', false);
+      current.physicsEnabled = physicsBefore ?? true;
+      if (phase === 'climbing') phase = phaseBefore;
+    }
   }
 
   // Connection lifecycle: the loop stops with the bot, and an enabled trader
@@ -469,6 +653,7 @@ function createTrader({
 
   // Everything the setup still lacks, in the words the site shows
   function missingSetup() {
+    if (desired.mode === MODE_FLOORS && !floorsActive()) return 'Trader needs the Y of both floors first.';
     if (!desired.anchor) return 'Trader has no spot yet: press Scan with the bot in place.';
     if (!desired.sources.length) return 'Trader needs at least one source chest.';
     if (!desired.output) return 'Trader needs an output chest.';
@@ -520,7 +705,55 @@ function createTrader({
     return getStatus();
   }
 
-  function configure({ sources, output, craftingTable, tradeChoices, priceLimits } = {}) {
+  // The other farm's setup comes back as it was left, and this one waits for it
+  function switchFarm(mode) {
+    if (!MODES.includes(mode)) throw new Error('Unknown farm type.');
+    if (mode === desired.mode) return;
+    if (desired.enabled || running) throw new Error('Stop the Trader before switching the farm.');
+    if (scanning) throw new Error('Trader is still scanning.');
+    if (phase === 'flushing') throw new Error('Trader is still emptying the inventory.');
+    farms[desired.mode] = {
+      anchor: desired.anchor, floors: desired.floors, sources: desired.sources, output: desired.output,
+      craftingTable: desired.craftingTable, tradeChoices: desired.tradeChoices, priceLimits: desired.priceLimits,
+      containers, merchants: [...merchants.values()]
+    };
+    const next = readFarm(farms[mode]);
+    delete farms[mode];
+    Object.assign(desired, {
+      mode, floors: next.floors, anchor: next.anchor, sources: next.sources, output: next.output,
+      craftingTable: next.craftingTable, tradeChoices: next.tradeChoices, priceLimits: next.priceLimits
+    });
+    containers = next.containers;
+    merchants.clear();
+    for (const merchant of next.merchants) merchants.set(merchant.id, merchant);
+    sourceStock.clear();
+    knownOffers.clear();
+    villagerRetryAt.clear();
+    quietVillagers.clear();
+    expensiveSeen.clear();
+    lastTakenFrom = [];
+    lastErrorMessage = null;
+    log(`[Trader] Switched to the ${mode === MODE_FLOORS ? 'two-floor' : 'one-spot'} farm.`);
+  }
+
+  // The Ys the bot stands at on each floor. New floors need a new scan
+  function setFloors(floors) {
+    if (desired.mode !== MODE_FLOORS) throw new Error('Floors are only for the two-floor farm.');
+    const sorted = Array.isArray(floors) ? floors.map(Number).sort((a, b) => a - b) : null;
+    if (!sorted || sorted.length !== 2 || !sorted.every(Number.isInteger)) throw new Error('Give the Y of both floors as whole numbers.');
+    if (sorted[0] === sorted[1]) throw new Error('The two floors need different Ys.');
+    if (!validFloors(sorted)) throw new Error(`The floors can be at most ${MAX_FLOOR_GAP} blocks apart.`);
+    if (desired.floors && desired.floors[0] === sorted[0] && desired.floors[1] === sorted[1]) return;
+    if (desired.enabled || running) throw new Error('Stop the Trader before changing the floors.');
+    if (scanning) throw new Error('Trader is still scanning.');
+    desired.floors = sorted;
+    desired.anchor = null;
+    log(`[Trader] Floors at Y ${sorted[0]} and Y ${sorted[1]}; scan from the column next.`);
+  }
+
+  function configure({ mode, floors, sources, output, craftingTable, tradeChoices, priceLimits } = {}) {
+    if (mode !== undefined) switchFarm(mode);
+    if (floors !== undefined) setFloors(floors);
     const nextSources = sources === undefined ? desired.sources : sources;
     const nextOutput = output === undefined ? desired.output : output;
     const nextTable = craftingTable === undefined ? desired.craftingTable : craftingTable;
@@ -572,30 +805,19 @@ function createTrader({
     const context = { current, active: () => generation === loopGeneration && bot === current && Boolean(current.entity) };
     try {
       await flushing;
-      desired.anchor = feetPosition(current);
-      containers = await findContainers(context);
+      merchants.clear();
+      villagerRetryAt.clear();
+      if (desired.mode === MODE_FLOORS) {
+        await scanFloors(context);
+      } else {
+        desired.anchor = feetPosition(current);
+        containers = await findContainers(context);
+        desired.craftingTable = findCraftingTable(current);
+        await scanVillagers(context);
+      }
       const known = new Set(containers.map(positionKey));
       desired.sources = desired.sources.filter(pos => known.has(positionKey(pos)));
       if (desired.output && !known.has(positionKey(desired.output))) desired.output = null;
-      desired.craftingTable = findCraftingTable(current);
-      merchants.clear();
-      villagerRetryAt.clear();
-      for (const entity of Object.values(current.entities || {})) {
-        if (entity?.name !== VILLAGER || !entity.position) continue;
-        const distance = distanceToEntity(current, entity);
-        if (distance > VILLAGER_REACH + 10) continue;
-        log(`[Trader] Scan: villager ${villagerId(entity)} at ${distance.toFixed(1)} blocks${distance > VILLAGER_REACH ? ', out of reach' : ''}.`);
-      }
-      for (const entity of reachableVillagers(current)) {
-        if (!context.active()) break;
-        try {
-          const { window } = await openMerchant(context, entity);
-          closeWindow(current, window);
-        } catch (error) {
-          log(`[Trader] Villager ${villagerId(entity)} did not trade during the scan: ${error.message}`);
-          merchants.set(villagerId(entity), { id: villagerId(entity), level: null, offers: [], answered: false });
-        }
-      }
       log(`[Trader] Scan: ${containers.length} containers, ${merchants.size} villagers, ${desired.craftingTable ? 'a' : 'no'} crafting table.`);
       saveState();
       return getStatus();
@@ -603,6 +825,60 @@ function createTrader({
       scanning = false;
       if (phase === 'scanning') phase = 'idle';
       notifyChange();
+    }
+  }
+
+  // Both floors, the one the bot is nearest first. A chest in reach of both
+  // belongs to the first, and the bot ends the scan on the other floor
+  async function scanFloors(context) {
+    const { current } = context;
+    if (!floorsActive()) throw new Error('Enter the Y of both floors first.');
+    const feet = feetPosition(current);
+    const [low, high] = desired.floors;
+    if (feet.y < low - 1 || feet.y > high + 1) {
+      throw new Error(`Put the bot in its scaffolding column on floor 1 (Y ${low}) or floor 2 (Y ${high}), then scan.`);
+    }
+    const y = current.entity.position.y;
+    const order = [...desired.floors].sort((a, b) => Math.abs(a - y) - Math.abs(b - y));
+    desired.anchor = { x: feet.x, y: order[0], z: feet.z };
+    assertColumn(current);
+    const seen = new Set();
+    const found = [];
+    let table = null;
+    for (const floor of order) {
+      if (!context.active()) break;
+      await goToFloor(context, floor);
+      phase = 'scanning';
+      const here = await findContainers(context, seen);
+      for (const entry of here) entry.floor = floor;
+      found.push(...here);
+      table ||= findCraftingTable(current);
+      await scanVillagers(context, floor);
+      log(`[Trader] Scan: floor ${desired.floors.indexOf(floor) + 1} (Y ${floor}): ${here.length} containers, ${[...merchants.values()].filter(entry => entry.floor === floor).length} villagers.`);
+    }
+    containers = found;
+    desired.craftingTable = table;
+  }
+
+  // The villagers in reach from where the bot is, each read once
+  async function scanVillagers(context, floor = null) {
+    const { current } = context;
+    for (const entity of Object.values(current.entities || {})) {
+      if (entity?.name !== VILLAGER || !entity.position || merchants.has(villagerId(entity))) continue;
+      const distance = distanceToEntity(current, entity);
+      if (distance > VILLAGER_REACH + 10) continue;
+      log(`[Trader] Scan: villager ${villagerId(entity)} at ${distance.toFixed(1)} blocks${distance > VILLAGER_REACH ? ', out of reach' : ''}${floor === null ? '' : ` from Y ${floor}`}.`);
+    }
+    for (const entity of reachableVillagers(current, { here: true })) {
+      if (!context.active()) break;
+      if (merchants.has(villagerId(entity))) continue;
+      try {
+        const { window } = await openMerchant(context, entity, { here: true });
+        closeWindow(current, window);
+      } catch (error) {
+        log(`[Trader] Villager ${villagerId(entity)} did not trade during the scan: ${error.message}`);
+        merchants.set(villagerId(entity), { id: villagerId(entity), level: null, offers: [], answered: false, floor });
+      }
     }
   }
 
@@ -633,9 +909,8 @@ function createTrader({
   // Each chest once, however many blocks it takes. The block states say which
   // blocks belong together; what the server opens is the proof where they don't:
   // both halves of a double chest open the same 54 slots
-  async function findContainers(context) {
+  async function findContainers(context, seen = new Set()) {
     const { current } = context;
-    const seen = new Set();
     const found = [];
     for (const block of findBlocksInReach(current, [...STORAGE_BLOCKS])) {
       const key = positionKey(block.position);
@@ -652,7 +927,7 @@ function createTrader({
     for (const entry of found) {
       if (entry.name === 'barrel' || !context.active()) continue;
       try {
-        const window = await openContainer(context, entry, 'A chest');
+        const window = await openContainer(context, entry, 'A chest', { here: true });
         entry.slots = window.inventoryStart;
         entry.contents = JSON.stringify(window.slots.slice(0, window.inventoryStart).map(item => item && [item.name, item.count]));
         closeWindow(current, window);
@@ -690,8 +965,7 @@ function createTrader({
     return String(entity.uuid || entity.id);
   }
 
-  function distanceToEntity(current, entity) {
-    const eye = eyePosition(current);
+  function distanceToEntity(current, entity, eye = eyePosition(current)) {
     const halfWidth = (entity.width || 0.6) / 2;
     const { x, y, z } = entity.position;
     const height = entity.height || 1.95;
@@ -703,10 +977,16 @@ function createTrader({
     ));
   }
 
-  function reachableVillagers(current) {
+  // In reach of the bot's spot, or of either floor of its column, nearest
+  // first, those on the bot's floor before the others
+  function reachableVillagers(current, options) {
+    const floor = currentFloor(current);
     return Object.values(current.entities || {})
-      .filter(entity => entity?.name === VILLAGER && entity.position && distanceToEntity(current, entity) <= VILLAGER_REACH)
-      .sort((a, b) => distanceToEntity(current, a) - distanceToEntity(current, b));
+      .filter(entity => entity?.name === VILLAGER && entity.position)
+      .map(entity => ({ entity, ...nearestViewpoint(current, eye => distanceToEntity(current, entity, eye), options) }))
+      .filter(entry => entry.distance <= VILLAGER_REACH)
+      .sort((a, b) => (a.floor === floor ? 0 : 1) - (b.floor === floor ? 0 : 1) || a.distance - b.distance)
+      .map(entry => entry.entity);
   }
 
   function startLoop() {
@@ -780,8 +1060,13 @@ function createTrader({
     const anchor = desired.anchor;
     const feet = feetPosition(current);
     if (!anchor || !feet) return;
-    if (feet.x === anchor.x && feet.z === anchor.z && Math.abs(feet.y - anchor.y) <= 1) return;
-    throw supplyError(`The bot left its spot ${positionKey(anchor)} and is at ${positionKey(feet)}; it waits there instead of walking.`);
+    if (feet.x === anchor.x && feet.z === anchor.z) {
+      // Anywhere in its column: the next floor it needs is climbed to from there
+      if (floorsActive() && feet.y >= desired.floors[0] - 1 && feet.y <= desired.floors[1] + 1) return;
+      if (!floorsActive() && Math.abs(feet.y - anchor.y) <= 1) return;
+    }
+    const spot = floorsActive() ? `column at ${anchor.x} ${anchor.z}` : `spot ${positionKey(anchor)}`;
+    throw supplyError(`The bot left its ${spot} and is at ${positionKey(feet)}; it waits there instead of walking.`);
   }
 
   // One round: tidy up, see what there is, and make every trade that can run
@@ -1209,6 +1494,8 @@ function createTrader({
       const recipe = current.recipesFor(blockId, null, 1, table)?.[0];
       if (!recipe) throw new Error('No recipe for emerald blocks.');
       const crafts = Math.min(Math.floor(carried(current, EMERALD) / EMERALDS_PER_BLOCK), MAX_CRAFTS_PER_BATCH);
+      await goToFloor(context, blockFloor(current, desired.craftingTable));
+      if (!context.active()) return;
       phase = 'crafting';
       closeOpenWindow(current);
       const blocksBefore = carried(current, EMERALD_BLOCK);
@@ -1278,7 +1565,7 @@ function createTrader({
       throw supplyError(`No room to take resources: ${current.inventory.emptySlotCount()} free slots, and ${RESERVED_FREE_SLOTS} stay free for the results.`);
     }
     let made = 0;
-    for (const { entity, offer, uses } of plan) {
+    for (const { entity, offer, uses } of hereFirst(current, plan, entry => entityFloor(current, entry.entity))) {
       if (!context.active()) break;
       if (Date.now() < (villagerRetryAt.get(villagerId(entity)) || 0)) continue;
       let affordable = uses;
@@ -1429,8 +1716,9 @@ function createTrader({
   // child, no job): mineflayer's openVillager then leaves its packet listener
   // behind, and that listener fails on the next villager's trade list. Both
   // listeners here are removed in every case
-  async function openMerchant(context, entity) {
+  async function openMerchant(context, entity, { here = false } = {}) {
     const { current } = context;
+    if (!here) await goToFloor(context, entityFloor(current, entity));
     closeOpenWindow(current);
     let onOpen;
     let onTrades;
@@ -1475,6 +1763,7 @@ function createTrader({
       id: villagerId(entity),
       level: Number(packet.villagerLevel) || null,
       answered: true,
+      floor: currentFloor(current),
       lastSeenAt: new Date().toISOString(),
       offers: offers.map(offer => ({
         key: offer.key,
@@ -1498,7 +1787,7 @@ function createTrader({
   async function readSources(context) {
     const { current } = context;
     phase = 'reading';
-    for (const pos of desired.sources) {
+    for (const pos of hereFirst(current, desired.sources, source => blockFloor(current, source))) {
       if (!context.active()) return;
       const window = await openContainer(context, pos, 'A source chest');
       try {
@@ -1539,11 +1828,12 @@ function createTrader({
     if (desired.sources.length > 1) await readSources(context);
     phase = 'restocking';
     const visited = new Set();
+    const hereRank = source => (floorsActive() && blockFloor(current, source) !== currentFloor(current) ? 1 : 0);
     while (context.active() && stacks < MAX_STACKS_PER_TRIP && [...left.values()].some(count => count > 0)) {
-      // Ties keep the order of the setup
+      // Ties go to the floor the bot is on, then keep the order of the setup
       const pos = desired.sources
         .filter(source => !visited.has(source) && usefulIn(source, left) > 0)
-        .sort((a, b) => usefulIn(b, left) - usefulIn(a, left))[0];
+        .sort((a, b) => usefulIn(b, left) - usefulIn(a, left) || hereRank(a) - hereRank(b))[0];
       if (!pos) break;
       visited.add(pos);
       const window = await openContainer(context, pos, 'A source chest');
@@ -1651,7 +1941,7 @@ function createTrader({
     try { if (current.currentWindow) current.closeWindow(current.currentWindow); } catch {}
   }
 
-  async function openContainer(context, pos, label) {
+  async function openContainer(context, pos, label, { here = false } = {}) {
     const { current } = context;
     if (!context.active()) throw new Error('Trader stopped.');
     if (!pos) throw supplyError(`${label} is not set.`);
@@ -1659,6 +1949,7 @@ function createTrader({
     if (!block || !STORAGE_BLOCKS.has(block.name)) {
       throw supplyError(`${label} at ${positionKey(pos)} is not there.`);
     }
+    if (!here) await goToFloor(context, blockFloor(current, pos));
     closeOpenWindow(current);
     current.setControlState?.('sneak', false);
     const { direction, cursor } = containerInteraction(current, block);

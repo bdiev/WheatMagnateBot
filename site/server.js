@@ -3734,6 +3734,17 @@ function normalizeTraderPosition(value, label) {
 function normalizeTraderSettings(payload = {}) {
   const invalid = message => Object.assign(new Error(message), { statusCode:400 });
   const settings = {};
+  if (payload.mode !== undefined) {
+    if (!['single', 'floors'].includes(payload.mode)) throw invalid('Unknown farm type.');
+    settings.mode = payload.mode;
+  }
+  if (payload.floors !== undefined) {
+    if (!Array.isArray(payload.floors) || payload.floors.length !== 2
+      || !payload.floors.every(y => Number.isInteger(y) && Math.abs(y) <= 4096)) {
+      throw invalid('Give the Y of both floors as whole numbers.');
+    }
+    settings.floors = [...payload.floors];
+  }
   if (payload.sources !== undefined) {
     if (!Array.isArray(payload.sources) || payload.sources.length > 16) throw invalid('Trader takes at most 16 source chests.');
     settings.sources = payload.sources.map(position => normalizeTraderPosition(position, 'A source chest'));

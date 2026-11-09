@@ -12211,11 +12211,70 @@ const TRADER_PHASES = {
   waiting_stock: 'Waiting for resources in the source chests',
   waiting_work: 'Villagers are off work · no restocks until morning',
   waiting_price: 'Every trade is above its price limit · waiting for prices to fall',
+  climbing: 'Moving between floors',
   retrying: 'Retrying'
 };
 
 function traderPositionKey(position) {
   return position ? `${position.x},${position.y},${position.z}` : '';
+}
+
+function traderOnFloors(trader) {
+  return trader.mode === 'floors';
+}
+
+function traderFloorsSet(trader) {
+  return Array.isArray(trader.floors) && trader.floors.length === 2;
+}
+
+// "Floor 1" for the lower Y, "Floor 2" for the upper; empty on a one-spot farm
+function traderFloorLabel(trader, floor) {
+  if (!traderOnFloors(trader) || !traderFloorsSet(trader)) return '';
+  const index = trader.floors.indexOf(floor);
+  return index < 0 ? '' : `Floor ${index + 1}`;
+}
+
+// The farm switch and, on a two-floor farm, the Ys of its floors. A Y being
+// typed is left alone by the status updates
+function renderTraderFarm(trader) {
+  const floorsMode = traderOnFloors(trader);
+  const locked = Boolean(trader.enabled || trader.scanning);
+  for (const button of document.querySelectorAll('#tab-trader [data-trader-mode]')) {
+    const selected = (trader.mode || 'single') === button.dataset.traderMode;
+    button.setAttribute('aria-pressed', String(selected));
+    button.disabled = locked && !selected;
+    button.title = locked && !selected ? 'Stop the Trader to switch the farm.' : '';
+  }
+  const floors = $('#traderFloors');
+  if (floors) floors.hidden = !floorsMode;
+  [$('#traderFloor1'), $('#traderFloor2')].forEach((input, index) => {
+    if (!input || input.dataset.dirty === '1' || document.activeElement === input) return;
+    const value = traderFloorsSet(trader) ? trader.floors[index] : index === 0 ? trader.botPosition?.y : null;
+    input.value = Number.isInteger(value) ? String(value) : '';
+  });
+  const floorsButton = $('#traderFloorsButton');
+  if (floorsButton) {
+    floorsButton.textContent = 'Save Floors';
+    floorsButton.disabled = locked;
+  }
+  const status = $('#traderFarmStatus');
+  if (status) {
+    status.textContent = !floorsMode
+      ? 'One spot: the chests and villagers are in reach of where the bot stands.'
+      : traderFloorsSet(trader)
+        ? `Two floors at Y ${trader.floors[0]} and Y ${trader.floors[1]}: the bot climbs the scaffolding between them.`
+        : 'Two floors: first enter the Y of both floors, then scan.';
+  }
+}
+
+function traderFloorsPayload() {
+  const read = id => {
+    const raw = $(id)?.value.trim() ?? '';
+    const value = Number(raw);
+    if (!raw || !Number.isInteger(value)) throw new Error('Enter the Y of both floors as whole numbers.');
+    return value;
+  };
+  return { floors: [read('#traderFloor1'), read('#traderFloor2')] };
 }
 
 function traderItemName(name) {
@@ -12300,20 +12359,22 @@ function renderTraderSetup(trader) {
   const options = key => [['', 'Not used'], ['source', 'Source'], ['output', 'Output']]
     .map(([value, label]) => `<option value="${value}"${(roles[key] || '') === value ? ' selected' : ''}>${label}</option>`)
     .join('');
-  // Sources first, then the output
+  // Sources first, then the output; on two floors the lower floor first in each
   const rank = container => ({ source: 0, output: 1 })[roles[traderPositionKey(container)]] ?? 2;
+  const floorRank = container => (traderOnFloors(trader) && traderFloorsSet(trader) ? trader.floors.indexOf(container.floor) : 0);
   renderStable('#traderContainers', containers.length
-    ? [...containers].sort((a, b) => rank(a) - rank(b)).map(container => {
+    ? [...containers].sort((a, b) => rank(a) - rank(b) || floorRank(a) - floorRank(b)).map(container => {
       const key = traderPositionKey(container);
       const label = `${container.double ? 'Double ' : ''}${traderItemName(container.name)}`;
+      const floor = traderFloorLabel(trader, container.floor);
       return `
         <li class="trader-row">
           ${itemIcon({ name: container.name })}
-          <span class="trader-row-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(key.replaceAll(',', ' '))}</small></span>
+          <span class="trader-row-name"><strong>${escapeHtml(label)}</strong><small>${floor ? `<span class="trader-floor-tag">${escapeHtml(floor)}</span> · ` : ''}${escapeHtml(key.replaceAll(',', ' '))}</small></span>
           <select data-trader-role="${escapeHtml(key)}" aria-label="Role of ${escapeHtml(label)}">${options(key)}</select>
         </li>`;
     }).join('')
-    : '<li class="trader-empty">Nothing yet: put the bot in place and press Scan.</li>', [containers, roles]);
+    : `<li class="trader-empty">${traderOnFloors(trader) ? 'Nothing yet: put the bot in its scaffolding column on either floor and press Scan.' : 'Nothing yet: put the bot in place and press Scan.'}</li>`, [containers, roles, trader.mode || null, trader.floors || null]);
 
   // A villager killed or gone stays in the record until the next scan: its
   // trades are not shown, only how many are missing. While the bot is offline
@@ -12355,9 +12416,12 @@ function renderTraderSetup(trader) {
   const missingNote = missing
     ? ` · ${formatNumber(missing)} no longer in reach (gone or killed; scan again to forget ${missing === 1 ? 'it' : 'them'})`
     : '';
+  const perFloor = traderOnFloors(trader) && traderFloorsSet(trader)
+    ? ` (${trader.floors.map((floor, index) => `${formatNumber(villagers.filter(villager => villager.floor === floor).length)} on floor ${index + 1}`).join(', ')})`
+    : '';
   renderStable('#traderVillagers', villagers.length
     ? `
-      <p class="trader-note">${formatNumber(villagers.length)} ${villagers.length === 1 ? 'villager' : 'villagers'} in reach${silent ? ` · ${formatNumber(silent)} not answering (asleep, busy, or without a job)` : ''}${missingNote}</p>
+      <p class="trader-note">${formatNumber(villagers.length)} ${villagers.length === 1 ? 'villager' : 'villagers'} in reach${perFloor}${silent ? ` · ${formatNumber(silent)} not answering (asleep, busy, or without a job)` : ''}${missingNote}</p>
       ${selling.map(groupRow).join('')}
       ${others.length ? `
         <details id="traderOtherTrades" class="trader-other-trades"${state.traderOtherTradesOpen ? ' open' : ''}>
@@ -12369,7 +12433,7 @@ function renderTraderSetup(trader) {
   const table = $('#traderTableStatus');
   if (table) {
     table.textContent = trader.craftingTable
-      ? `Crafting table at ${traderPositionKey(trader.craftingTable).replaceAll(',', ' ')}.`
+      ? `Crafting table at ${traderPositionKey(trader.craftingTable).replaceAll(',', ' ')}.${traderOnFloors(trader) ? ' The bot uses it from the nearer floor.' : ''}`
       : 'No crafting table in reach: emeralds go to the output chest without making blocks. Place one and scan again to make blocks.';
   }
   const stock = Object.entries(trader.stock || {}).sort((a, b) => b[1] - a[1]);
@@ -12395,13 +12459,15 @@ function renderTraderControl(trader) {
   const connected = Boolean(trader.connected);
   const hasDraft = Boolean(state.traderDraft);
   // The crafting table is optional: without it the emeralds are stored as they are
-  const ready = Boolean(trader.anchor && trader.sources?.length && trader.output);
+  const needsFloors = traderOnFloors(trader) && !traderFloorsSet(trader);
+  const ready = Boolean(!needsFloors && trader.anchor && trader.sources?.length && trader.output);
   let text;
   if (trader.enabled && !connected) text = 'On · starts when the bot is in game.';
   else if (trader.lastErrorMessage && trader.enabled) text = trader.lastErrorMessage;
   else if (trader.enabled) text = `${TRADER_PHASES[trader.phase] || 'Starting'}.`;
-  else if (trader.scanning) text = 'Scanning.';
-  else if (!trader.anchor) text = "Scan from the bot's spot first.";
+  else if (trader.scanning) text = trader.phase === 'climbing' ? 'Scanning · moving to the other floor.' : 'Scanning.';
+  else if (needsFloors) text = 'Enter the Y of both floors first.';
+  else if (!trader.anchor) text = traderOnFloors(trader) ? 'Scan from the scaffolding column first.' : "Scan from the bot's spot first.";
   else if (!trader.sources?.length) text = 'Choose at least one source chest.';
   else if (!trader.output) text = 'Choose the output chest.';
   else if (!trader.craftingTable) text = 'Stopped · no crafting table, so emeralds are stored without making blocks.';
@@ -12417,16 +12483,23 @@ function renderTraderControl(trader) {
   }
   const scan = $('#traderScanButton');
   if (scan) {
-    scan.disabled = !connected || trader.enabled || trader.scanning;
+    scan.disabled = !connected || trader.enabled || trader.scanning || needsFloors;
     scan.textContent = trader.scanning ? 'Scanning...' : 'Scan';
   }
   const scanStatus = $('#traderScanStatus');
   if (scanStatus) {
+    const floorsMode = traderOnFloors(trader);
     scanStatus.textContent = trader.enabled
       ? 'Stop the Trader to scan again.'
-      : trader.anchor
-        ? `Spot: ${traderPositionKey(trader.anchor).replaceAll(',', ' ')}. Scan again after moving anything.`
-        : 'Finds the chests, the table and the villagers in reach.';
+      : needsFloors
+        ? 'Enter the Y of both floors before scanning.'
+        : trader.anchor
+          ? floorsMode
+            ? `Column: ${trader.anchor.x} ${trader.anchor.z}. Scan again after moving anything.`
+            : `Spot: ${traderPositionKey(trader.anchor).replaceAll(',', ' ')}. Scan again after moving anything.`
+          : floorsMode
+            ? 'Put the bot in its scaffolding column on either floor: it scans both floors.'
+            : 'Finds the chests, the table and the villagers in reach.';
   }
 }
 
@@ -12447,6 +12520,7 @@ function renderTrader(payload = {}) {
   $('#traderSessionBlocks').textContent = `this session: ${formatNumber(trader.sessionBlocks || 0)}`;
   $('#traderTotalTrades').textContent = formatNumber(trader.totalTrades || 0);
   $('#traderSessionTrades').textContent = `this session: ${formatNumber(trader.sessionTrades || 0)}`;
+  renderTraderFarm(trader);
   renderTraderControl(trader);
   // Redrawing would close a dropdown that is open; the next update catches up
   if (!document.activeElement?.matches?.('#tab-trader select')) renderTraderSetup(trader);
@@ -12734,7 +12808,23 @@ async function handleAdminBotCommand(event) {
   }
   if (commandType === 'stone_miner_clear' && !confirm('Forget the Stone Miner blocks? It stops until you teach it again.')) return;
   if (commandType === 'trader_toggle') body.payload = { enabled: !state.traderData?.enabled };
-  if (commandType === 'trader_configure') body.payload = traderConfigurePayload();
+  // The same command saves the setup, switches the farm or sets its floors
+  const traderMode = commandType === 'trader_configure' ? button.dataset.traderMode : undefined;
+  const traderFloors = commandType === 'trader_configure' && button.hasAttribute('data-trader-floors');
+  if (traderMode) {
+    if (traderMode === (state.traderData?.mode || 'single')) return;
+    if (state.traderDraft && !confirm('Switching the farm drops your unsaved Trader changes. Switch anyway?')) return;
+    body.payload = { mode: traderMode };
+  } else if (traderFloors) {
+    try {
+      body.payload = traderFloorsPayload();
+    } catch (err) {
+      setBanner(err.message);
+      return;
+    }
+  } else if (commandType === 'trader_configure') {
+    body.payload = traderConfigurePayload();
+  }
   if (commandType === 'trader_scan' && state.traderDraft && !confirm('Scanning drops your unsaved Trader changes. Scan anyway?')) return;
   if (commandType === 'obsidian_reset_coordinates') {
     const hasCoordinates = Boolean(state.adminControlState?.bot?.obsidian?.config);
@@ -12750,11 +12840,18 @@ async function handleAdminBotCommand(event) {
 
   button.disabled = true;
   try {
-    setButtonBusyState(commandType);
+    if (traderFloors) button.textContent = 'Saving...';
+    else if (!traderMode) setButtonBusyState(commandType);
     const queued = await postJson('/api/admin/bot-command', { ...body,accountId:state.activeAccountId });
-    // A scan asks every villager, and one that does not answer takes seconds
-    await waitForAdminBotCommand(queued.command.id, commandType === 'trader_scan' ? 120_000 : undefined);
-    if (commandType === 'trader_scan' || commandType === 'trader_configure') state.traderDraft = null;
+    // A scan asks every villager, and one that does not answer takes seconds;
+    // on two floors it climbs between them too
+    await waitForAdminBotCommand(queued.command.id, commandType === 'trader_scan' ? 180_000 : undefined);
+    // Typed floors are kept until saved; the setup on screen belongs to the farm
+    if (traderFloors) {
+      for (const input of document.querySelectorAll('#tab-trader [data-trader-floor]')) delete input.dataset.dirty;
+    } else if (commandType === 'trader_scan' || commandType === 'trader_configure') {
+      state.traderDraft = null;
+    }
     if (commandType === 'obsidian_reset_coordinates') {
       state.obsidianCoordinateEditorOpen = true;
       clearObsidianCoordinateEditor();
@@ -14467,6 +14564,10 @@ $('#adminPlaytimeCommands')?.addEventListener('click', event => {
 });
 document.addEventListener('click', handleAdminBotCommand);
 document.addEventListener('change', handleTraderSetupChange);
+// A floor Y being typed is not overwritten by the next status update
+document.addEventListener('input', event => {
+  if (event.target?.matches?.('#tab-trader [data-trader-floor]')) event.target.dataset.dirty = '1';
+});
 // Status updates redraw the list: the folded part stays as it was left
 document.addEventListener('toggle', event => {
   if (event.target?.id === 'traderOtherTrades') state.traderOtherTradesOpen = event.target.open;

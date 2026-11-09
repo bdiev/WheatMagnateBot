@@ -42,7 +42,22 @@ assert.match(setup, /escapeHtml\(label\)/);
 // Unsaved choices survive the bot's status updates, and a start waits for Save
 assert.match(app, /state\.traderDraft\?\.choices\?\.\[offer\.key\]/);
 assert.match(app, /toggle\.disabled = !trader\.enabled && \(!ready \|\| hasDraft \|\| !connected\)/);
-assert.match(app, /commandType === 'trader_scan' \? 120_000 : undefined/, 'a scan may take longer than other commands');
+assert.match(app, /commandType === 'trader_scan' \? 180_000 : undefined/, 'a scan may take longer than other commands');
+
+// Two kinds of farm: the switch and the floors go through trader_configure, checked by the server
+for (const id of ['traderFarmStatus', 'traderFloors', 'traderFloor1', 'traderFloor2', 'traderFloorsButton']) {
+  assert.ok(html.includes(`id="${id}"`), `the Trader tab shows ${id}`);
+}
+assert.match(html, /data-bot-command="trader_configure" data-trader-mode="single"/);
+assert.match(html, /data-bot-command="trader_configure" data-trader-mode="floors"/);
+assert.match(html, /id="traderFloorsButton"[^>]*data-bot-command="trader_configure" data-trader-floors/);
+assert.match(server, /\['single', 'floors'\]\.includes\(payload\.mode\)/);
+assert.match(server, /settings\.floors = \[\.\.\.payload\.floors\]/);
+assert.match(app, /body\.payload = \{ mode: traderMode \}/);
+assert.match(app, /body\.payload = traderFloorsPayload\(\)/);
+assert.match(app, /scan\.disabled = !connected \|\| trader\.enabled \|\| trader\.scanning \|\| needsFloors/, 'no scan before the floors are known');
+assert.match(app, /input\.dataset\.dirty === '1'/, 'a Y being typed survives status updates');
+assert.match(setup, /escapeHtml\(floor\)/, 'the floor of a chest is put on the page escaped');
 
 // No manual order: the fullest chest is used first, and the tab says so
 assert.match(html, /Resources are taken from the fullest source chest first/);

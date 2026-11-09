@@ -14720,6 +14720,64 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
+#tab-trader .trader-farm-panel .panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#tab-trader .trader-mode-switch {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+#tab-trader .trader-mode-switch button[aria-pressed="true"] {
+  color: #fff;
+  background: var(--trader-accent-strong);
+  border-color: var(--trader-accent-strong);
+}
+
+:root[data-theme="dark"] #tab-trader .trader-mode-switch button[aria-pressed="true"] {
+  color: #06230f;
+  background: var(--trader-accent);
+  border-color: var(--trader-accent);
+}
+
+#tab-trader .trader-floors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+#tab-trader .trader-floors[hidden] {
+  display: none;
+}
+
+#tab-trader .trader-floors label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+#tab-trader .trader-floors input {
+  width: 110px;
+  min-height: 36px;
+}
+
+#tab-trader .trader-floors .trader-note {
+  flex: 1 1 100%;
+}
+
+#tab-trader .trader-floor-tag {
+  font-weight: 600;
+  color: var(--trader-accent-strong);
+}
+
 #tab-trader .admin-command-panel .panel-head p {
   overflow-wrap: anywhere;
 }

@@ -1381,6 +1381,128 @@ async function main() {
     assert.equal(bot.crafts, 0);
     trader.dispose();
   });
+
+  // A column of scaffolding at 0,0 from the floor at Y 64 up to the one at Y 72:
+  // too far apart for anything on one floor to be reached from the other
+  const UPPER = 72;
+  const UPPER_OUTPUT = { x: -2, y: UPPER, z: 0 };
+  function twoFloorBot(options) {
+    const bot = fakeBot(options);
+    bot.setBlock(OUTPUT, 'air');
+    bot.setChestSize(UPPER_OUTPUT, 27, []);
+    bot.setBlock(UPPER_OUTPUT, 'chest');
+    for (let y = 64; y < UPPER; y += 1) bot.setBlock({ x: 0, y, z: 0 }, 'scaffolding');
+    bot.physicsEnabled = true;
+    bot.controls = [];
+    bot.setControlState = (control, state) => bot.controls.push(`${control}:${state}`);
+    // Every height the bot is put at, and whether mineflayer's physics was off then
+    bot.moves = [];
+    const position = bot.entity.position;
+    const set = position.set.bind(position);
+    position.set = (x, y, z) => {
+      bot.moves.push({ y, physics: bot.physicsEnabled });
+      return set(x, y, z);
+    };
+    return bot;
+  }
+
+  await test('two floors: the scan reads both, and the bot climbs the scaffolding to whatever it uses', async () => {
+    const villager = { at: [1.5, UPPER, 1.5], trades: [rawTrade('paper', 1, 'emerald', 1, { maximumNbTradeUses: 9 })] };
+    const bot = twoFloorBot({ source: [stack('paper', 20)], villagers: [villager] });
+    const trader = createTrader({ climbTickMs: 0 });
+    trader.attachBot(bot);
+    assert.throws(() => trader.configure({ floors: [64, UPPER] }), /only for the two-floor farm/);
+    trader.configure({ mode: 'floors' });
+    assert.throws(() => trader.start(), /Y of both floors/);
+    await assert.rejects(trader.scan(), /Y of both floors/);
+    assert.throws(() => trader.configure({ floors: [64, 64] }), /different Ys/);
+    trader.configure({ floors: [UPPER, 64] });
+    assert.deepEqual(trader.getStatus().floors, [64, UPPER], 'the lower floor is floor 1');
+
+    const status = await trader.scan();
+    const floorOf = pos => status.containers.find(entry => entry.x === pos.x && entry.y === pos.y && entry.z === pos.z)?.floor;
+    assert.equal(floorOf(SOURCE), 64);
+    assert.equal(floorOf(UPPER_OUTPUT), UPPER);
+    assert.deepEqual(status.craftingTable, TABLE);
+    assert.equal(status.villagers.length, 1);
+    assert.equal(status.villagers[0].floor, UPPER, 'the villager upstairs was read from there');
+    assert.equal(bot.entity.position.y, UPPER, 'the scan ends on the other floor');
+
+    trader.configure({ sources: [SOURCE], output: UPPER_OUTPUT });
+    trader.start();
+    const upperOutput = () => bot.contents.get(`${UPPER_OUTPUT.x},${UPPER_OUTPUT.y},${UPPER_OUTPUT.z}`).filter(Boolean);
+    await until(() => upperOutput().some(entry => entry.name === 'emerald_block'), 'a block in the output upstairs', 30_000);
+    assert.equal(villager.trades[0].nbTradeUses, 9, 'paper from downstairs sold upstairs');
+    assert.equal(bot.crafts, 1, 'crafted at the table downstairs');
+    // Whatever climb the stop cuts short gives the physics back
+    trader.stop({ flush: false });
+    await until(() => !trader.getStatus().running && bot.physicsEnabled === true, 'the physics back on', 30_000);
+    const movesAtStop = bot.moves.length;
+    await wait(50);
+    assert.equal(bot.moves.length, movesAtStop, 'no climbing once stopped');
+    assert.ok(bot.moves.length > 0 && bot.moves.every(move => move.physics === false), 'the climb is driven with the physics off');
+    for (let index = 1; index < bot.moves.length; index += 1) {
+      assert.ok(Math.abs(bot.moves[index].y - bot.moves[index - 1].y) <= 0.15 + 1e-9, 'no faster than a player in scaffolding');
+    }
+    assert.ok(bot.controls.includes('sneak:true'), 'down by sneaking');
+    assert.equal(bot.controls.filter(entry => entry.startsWith('sneak')).at(-1), 'sneak:false', 'never left sneaking');
+    // From wherever the stop left it, the next start climbs on to a floor
+    trader.start();
+    await until(() => bot.currentWindow !== null, 'opening something again', 30_000);
+    assert.ok([64, UPPER].includes(bot.entity.position.y), 'things are opened from a floor');
+    trader.dispose();
+  });
+
+  await test('two floors: a column without scaffolding is named, and the bot does not move', async () => {
+    const bot = twoFloorBot({ villagers: [] });
+    bot.setBlock({ x: 0, y: 66, z: 0 }, 'air');
+    const trader = createTrader({ climbTickMs: 0 });
+    trader.attachBot(bot);
+    trader.configure({ mode: 'floors', floors: [64, UPPER] });
+    await assert.rejects(trader.scan(), /No scaffolding at 0 66 0/);
+    assert.equal(bot.moves.length, 0);
+    bot.entity.position = new Vec3(0.5, 90, 0.5);
+    bot.setBlock({ x: 0, y: 66, z: 0 }, 'scaffolding');
+    await assert.rejects(trader.scan(), /scaffolding column on floor 1 \(Y 64\) or floor 2 \(Y 72\)/);
+    trader.dispose();
+  });
+
+  await test('each farm keeps its own setup through a switch and a restart', async () => {
+    const stateFile = path.join(os.tmpdir(), `trader-farms-test-${process.pid}.json`);
+    fs.rmSync(stateFile, { force: true });
+    try {
+      const villager = { trades: [rawTrade('paper', 1, 'emerald', 1)] };
+      const { trader } = await ready({ source: [stack('paper', 1)], villagers: [villager] }, { stateFile });
+      trader.configure({ priceLimits: { 'paper+>emerald': 3 } });
+      trader.start();
+      assert.throws(() => trader.configure({ mode: 'floors' }), /Stop the Trader before switching/);
+      trader.stop({ flush: false });
+      trader.configure({ mode: 'floors' });
+      let status = trader.getStatus();
+      assert.equal(status.mode, 'floors');
+      assert.equal(status.anchor, null);
+      assert.deepEqual(status.sources, []);
+      assert.deepEqual(status.containers, []);
+      assert.deepEqual(status.villagers, []);
+      trader.configure({ floors: [64, UPPER] });
+      trader.dispose();
+
+      const reloaded = createTrader({ stateFile });
+      status = reloaded.getStatus();
+      assert.equal(status.mode, 'floors');
+      assert.deepEqual(status.floors, [64, UPPER]);
+      status = reloaded.configure({ mode: 'single' });
+      assert.deepEqual(status.sources, [SOURCE], 'the one-spot farm comes back as it was');
+      assert.deepEqual(status.output, OUTPUT);
+      assert.equal(status.containers.length, 2);
+      assert.equal(status.villagers[0].offers[0].priceLimit, 3);
+      status = reloaded.configure({ mode: 'floors' });
+      assert.deepEqual(status.floors, [64, UPPER]);
+      reloaded.dispose();
+    } finally {
+      fs.rmSync(stateFile, { force: true });
+    }
+  });
 }
 
 main().then(() => {
