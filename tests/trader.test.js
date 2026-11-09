@@ -370,9 +370,29 @@ function fakeBot({ inventory = [], source = [], output = [], villagers = [], out
   client.on('chat_message', packet => { chatMessages.push(packet?.message); });
   client.on('chat_command', packet => { chatMessages.push(packet?.command); });
 
-  bot.recipesFor = () => [{ emeraldBlock: true }];
+  bot.goldCrafts = 0;
+  bot.recipesFor = itemType => itemType === registry.itemsByName.gold_ingot.id
+    ? require('prismarine-recipe')(registry).Recipe.find(itemType, null)
+      .filter(recipe => !recipe.requiresTable && bot.count('gold_block') > 0)
+    : [{ emeraldBlock: true }];
   // Like mineflayer, a result without room is thrown on the ground
   bot.craft = async (recipe, count, table) => {
+    if (recipe.result?.id === registry.itemsByName.gold_ingot.id) {
+      assert.equal(table, null, 'gold blocks are unpacked in the inventory');
+      assert.equal(bot.currentWindow, null, 'containers are closed before unpacking gold');
+      for (let done = 0; done < count; done += 1) {
+        const block = bot.inventory.items().find(item => item.name === 'gold_block');
+        assert.ok(block, 'unpacking consumes an actual gold block');
+        if (--block.count === 0) bot.slots[block.slot] = null;
+        const left = insert({ slots: bot.slots }, stack('gold_ingot', 9), 9, 45);
+        if (left) bot.dropped.push('gold_ingot');
+        for (let slot = 9; slot < 45; slot += 1) {
+          if (bot.slots[slot]) bot.slots[slot].slot = slot;
+        }
+        bot.goldCrafts += 1;
+      }
+      return;
+    }
     assert.equal(table.name, 'crafting_table');
     assert.equal(bot.currentWindow, null, 'crafting starts with no window open');
     bot.oldCrafts += count;
@@ -408,6 +428,119 @@ async function test(name, run) {
 }
 
 async function main() {
+  await test('gold blocks: one source stack becomes ingots before trading, without a crafting table', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('gold_block', 64), stack('gold_block', 64)], villagers: [villager] });
+    trader.configure({ craftingTable: null });
+    const activate = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      if (bot.goldCrafts > 0) {
+        assert.equal(bot.goldCrafts, 64, 'the entire stack is unpacked before trading');
+        assert.equal(bot.count('gold_ingot'), 576);
+        assert.ok(bot.inventory.emptySlotCount() >= 9, 'room remains for trade results');
+      }
+      return activate(entity);
+    };
+    try {
+      trader.start();
+      await until(() => villager.trades[0].nbTradeUses === 16, 'selling unpacked gold');
+      trader.stop({ flush: false });
+      await until(() => !trader.getStatus().running, 'gold trip stopped');
+      assert.equal(bot.goldCrafts, 64, 'only one stack is taken');
+      assert.equal(bot.sourceItems().filter(item => item.name === 'gold_block').reduce((sum, item) => sum + item.count, 0), 64);
+      assert.equal(bot.count('gold_ingot') + bot.sourceItems().filter(item => item.name === 'gold_ingot').reduce((sum, item) => sum + item.count, 0), 512);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold blocks: insufficient expansion space leaves the source untouched', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({
+      inventory: Array.from({ length: 18 }, () => stack('cobblestone', 64)),
+      source: [stack('gold_block', 64)], villagers: [villager]
+    });
+    try {
+      trader.start();
+      await until(() => /free inventory slots.*gold blocks/.test(trader.getStatus().lastErrorMessage || ''), 'waiting for gold expansion space');
+      trader.stop({ flush: false });
+      assert.equal(bot.sourceItems().find(item => item.name === 'gold_block').count, 64);
+      assert.equal(bot.goldCrafts, 0);
+      assert.equal(villager.trades[0].nbTradeUses, 0);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold blocks: a partial stack is unpacked alongside ordinary paper trades', async () => {
+    const gold = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const paper = { trades: [rawTrade('paper', 1, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('gold_block', 4), stack('paper', 16)], villagers: [gold, paper] });
+    try {
+      trader.start();
+      await until(() => gold.trades[0].nbTradeUses === 9 && paper.trades[0].nbTradeUses === 16, 'gold and paper traded together');
+      trader.stop({ flush: false });
+      assert.equal(bot.goldCrafts, 4);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold blocks: existing source ingots are used before unpacking more blocks', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('gold_ingot', 64), stack('gold_block', 64)], villagers: [villager] });
+    try {
+      trader.start();
+      await until(() => villager.trades[0].nbTradeUses === 16, 'trading supplied ingots');
+      trader.stop({ flush: false });
+      assert.equal(bot.goldCrafts, 0);
+      assert.equal(bot.sourceItems().find(item => item.name === 'gold_block').count, 64);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold blocks: a refill with blocks wakes the trader waiting for ingots', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({ villagers: [villager] });
+    try {
+      trader.start();
+      await until(() => trader.getStatus().phase === 'waiting_stock', 'waiting for gold');
+      bot.contents.get(`${SOURCE.x},${SOURCE.y},${SOURCE.z}`).push(stack('gold_block', 4));
+      await until(() => villager.trades[0].nbTradeUses === 9, 'block refill unpacked and sold');
+      trader.stop({ flush: false });
+      assert.equal(bot.goldCrafts, 4);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
+  await test('gold blocks: stopping during unpacking returns both blocks and ingots', async () => {
+    const villager = { trades: [rawTrade('gold_ingot', 4, 'emerald', 1)] };
+    const { bot, trader } = await ready({ source: [stack('gold_block', 64)], villagers: [villager] });
+    const craft = bot.craft;
+    bot.craft = async (...args) => {
+      await craft(...args);
+      if (bot.goldCrafts > 0) trader.stop();
+    };
+    try {
+      trader.start();
+      await until(() => bot.sourceItems().some(item => item.name === 'gold_ingot'), 'gold returned after stopping');
+      await until(() => !trader.getStatus().running && trader.getStatus().phase === 'idle', 'gold flush finished');
+      const totalIngots = bot.sourceItems().reduce((sum, item) => sum + (item.name === 'gold_block' ? item.count * 9 : item.name === 'gold_ingot' ? item.count : 0), 0);
+      assert.equal(totalIngots, 576, 'all gold is preserved');
+      assert.equal(villager.trades[0].nbTradeUses, 0, 'no trade after stopping');
+      assert.equal(bot.count('gold_block') + bot.count('gold_ingot'), 0);
+      assert.deepEqual(bot.dropped, []);
+    } finally {
+      trader.dispose();
+    }
+  });
+
   await test('offers come from the real packet format, with the price the villager asks', () => {
     const offers = parseOffers(Item, {
       trades: [
@@ -1451,6 +1584,39 @@ async function main() {
     await until(() => bot.currentWindow !== null, 'opening something again', 30_000);
     assert.ok([64, UPPER].includes(bot.entity.position.y), 'things are opened from a floor');
     trader.dispose();
+  });
+
+  await test('two nearby floors: villagers are scanned only from their own feet level', async () => {
+    const villagers = [149, 152, 150].map(y => ({
+      at: [1.5, y, 1.5], trades: [rawTrade('paper', 1, 'emerald', 1)]
+    }));
+    const bot = twoFloorBot({ villagers });
+    bot.entity.position.set(0.5, 152, 0.5);
+    for (let y = 149; y < 152; y += 1) bot.setBlock({ x: 0, y, z: 0 }, 'scaffolding');
+    const opened = [];
+    const logs = [];
+    const activate = bot.activateEntity;
+    bot.activateEntity = async entity => {
+      opened.push({ villagerY: entity.position.y, botY: bot.entity.position.y });
+      return activate(entity);
+    };
+    const trader = createTrader({ climbTickMs: 0, log: message => logs.push(message) });
+    try {
+      trader.attachBot(bot);
+      // Floor 1 is downstairs, but scanning starts upstairs where the bot is.
+      trader.configure({ mode: 'floors', floors: [149, 152] });
+      const status = await trader.scan();
+      assert.deepEqual(opened, [
+        { villagerY: 152, botY: 152 },
+        { villagerY: 149, botY: 149 }
+      ], 'a reachable villager on another level is left for its own floor');
+      assert.deepEqual(status.villagers.map(villager => villager.floor).sort((a, b) => a - b), [149, 152]);
+      assert.ok(!status.villagers.some(villager => villager.id === villagers[2].entity.uuid), 'off-floor villagers are excluded');
+      assert.ok(!logs.some(message => message.includes(`villager ${villagers[0].entity.uuid} `) && message.includes('from Y 152')),
+        'scan logs also exclude villagers on the other floor');
+    } finally {
+      trader.dispose();
+    }
   });
 
   await test('two floors: a chest hidden from one floor is scanned from the other', async () => {

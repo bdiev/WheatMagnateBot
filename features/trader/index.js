@@ -61,6 +61,9 @@ const VILLAGER = 'villager';
 const EMERALD = 'emerald';
 const EMERALD_BLOCK = 'emerald_block';
 const EMERALDS_PER_BLOCK = 9;
+const GOLD_BLOCK = 'gold_block';
+const GOLD_INGOT = 'gold_ingot';
+const INGOTS_PER_GOLD_BLOCK = 9;
 const CRAFT_RESULT_SLOT = 0;
 const CRAFT_GRID_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const DOUBLE_CHEST_SLOTS = 54;
@@ -500,7 +503,9 @@ function createTrader({
 
   function entityFloor(current, entity) {
     if (!floorsActive()) return null;
-    return nearestViewpoint(current, eye => distanceToEntity(current, entity, eye)).floor;
+    // A villager belongs to the floor under its feet, even when its hitbox
+    // can be reached from the other floor.
+    return desired.floors.find(floor => Math.abs(entity.position.y - floor) < ON_FLOOR) ?? null;
   }
 
   // The floor the bot is on comes first; the order is kept otherwise
@@ -869,6 +874,7 @@ function createTrader({
     const { current } = context;
     for (const entity of Object.values(current.entities || {})) {
       if (entity?.name !== VILLAGER || !entity.position || merchants.has(villagerId(entity))) continue;
+      if (floor !== null && entityFloor(current, entity) !== floor) continue;
       const distance = distanceToEntity(current, entity);
       if (distance > VILLAGER_REACH + 10) continue;
       log(`[Trader] Scan: villager ${villagerId(entity)} at ${distance.toFixed(1)} blocks${distance > VILLAGER_REACH ? ', out of reach' : ''}${floor === null ? '' : ` from Y ${floor}`}.`);
@@ -1021,8 +1027,12 @@ function createTrader({
     const floor = currentFloor(current);
     return Object.values(current.entities || {})
       .filter(entity => entity?.name === VILLAGER && entity.position)
-      .map(entity => ({ entity, ...nearestViewpoint(current, eye => distanceToEntity(current, entity, eye), options) }))
-      .filter(entry => entry.distance <= VILLAGER_REACH)
+      .map(entity => {
+        const views = viewpoints(current, options);
+        const view = floorsActive() ? views.find(view => view.floor !== null && view.floor === entityFloor(current, entity)) : views[0];
+        return view ? { entity, floor: view.floor, distance: distanceToEntity(current, entity, view.eye) } : null;
+      })
+      .filter(entry => entry && entry.distance <= VILLAGER_REACH)
       .sort((a, b) => (a.floor === floor ? 0 : 1) - (b.floor === floor ? 0 : 1) || a.distance - b.distance)
       .map(entry => entry.entity);
   }
@@ -1206,6 +1216,7 @@ function createTrader({
     for (const item of bot?.inventory.items() || []) {
       if (item.name !== EMERALD && isPlainItem(item)) stock.set(item.name, (stock.get(item.name) || 0) + item.count);
     }
+    includeGoldIngots(stock);
     const candidates = [];
     for (const entity of villagers) {
       if (Date.now() < (villagerRetryAt.get(villagerId(entity)) || 0)) continue;
@@ -1265,9 +1276,15 @@ function createTrader({
     }
   }
 
+  // Gold supplied as blocks can pay for ingot trades after unpacking.
+  function includeGoldIngots(stock) {
+    stock.set(GOLD_INGOT, (stock.get(GOLD_INGOT) || 0) + (stock.get(GOLD_BLOCK) || 0) * INGOTS_PER_GOLD_BLOCK);
+    return stock;
+  }
+
   // Whether any enabled trade could be paid for from what the sources held
   function stockCoversAnOffer() {
-    const stock = totalStock();
+    const stock = includeGoldIngots(totalStock());
     return affordableOffers().some(offer => offer.plain !== false && offer.price1 > 0
       && (stock.get(offer.input1) || 0) >= offer.price1
       && (!offer.input2 || (stock.get(offer.input2) || 0) >= offer.price2));
@@ -1323,7 +1340,7 @@ function createTrader({
         if (!watching()) return false;
         const offers = await surveyVillager(context, entity);
         if (!context.active()) return false;
-        const stock = totalStock();
+        const stock = includeGoldIngots(totalStock());
         const ready = (offers || []).find(offer => isEnabled(offer.key, offer.outputItem.name)
           && priceAccepted(entity, offer) && usesFromStock(offer, stock) > 0);
         if (ready) {
@@ -1375,8 +1392,10 @@ function createTrader({
   }
 
   function inputNames() {
-    return new Set(enabledOffers().flatMap(offer => [offer.input1, offer.input2])
+    const names = new Set(enabledOffers().flatMap(offer => [offer.input1, offer.input2])
       .filter(name => name && name !== EMERALD && !productNames().has(name)));
+    if (names.has(GOLD_INGOT) && !productNames().has(GOLD_BLOCK)) names.add(GOLD_BLOCK);
+    return names;
   }
 
   // Leftovers back to the sources, unless the next trip uses them, emeralds into
@@ -1385,6 +1404,7 @@ function createTrader({
   async function tidyInventory(context, plan = []) {
     const { current } = context;
     const nextTrip = new Set(plan.flatMap(({ offer }) => [...offerCosts(offer, 1).keys()]));
+    if (nextTrip.has(GOLD_INGOT)) nextTrip.add(GOLD_BLOCK);
     const inputs = [...inputNames()].filter(name => carried(current, name) > 0 && !nextTrip.has(name));
     if (inputs.length) await returnToSources(context, new Map(inputs.map(name => [name, carried(current, name)])));
     await craftEmeralds(context);
@@ -1576,6 +1596,62 @@ function createTrader({
     return current.inventory.items().some(item => item.name === EMERALD_BLOCK && item.count < (item.stackSize || 64));
   }
 
+  // Unpack at most one stack per trip. The 2x2 inventory recipe needs no table;
+  // leave room for all nine stacks of ingots as well as the trading results.
+  async function prepareGoldIngots(context, needed) {
+    const { current } = context;
+    if (carried(current, GOLD_INGOT) + (totalStock().get(GOLD_INGOT) || 0) >= needed) return;
+    if (!carried(current, GOLD_BLOCK) && !(totalStock().get(GOLD_BLOCK) > 0)) return;
+    const stackSize = current.registry.itemsByName[GOLD_BLOCK].stackSize;
+    const ingotStackSize = current.registry.itemsByName[GOLD_INGOT].stackSize;
+    const ingotSlots = Math.ceil(stackSize * INGOTS_PER_GOLD_BLOCK / ingotStackSize);
+    if (!carried(current, GOLD_BLOCK)) {
+      if (current.inventory.emptySlotCount() <= RESERVED_FREE_SLOTS + ingotSlots) {
+        throw supplyError('Not enough free inventory slots to unpack a stack of gold blocks and keep room for trade results.');
+      }
+      // A positive need takes one whole source stack, then stops.
+      await takeFromSources(context, new Map([[GOLD_BLOCK, 1]]), { reservedSlots: RESERVED_FREE_SLOTS + ingotSlots });
+    }
+    if (!context.active()) return;
+    let remaining = Math.min(stackSize, carried(current, GOLD_BLOCK));
+    const capacity = Math.max(0, current.inventory.emptySlotCount() - RESERVED_FREE_SLOTS) * ingotStackSize
+      + current.inventory.items().filter(item => item.name === GOLD_INGOT && isPlainItem(item))
+        .reduce((sum, item) => sum + ingotStackSize - item.count, 0);
+    if (capacity < remaining * INGOTS_PER_GOLD_BLOCK) {
+      throw supplyError('Not enough free inventory slots for the gold ingots and trade results.');
+    }
+    while (remaining > 0 && context.active()) {
+      const blockId = current.registry.itemsByName[GOLD_BLOCK].id;
+      const recipe = current.recipesFor(current.registry.itemsByName[GOLD_INGOT].id, null, 1, null)
+        ?.find(recipe => !recipe.requiresTable && recipe.result.count === INGOTS_PER_GOLD_BLOCK
+          && recipe.delta.filter(item => item.count < 0).length === 1
+          && recipe.delta.some(item => item.id === blockId && item.count === -1));
+      if (!recipe) throw supplyError('No recipe to unpack gold blocks into ingots.');
+      const count = Math.min(remaining, MAX_CRAFTS_PER_BATCH);
+      const blocksBefore = carried(current, GOLD_BLOCK);
+      const ingotsBefore = carried(current, GOLD_INGOT);
+      phase = 'crafting';
+      closeOpenWindow(current);
+      try {
+        await withTimeout(current.craft(recipe, count, null),
+          CRAFT_TIMEOUT_BASE_MS + count * CRAFT_TIMEOUT_PER_CRAFT_MS,
+          'Unpacking gold blocks took too long.');
+      } finally {
+        closeOpenWindow(current);
+      }
+      await sleep(settleMs);
+      if (!context.active()) return;
+      const used = blocksBefore - carried(current, GOLD_BLOCK);
+      const made = carried(current, GOLD_INGOT) - ingotsBefore;
+      if (used !== count || made !== count * INGOTS_PER_GOLD_BLOCK) {
+        throw supplyError('The server did not unpack the gold blocks into ingots.');
+      }
+      remaining -= used;
+      log(`[Trader] Unpacked ${used} gold blocks into ${made} gold ingots.`);
+      notifyChange();
+    }
+  }
+
   // One visit to the sources for everything in the plan, then the villagers one
   // after another. What did not fit in this trip is for the next round
   async function makeTrip(context, plan) {
@@ -1591,6 +1667,11 @@ function createTrader({
     pendingTrip = before;
     const usable = name => carried(current, name) - before.get(name);
     const carriedAtStart = [...needed.keys()].reduce((sum, name) => sum + usable(name), 0);
+    if (needed.has(GOLD_INGOT)) {
+      before.set(GOLD_BLOCK, 0);
+      await prepareGoldIngots(context, needed.get(GOLD_INGOT));
+      if (!context.active()) return false;
+    }
     const missing = new Map([...needed].map(([name, count]) => [name, count - usable(name)]).filter(([, count]) => count > 0));
     if (missing.size) await takeFromSources(context, missing);
     if (!context.active()) return false;
@@ -1858,7 +1939,7 @@ function createTrader({
   // next fullest, until enough is taken, the trip is full, or only the reserved
   // slots are free. With more than one source they are looked into first, as
   // hoppers may have filled them since
-  async function takeFromSources(context, needed) {
+  async function takeFromSources(context, needed, { reservedSlots = RESERVED_FREE_SLOTS } = {}) {
     const { current } = context;
     const left = new Map(needed);
     let stacks = 0;
@@ -1878,7 +1959,7 @@ function createTrader({
       try {
         for (const stack of window.slots.slice(0, window.inventoryStart)) {
           if (!stack || !isPlainItem(stack) || !(left.get(stack.name) > 0)) continue;
-          if (stacks >= MAX_STACKS_PER_TRIP || freeSlots(window) <= RESERVED_FREE_SLOTS) break;
+          if (stacks >= MAX_STACKS_PER_TRIP || freeSlots(window) <= reservedSlots) break;
           const count = stack.count;
           if (await shiftClick(context, window, stack.slot)) {
             left.set(stack.name, left.get(stack.name) - count);
