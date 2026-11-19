@@ -14,6 +14,7 @@
 
 const crypto = require('node:crypto');
 const sharp = require('sharp');
+const { encodeRegionTile, sameTilePixels } = require('./map-tile-compression');
 
 const REGION_PX = 512;
 // The map covers at most 250,000 blocks from 0, 0 each way; the dashboard shows ±30k up to all of it
@@ -187,8 +188,7 @@ async function regionTileFromPng(png) {
   const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
   const mask = chunkMaskFromPixels(data, info.channels);
   if (mask.every(byte => byte === 0)) return null;
-  const tile = await sharp(data, { raw: { width: REGION_PX, height: REGION_PX, channels: info.channels } })
-    .webp({ lossless: true, effort: 4 }).toBuffer();
+  const tile = await encodeRegionTile(data, info);
   return { tile, mask };
 }
 
@@ -277,7 +277,18 @@ function createXaeroRegionMapService({
     const tile = drawn?.tile;
     // Saved again by Xaero with nothing new drawn: only its date moves on (the tile's data isn't
     // rewritten), and nothing above it needs rebuilding
-    if (tile && existing && existing.hash === tileHash(tile)) {
+    let unchanged = Boolean(tile && existing && existing.hash === tileHash(tile));
+    if (tile && existing && !unchanged) {
+      // Maintenance can change the WebP encoding without changing the drawing.
+      // Keep that compact representation and avoid rebuilding the pyramid.
+      const saved = (await pool.query(
+        `SELECT data FROM area_explorer_region_tiles
+         WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4`,
+        [scope.server, scope.dimension, x, z]
+      )).rows[0];
+      unchanged = Boolean(saved && await sameTilePixels(Buffer.from(saved.data), tile));
+    }
+    if (unchanged) {
       await pool.query(
         `UPDATE area_explorer_region_tiles SET source_modified_at = to_timestamp($5 / 1000.0)
          WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4`,

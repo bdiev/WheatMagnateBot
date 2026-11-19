@@ -149,6 +149,13 @@ async function testService() {
     await service.processDirty({ settleMs: 0 });
     assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM area_explorer_region_dirty')).rows[0].count, 0);
     assert.deepEqual((await db.query('SELECT level, updated_at FROM area_explorer_region_tiles ORDER BY level')).rows, before, 'no tile rewritten');
+    // A maintenance pass can change encoded bytes while keeping every pixel.
+    await db.query('UPDATE area_explorer_region_tiles SET data = $1 WHERE level = 0', [png]);
+    res = recordingResponse();
+    await service.handleModRequest(request('PUT', png, auth), res, modUrl(-3, 2, DRAWN + 750));
+    assert.deepEqual(JSON.parse(res.body), { stored: false, reason: 'unchanged' });
+    assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM area_explorer_region_dirty')).rows[0].count, 0);
+    assert.deepEqual(Buffer.from((await db.query('SELECT data FROM area_explorer_region_tiles WHERE level = 0')).rows[0].data), png, 'keep pixel-identical stored encoding');
     await db.query(`UPDATE area_explorer_region_tiles SET source_modified_at = to_timestamp(${DRAWN} / 1000.0) WHERE level = 0`);
     // Zoomed-out levels wait longer than the first: 5 s dirty is enough for level 1, not for level 5
     await db.query(`INSERT INTO area_explorer_region_dirty (server, dimension, level, x, z, dirty_at) VALUES

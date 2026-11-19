@@ -10,6 +10,7 @@ import dev.onfocus.addon.modules.AutoEat;
 import dev.onfocus.addon.modules.AutoMend;
 import dev.onfocus.addon.modules.AutoSignDate;
 import dev.onfocus.addon.modules.AutoStripper;
+import dev.onfocus.addon.modules.AutoTotem;
 import dev.onfocus.addon.modules.CustomBlockEsp;
 import dev.onfocus.addon.modules.DeathMessageBlocker;
 import dev.onfocus.addon.modules.ElytraControl;
@@ -23,6 +24,7 @@ import dev.onfocus.addon.modules.MapArtSorter;
 import dev.onfocus.addon.modules.MapPainter;
 import dev.onfocus.addon.modules.MapPreview;
 import dev.onfocus.addon.modules.RandomPath;
+import dev.onfocus.addon.modules.SetShulker;
 import dev.onfocus.addon.modules.StayFocused;
 import dev.onfocus.addon.modules.TrailExplorer;
 import dev.onfocus.addon.modules.WhisperNotifier;
@@ -64,6 +66,11 @@ public class OnFocusAddon extends MeteorAddon {
         Modules.get().add(new EzBundles());
         Modules.get().add(new MapPainter());
         Modules.get().add(new HudHider());
+        Modules.get().add(new AutoTotem());
+        // Always on: its toggle only turns it on, so a saved "off" can't turn it off either
+        SetShulker setShulker = new SetShulker();
+        Modules.get().add(setShulker);
+        setShulker.toggle();
 
         Commands.add(new RegroupMarkersCommand());
         Commands.add(new LootMarkersCommand());
