@@ -20,8 +20,6 @@ const { optimizeMapTiles, replaceTile } = require('../optimize-map-tiles');
   const encoded = await encodeRegionTile(pixels, info);
   const raw = await sharp(encoded).ensureAlpha().raw().toBuffer();
   assert.deepEqual(raw, pixels, 'even hidden RGB in transparent pixels survives');
-  const baseline = await sharp(pixels, { raw: info }).webp({ lossless: true, effort: 4, exact: true }).toBuffer();
-  assert.ok(encoded.length <= baseline.length, 'new writes never exceed the baseline encoder');
   const smaller = await compressStoredTile(png);
   assert.ok(smaller.length < png.length);
   assert.equal(await sameTilePixels(png, smaller), true);

@@ -14,7 +14,7 @@
 
 const crypto = require('node:crypto');
 const sharp = require('sharp');
-const { encodeRegionTile, sameTilePixels } = require('./map-tile-compression');
+const { encodeRegionTile, tileMatchesPixels } = require('./map-tile-compression');
 
 const REGION_PX = 512;
 // The map covers at most 250,000 blocks from 0, 0 each way; the dashboard shows ±30k up to all of it
@@ -114,7 +114,6 @@ function readBody(req, maxBytes) {
   });
 }
 
-/** A region's PNG as a level-0 tile: lossless WebP, null when it has no drawn pixel at all. */
 /** The chunks with anything drawn in them, from a region's pixels (alpha last): see CHUNK_MASK_BYTES. */
 function chunkMaskFromPixels(pixels, channels = 4) {
   const mask = Buffer.alloc(CHUNK_MASK_BYTES);
@@ -173,7 +172,8 @@ function countExploredChunks(regions, radii = TERRITORY_RADII) {
   return explored;
 }
 
-async function regionTileFromPng(png) {
+/** The region's RGBA pixels and chunk mask, or null when nothing is drawn. */
+async function regionPixelsFromPng(png) {
   if (png.length < PNG_SIGNATURE.length || !png.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
     throw httpError(400, 'The region must be a PNG.');
   }
@@ -188,8 +188,13 @@ async function regionTileFromPng(png) {
   const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
   const mask = chunkMaskFromPixels(data, info.channels);
   if (mask.every(byte => byte === 0)) return null;
-  const tile = await encodeRegionTile(data, info);
-  return { tile, mask };
+  return { pixels: data, info, mask };
+}
+
+/** A region's PNG as a level-0 tile: lossless WebP, null when it has no drawn pixel at all. */
+async function regionTileFromPng(png) {
+  const drawn = await regionPixelsFromPng(png);
+  return drawn && { tile: await encodeRegionTile(drawn.pixels, drawn.info), mask: drawn.mask };
 }
 
 /**
@@ -268,25 +273,23 @@ function createXaeroRegionMapService({
   /** Stores one region from the mod, unless the site has it from the same or a later drawing. */
   async function putRegion(scope, x, z, modifiedMs, png) {
     const existing = (await pool.query(
-      `SELECT (EXTRACT(EPOCH FROM source_modified_at) * 1000)::bigint AS modified, md5(data) AS hash FROM area_explorer_region_tiles
+      `SELECT (EXTRACT(EPOCH FROM source_modified_at) * 1000)::bigint AS modified FROM area_explorer_region_tiles
        WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4`,
       [scope.server, scope.dimension, x, z]
     )).rows[0];
     if (existing && Number(existing.modified) >= modifiedMs) return { stored: false, reason: 'up to date' };
-    const drawn = await regionTileFromPng(png);
-    const tile = drawn?.tile;
+    const drawn = await regionPixelsFromPng(png);
     // Saved again by Xaero with nothing new drawn: only its date moves on (the tile's data isn't
-    // rewritten), and nothing above it needs rebuilding
-    let unchanged = Boolean(tile && existing && existing.hash === tileHash(tile));
-    if (tile && existing && !unchanged) {
-      // Maintenance can change the WebP encoding without changing the drawing.
-      // Keep that compact representation and avoid rebuilding the pyramid.
+    // rewritten), and nothing above it needs rebuilding. Pixels are compared before encoding, so
+    // an unchanged region costs one decode instead of an encode; any stored encoding is kept.
+    let unchanged = false;
+    if (drawn && existing) {
       const saved = (await pool.query(
         `SELECT data FROM area_explorer_region_tiles
          WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4`,
         [scope.server, scope.dimension, x, z]
       )).rows[0];
-      unchanged = Boolean(saved && await sameTilePixels(Buffer.from(saved.data), tile));
+      unchanged = Boolean(saved && await tileMatchesPixels(Buffer.from(saved.data), drawn.pixels, drawn.info));
     }
     if (unchanged) {
       await pool.query(
@@ -296,6 +299,7 @@ function createXaeroRegionMapService({
       );
       return { stored: false, reason: 'unchanged' };
     }
+    const tile = drawn && await encodeRegionTile(drawn.pixels, drawn.info);
     exploredCache.delete(`${scope.server}\u0000${scope.dimension}`);
     if (!tile) {
       if (existing) await pool.query('DELETE FROM area_explorer_region_tiles WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4', [scope.server, scope.dimension, x, z]);

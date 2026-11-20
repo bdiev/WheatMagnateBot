@@ -6,26 +6,34 @@ const sharp = require('sharp');
 // Keep effort bounded: effort 6 / quality 100 is too expensive on the VPS.
 const LOSSLESS_OPTIONS = Object.freeze({ lossless: true, quality: 100, effort: 4, exact: true });
 
+const decodeTile = image => sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+/** True if an encoded tile decodes to exactly these RGBA pixels. */
+async function tileMatchesPixels(image, pixels, info) {
+  const decoded = await decodeTile(image);
+  return decoded.info.width === info.width && decoded.info.height === info.height
+    && decoded.info.channels === info.channels && decoded.data.equals(pixels);
+}
+
 async function sameTilePixels(left, right) {
-  const decode = image => sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const [a, b] = await Promise.all([decode(left), decode(right)]);
-  return a.info.width === b.info.width && a.info.height === b.info.height && a.data.equals(b.data);
+  const { data, info } = await decodeTile(left);
+  return tileMatchesPixels(right, data, info);
 }
 
 /** Return the original buffer unless the replacement is smaller and pixel-identical. */
 async function compressStoredTile(original) {
-  const candidate = await sharp(original).webp(LOSSLESS_OPTIONS).toBuffer();
+  // Decode once: the same pixels feed the encoder and the verification.
+  const { data, info } = await decodeTile(original);
+  const candidate = await encodeRegionTile(data, info);
   if (candidate.length >= original.length) return original;
-  if (!await sameTilePixels(original, candidate)) throw new Error('Tile compression changed decoded pixels');
+  if (!await tileMatchesPixels(candidate, data, info)) throw new Error('Tile compression changed decoded pixels');
   return candidate;
 }
 
-/** Retain the existing encoder as a size ceiling for new regions. */
-async function encodeRegionTile(pixels, info) {
-  const input = () => sharp(pixels, { raw: { width: info.width, height: info.height, channels: info.channels } });
-  const baseline = await input().webp({ lossless: true, effort: 4, exact: true }).toBuffer();
-  const compressed = await input().webp(LOSSLESS_OPTIONS).toBuffer();
-  return compressed.length < baseline.length ? compressed : baseline;
+/** One bounded-effort lossless encode; exact keeps RGB under transparent pixels. */
+function encodeRegionTile(pixels, info) {
+  return sharp(pixels, { raw: { width: info.width, height: info.height, channels: info.channels } })
+    .webp(LOSSLESS_OPTIONS).toBuffer();
 }
 
-module.exports = { compressStoredTile, encodeRegionTile, sameTilePixels };
+module.exports = { compressStoredTile, encodeRegionTile, sameTilePixels, tileMatchesPixels };

@@ -1,10 +1,14 @@
 # Map tile storage maintenance
 
-Level-0 map tiles are lossless WebP. New uploads try bounded-effort lossless
-compression (`quality: 100`, `effort: 4`) and keep the smaller of that and the
-baseline encoder. In lossless mode, `quality` controls compression search.
-Higher zoom levels retain their existing encoding and visual quality.
-Pixel-identical uploads preserve the stored encoding and do not dirty the pyramid.
+Level-0 map tiles are lossless WebP, encoded once with bounded-effort lossless
+compression (`quality: 100`, `effort: 4`, `exact`). In lossless mode, `quality`
+controls compression search. Higher zoom levels retain their existing encoding
+and visual quality. An upload is first compared pixel-for-pixel with the stored
+tile; identical uploads are never encoded, preserve the stored encoding and do
+not dirty the pyramid.
+
+The optimizer decodes each stored tile once, encodes those pixels and verifies
+the candidate against them. It runs libvips single-threaded without its cache.
 
 Existing level-0 tiles can be optimized online. First inspect a sample (dry run):
 

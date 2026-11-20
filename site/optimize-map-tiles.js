@@ -91,6 +91,11 @@ async function main() {
   if (!(limit === Infinity || Number.isSafeInteger(limit) && limit > 0) || !Number.isSafeInteger(delayMs) || delayMs < 0) throw new Error('Invalid limit or delay');
   if (apply && !stateFile) throw new Error('--apply requires --state for resumable progress');
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+  // One tile at a time under a CPU quota: extra libvips threads only add contention
+  // and the cache only holds pixels that are never reused.
+  const sharp = require('sharp');
+  sharp.concurrency(1);
+  sharp.cache(false);
   let stopped = false;
   process.on('SIGTERM', () => { stopped = true; });
   process.on('SIGINT', () => { stopped = true; });
