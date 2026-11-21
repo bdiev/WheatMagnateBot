@@ -1599,8 +1599,7 @@ function createTrader({
       if (!hasRoomForBlock(current)) throw supplyError('No free inventory slot for the emerald blocks.');
       const table = desired.craftingTable && current.blockAt(new Vec3(desired.craftingTable.x, desired.craftingTable.y, desired.craftingTable.z));
       if (table?.name !== TABLE_BLOCK) throw supplyError('The crafting table is not there.');
-      const blockId = current.registry.itemsByName[EMERALD_BLOCK].id;
-      const recipe = current.recipesFor(blockId, null, 1, table)?.[0];
+      const recipe = emeraldBlockRecipe(current, table);
       if (!recipe) throw new Error('No recipe for emerald blocks.');
       const crafts = Math.min(Math.floor(earned() / EMERALDS_PER_BLOCK), MAX_CRAFTS_PER_BATCH);
       await goToFloor(context, blockFloor(current, desired.craftingTable));
@@ -1640,6 +1639,20 @@ function createTrader({
       log(`[Trader] Crafted ${made} emerald ${made === 1 ? 'block' : 'blocks'} in ${((Date.now() - startedAt) / 1000).toFixed(1)} s.`);
       notifyChange();
     }
+  }
+
+  // prismarine-recipe keeps one recipe table for the whole process, and every
+  // bot created later swaps in its own registry. A bot on another Minecraft
+  // version then leaves recipes with foreign item ids, so the lookup comes up
+  // empty: the table is reloaded from this bot's registry and searched again
+  function emeraldBlockRecipe(current, table) {
+    const blockId = current.registry.itemsByName[EMERALD_BLOCK].id;
+    const found = current.recipesFor(blockId, null, 1, table)?.[0];
+    if (found) return found;
+    const emeraldId = current.registry.itemsByName[EMERALD].id;
+    const { Recipe } = require('prismarine-recipe')(current.registry);
+    return Recipe.find(blockId, null).find(recipe => (!recipe.requiresTable || table)
+      && recipe.delta.some(item => item.id === emeraldId && item.count === -EMERALDS_PER_BLOCK)) || null;
   }
 
   function hasRoomForBlock(current) {
