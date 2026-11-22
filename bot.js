@@ -9187,14 +9187,14 @@ async function getDailyTpsAverages(days = 7) {
     return dailyTpsAveragesCache.rows;
   }
   try {
-    // Range bounds on sampled_at keep the join on the sampled_at index.
+    // Integer offsets let PostgreSQL estimate the number of days from $1,
+    // avoiding an inflated join cost and unnecessary JIT compilation.
     const result = await pool.query(`
-      WITH dates AS (
-        SELECT generate_series(
-          (NOW() AT TIME ZONE 'Europe/Kyiv')::date - ($1::int - 1),
-          (NOW() AT TIME ZONE 'Europe/Kyiv')::date,
-          INTERVAL '1 day'
-        )::date AS sample_date
+      WITH bounds AS (
+        SELECT (NOW() AT TIME ZONE 'Europe/Kyiv')::date AS today
+      ), dates AS (
+        SELECT today - day_offset AS sample_date
+        FROM bounds CROSS JOIN generate_series(0, $1::int - 1) AS day_offset
       )
       SELECT TO_CHAR(dates.sample_date, 'DD.MM') AS label,
              ROUND(AVG(samples.tps)::numeric, 1) AS avg_tps

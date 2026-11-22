@@ -1565,7 +1565,7 @@ async function getChat(url) {
     };
   }
 
-  const [messagesResult, activityResult, hourlyResult, dailyResult, monthlyResult, topChattersResult, totalsResult] = await Promise.all([
+  const [messagesResult, activityResult, analytics] = await Promise.all([
     pool.query(messagesSql, messageParams),
     pool.query(`
       SELECT
@@ -1587,6 +1587,68 @@ async function getChat(url) {
       ORDER BY event_at DESC NULLS LAST
       LIMIT 40
     `),
+    getChatAnalytics()
+  ]);
+  const [hourlyResult, dailyResult, monthlyResult, topChattersResult, totalsResult] = analytics;
+
+  const messagePage = buildMessagePage(messagesResult);
+  const chatMessages = messagePage.messages;
+  const activityMessages = activityResult.rows
+    .filter(row => row.event_at)
+    .map(row => ({
+      id: `activity:${String(row.username).toLowerCase()}:${row.is_online ? 'join' : 'leave'}:${new Date(row.event_at).getTime()}`,
+      type: 'activity',
+      username: row.username,
+      playerUuid: row.player_uuid || null,
+      isBot: Array.isArray(row.admin_tags) && row.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot'),
+      isNewPlayer: Boolean(row.is_new_player),
+      event: row.is_online ? 'join' : 'leave',
+      message: row.is_online ? 'joined the game' : 'left the game',
+      createdAt: row.event_at
+    }));
+
+  return {
+    latestId: messagePage.rows[0]?.id == null ? '0' : String(messagePage.rows[0].id),
+    searchQuery: searchQuery || null,
+    hasMore: messagePage.hasMore,
+    nextBeforeId: messagePage.nextBeforeId,
+    messages: [...chatMessages, ...(aroundId || searchQuery ? [] : activityMessages)]
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+    hourly: hourlyResult.rows.map(row => ({
+      label: row.label,
+      bucket: row.bucket,
+      value: toInt(row.count)
+    })),
+    daily: dailyResult.rows.map(row => ({
+      bucket: row.bucket,
+      value: toInt(row.count)
+    })),
+    monthly: monthlyResult.rows.map(row => ({
+      bucket: row.bucket,
+      value: toInt(row.count)
+    })),
+    topChatters: topChattersResult.rows.map(row => ({
+      username: row.username,
+      count: toInt(row.count)
+    })),
+    totals: {
+      allTime: toInt(totalsResult.rows[0]?.total),
+      last24h: toInt(totalsResult.rows[0]?.last_24h),
+      activeChatters24h: toInt(totalsResult.rows[0]?.active_chatters_24h)
+    }
+  };
+}
+
+const CHAT_ANALYTICS_CACHE_MS = 30_000;
+let chatAnalyticsRequest = null;
+let chatAnalyticsExpiresAt = 0;
+
+function getChatAnalytics() {
+  if (chatAnalyticsRequest && Date.now() < chatAnalyticsExpiresAt) return chatAnalyticsRequest;
+  // Charts and leaderboards are shared across archive requests. Message pages
+  // and live updates are still read directly.
+  chatAnalyticsExpiresAt = Infinity;
+  chatAnalyticsRequest = Promise.all([
     pool.query(`
       WITH buckets AS (
         SELECT generate_series(
@@ -1594,15 +1656,19 @@ async function getChat(url) {
           date_trunc('hour', NOW()),
           INTERVAL '1 hour'
         ) AS bucket
+      ), hourly AS (
+        SELECT date_trunc('hour', created_at) AS bucket, SUM(message_count)::bigint AS count
+        FROM game_chat_messages
+        WHERE created_at >= date_trunc('hour', NOW() - INTERVAL '167 hours')
+          AND created_at < date_trunc('hour', NOW()) + INTERVAL '1 hour'
+          AND LOWER(username) NOT IN ('server', 'console')
+        GROUP BY 1
       )
       SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
              buckets.bucket AS bucket,
-             COALESCE(SUM(messages.message_count), 0)::bigint AS count
+             COALESCE(hourly.count, 0)::bigint AS count
       FROM buckets
-      LEFT JOIN game_chat_messages messages
-        ON date_trunc('hour', messages.created_at) = buckets.bucket
-       AND LOWER(messages.username) NOT IN ('server', 'console')
-      GROUP BY buckets.bucket
+      LEFT JOIN hourly ON hourly.bucket = buckets.bucket
       ORDER BY buckets.bucket
     `),
     pool.query(`
@@ -1665,54 +1731,15 @@ async function getChat(url) {
       FROM game_chat_messages
       WHERE LOWER(username) NOT IN ('server', 'console')
     `)
-  ]);
-
-  const messagePage = buildMessagePage(messagesResult);
-  const chatMessages = messagePage.messages;
-  const activityMessages = activityResult.rows
-    .filter(row => row.event_at)
-    .map(row => ({
-      id: `activity:${String(row.username).toLowerCase()}:${row.is_online ? 'join' : 'leave'}:${new Date(row.event_at).getTime()}`,
-      type: 'activity',
-      username: row.username,
-      playerUuid: row.player_uuid || null,
-      isBot: Array.isArray(row.admin_tags) && row.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot'),
-      isNewPlayer: Boolean(row.is_new_player),
-      event: row.is_online ? 'join' : 'leave',
-      message: row.is_online ? 'joined the game' : 'left the game',
-      createdAt: row.event_at
-    }));
-
-  return {
-    latestId: messagePage.rows[0]?.id == null ? '0' : String(messagePage.rows[0].id),
-    searchQuery: searchQuery || null,
-    hasMore: messagePage.hasMore,
-    nextBeforeId: messagePage.nextBeforeId,
-    messages: [...chatMessages, ...(aroundId || searchQuery ? [] : activityMessages)]
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
-    hourly: hourlyResult.rows.map(row => ({
-      label: row.label,
-      bucket: row.bucket,
-      value: toInt(row.count)
-    })),
-    daily: dailyResult.rows.map(row => ({
-      bucket: row.bucket,
-      value: toInt(row.count)
-    })),
-    monthly: monthlyResult.rows.map(row => ({
-      bucket: row.bucket,
-      value: toInt(row.count)
-    })),
-    topChatters: topChattersResult.rows.map(row => ({
-      username: row.username,
-      count: toInt(row.count)
-    })),
-    totals: {
-      allTime: toInt(totalsResult.rows[0]?.total),
-      last24h: toInt(totalsResult.rows[0]?.last_24h),
-      activeChatters24h: toInt(totalsResult.rows[0]?.active_chatters_24h)
-    }
-  };
+  ]).then(results => {
+    chatAnalyticsExpiresAt = Date.now() + CHAT_ANALYTICS_CACHE_MS;
+    return results;
+  }).catch(error => {
+    chatAnalyticsRequest = null;
+    chatAnalyticsExpiresAt = 0;
+    throw error;
+  });
+  return chatAnalyticsRequest;
 }
 
 async function queueBotCommand(currentUser, commandType, payload = {}, { source = 'site', accountId = null, idempotencyKey = null } = {}) {
