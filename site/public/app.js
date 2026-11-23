@@ -6990,29 +6990,7 @@ function renderAreaExplorerHighlights(scope) {
     </button>`;
   };
   const sections = [];
-  // The scope at a glance: what's mapped, and each kind found; a tile lists its kind
-  const tiles = [];
-  if (regions) {
-    const km2 = regions * XAERO_REGION_PX * XAERO_REGION_PX / 1e6;
-    tiles.push(`<div class="area-explorer-tile is-wide">
-      <span class="area-explorer-tile-slot" aria-hidden="true"><img src="/items/Filled_Map.png" alt="" width="24" height="24"></span>
-      <span class="area-explorer-tile-text"><strong>≈${formatNumber(Math.round(km2))} km²</strong><span>${formatNumber(regions)} regions mapped</span></span>
-    </div>`);
-  }
-  for (const [kind, icon, label, count] of [
-    ['BASE', 'Crafting_Table', 'Bases', scope?.bases || 0],
-    ['ITEM', 'Chest', 'Loot', scope?.items || 0],
-    ['SIGN', 'Oak_Sign', 'Signs', scope?.signs || 0],
-    ['END_PORTAL', 'Ender_Eye', 'End Portals', areaExplorerEndPortalCount(scope)]
-  ]) {
-    if (!count) continue;
-    tiles.push(`<button class="area-explorer-tile is-button kind-${kind.toLowerCase()}" type="button" data-area-filter-kind="${kind}" title="List the ${label.toLowerCase()}">
-      <span class="area-explorer-tile-slot" aria-hidden="true"><img src="/items/${icon}.png" alt="" width="24" height="24"></span>
-      <span class="area-explorer-tile-text"><strong>${formatNumber(count)}</strong><span>${label}</span></span>
-      <span class="area-explorer-tile-arrow" aria-hidden="true">›</span>
-    </button>`);
-  }
-  if (tiles.length) sections.push(`<div class="area-explorer-tiles">${tiles.join('')}</div>`);
+  renderAreaExplorerStats(scope, regions);
   if (scope?.latest) {
     const latest = scope.latest;
     const icon = areaExplorerFindIcon(latest);
@@ -7040,6 +7018,28 @@ function renderAreaExplorerHighlights(scope) {
     </div></div>`);
   }
   container.innerHTML = sections.length ? sections.join('') : '<p class="area-explorer-empty">Nothing found here yet.</p>';
+}
+
+/** Over the map: how much is mapped and how many of each kind; a kind lists its finds when tapped. */
+function renderAreaExplorerStats(scope, regions) {
+  const container = $('#areaExplorerStats');
+  if (!container) return;
+  const stats = [];
+  if (regions) {
+    const km2 = regions * XAERO_REGION_PX * XAERO_REGION_PX / 1e6;
+    stats.push(`<span class="area-explorer-stat is-mapped" title="${formatNumber(regions)} regions mapped"><img src="/items/Filled_Map.png" alt="" width="18" height="18"><strong>≈${formatNumber(Math.round(km2))}</strong><span>km²</span></span>`);
+  }
+  for (const [kind, icon, label, count] of [
+    ['BASE', 'Crafting_Table', 'bases', scope?.bases || 0],
+    ['ITEM', 'Chest', 'loot', scope?.items || 0],
+    ['SIGN', 'Oak_Sign', 'signs', scope?.signs || 0],
+    ['END_PORTAL', 'Ender_Eye', 'portals', areaExplorerEndPortalCount(scope)]
+  ]) {
+    if (!count) continue;
+    stats.push(`<button class="area-explorer-stat kind-${kind.toLowerCase()}" type="button" data-area-filter-kind="${kind}" title="List the ${label}"><img src="/items/${icon}.png" alt="" width="18" height="18"><strong>${formatNumber(count)}</strong><span>${label}</span></button>`);
+  }
+  container.innerHTML = stats.join('');
+  container.hidden = !stats.length;
 }
 
 /** With Markers picked: which of them to show - Shulker Boxes, Spawners... - most found first. End Portals have their own tab. */
@@ -7076,6 +7076,11 @@ function renderAreaExplorerSectors(sectors) {
 
 function renderAreaExplorerStatus() {
   const ae = areaExplorerState();
+  // The tab left open last time, once it's known whether the Mod tab is there
+  if (!ae.infoTabRestored && state.currentUser) {
+    ae.infoTabRestored = true;
+    setAreaExplorerInfoTab(readAreaExplorerSetting('areaExplorerInfoTab', 'run'), { keep: false });
+  }
   const container = $('#areaExplorerStatus');
   const statuses = ae.summary?.statuses || [];
   const locate = $('#areaExplorerLocatePlayer');
@@ -7120,6 +7125,7 @@ function renderAreaExplorerStatus() {
 
 /** The run in a corner of the map: who, what it does, how far along and how long to go. */
 function renderAreaExplorerHud(live) {
+  $('#areaExplorerTabRun')?.classList.toggle('is-live', Boolean(live?.online));
   const hud = $('#areaExplorerHud');
   if (!hud) return;
   if (!live?.online) {
@@ -7149,7 +7155,7 @@ function renderAreaExplorerFirstSteps() {
   const admin = state.currentUser?.role === 'admin';
   const hasToken = (ae.activeTokens || 0) > 0;
   const steps = [
-    { done: hasToken, title: 'Create a mod token', text: admin ? 'Under Mod Tokens below: one per PC that runs the mod.' : 'An administrator creates it under Mod Tokens.', action: admin && !hasToken ? '<button class="ghost-button" type="button" data-area-jump-tokens>Create token</button>' : '' },
+    { done: hasToken, title: 'Create a mod token', text: admin ? 'On the Mod tab: one per PC that runs the mod.' : 'An administrator creates it on the Mod tab.', action: admin && !hasToken ? '<button class="ghost-button" type="button" data-area-jump-tokens>Create token</button>' : '' },
     { done: false, title: 'Paste it into the mod', text: "Open the mod's settings in game and paste the token into Site Sync." },
     { done: false, title: 'Start exploring', text: 'Join the server with the mod on: its run shows up here within a second.' }
   ];
@@ -9146,7 +9152,7 @@ function bindAreaExplorerExtras() {
   // A tap beside the open sheet, or Escape, slides it down
   document.addEventListener('pointerdown', event => {
     if (!$('#areaExplorerFindsPanel')?.classList.contains('is-sheet-open')) return;
-    if (!event.target.closest('#areaExplorerFindsPanel, .area-explorer-mobile-nav')) setAreaExplorerSheet(false);
+    if (!event.target.closest('#areaExplorerFindsPanel')) setAreaExplorerSheet(false);
   }, true);
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && $('#areaExplorerFindsPanel')?.classList.contains('is-sheet-open')) setAreaExplorerSheet(false);
@@ -9154,10 +9160,46 @@ function bindAreaExplorerExtras() {
   $('#areaExplorerHud')?.addEventListener('click', focusAreaExplorerPlayer);
   $('#areaExplorerStatus')?.addEventListener('click', event => {
     if (!event.target.closest('[data-area-jump-tokens]')) return;
-    const tokens = $('.area-explorer-tokens-panel');
-    tokens?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setAreaExplorerInfoTab('admin');
+    $('#areaExplorerInfo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setTimeout(() => $('#areaExplorerTokenName')?.focus({ preventScroll: true }), 400);
   });
+}
+
+// Beside the finds: the live run, highlights, run log and (administrators) the mod's tokens, one at a time
+const AREA_EXPLORER_INFO_TABS = Object.freeze(['run', 'highlights', 'log', 'admin']);
+
+function setAreaExplorerInfoTab(name, { keep = true } = {}) {
+  const admin = state.currentUser?.role === 'admin';
+  const tab = AREA_EXPLORER_INFO_TABS.includes(name) && (name !== 'admin' || admin) ? name : 'run';
+  $$('[data-area-info-tab]').forEach(button => {
+    const selected = button.dataset.areaInfoTab === tab;
+    button.setAttribute('aria-selected', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  $$('[data-area-info-pane]').forEach(pane => { pane.hidden = pane.dataset.areaInfoPane !== tab; });
+  if (keep) saveAreaExplorerSetting('areaExplorerInfoTab', tab);
+}
+
+function bindAreaExplorerInfoTabs() {
+  const tabs = $('.area-explorer-info-tabs');
+  if (!tabs) return;
+  tabs.addEventListener('click', event => {
+    const button = event.target.closest('[data-area-info-tab]');
+    if (button) setAreaExplorerInfoTab(button.dataset.areaInfoTab);
+  });
+  // Arrow keys move between the tabs
+  tabs.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    const buttons = [...tabs.querySelectorAll('[data-area-info-tab]')].filter(button => !button.hidden);
+    const index = buttons.indexOf(document.activeElement);
+    if (index < 0) return;
+    const next = buttons[(index + (event.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length];
+    setAreaExplorerInfoTab(next.dataset.areaInfoTab);
+    next.focus();
+    event.preventDefault();
+  });
+  setAreaExplorerInfoTab(readAreaExplorerSetting('areaExplorerInfoTab', 'run'), { keep: false });
 }
 
 // Phones show the finds in a sheet over the page: a handle at the foot, pulled up to read
@@ -9228,7 +9270,7 @@ function setupAreaExplorer() {
     });
   };
   // A highlight lists its finds: a kind of marker, or a loot item by name
-  $('#areaExplorerHighlights').addEventListener('click', event => {
+  const openHighlight = event => {
     if (event.target.closest('[data-area-valuable-toggle]')) {
       ae.valuableExpanded = !ae.valuableExpanded;
       renderAreaExplorerScopes();
@@ -9248,7 +9290,10 @@ function setupAreaExplorer() {
       if (isAreaExplorerSheet()) setAreaExplorerSheet(true);
       else $('.area-explorer-finds-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
-  });
+  };
+  $('#areaExplorerHighlights').addEventListener('click', openHighlight);
+  // The stats over the map list their kind the same way
+  $('#areaExplorerStats')?.addEventListener('click', openHighlight);
   $('#areaExplorerSort').value = ae.sort;
   $('#areaExplorerSort').addEventListener('change', event => {
     ae.sort = event.target.value;
@@ -15378,6 +15423,7 @@ document.addEventListener('click', handleLogSwitchClick);
 // The Area Explorer list and map point at each other's finds under the mouse
 bindAreaExplorerHoverSync();
 bindAreaExplorerExtras();
+bindAreaExplorerInfoTabs();
 document.addEventListener('change', handleTraderSetupChange);
 // A floor Y being typed is not overwritten by the next status update
 document.addEventListener('input', event => {

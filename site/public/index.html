@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=331">
+  <link rel="stylesheet" href="/styles.css?v=332">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -1399,20 +1399,13 @@
 
       <section id="tab-area-explorer" class="tab-panel" data-panel="area-explorer">
         <section class="area-explorer-layout">
-          <nav class="area-explorer-mobile-nav" aria-label="Area Explorer sections">
-            <button type="button" data-area-jump="areaExplorerMapPanel">Map</button>
-            <button type="button" data-area-jump="areaExplorerFindsPanel">Finds</button>
-            <button type="button" data-area-jump="areaExplorerStatusPanel">Live run</button>
-            <button type="button" data-area-jump="areaExplorerLogPanel">Run log</button>
-          </nav>
           <section id="areaExplorerMapPanel" class="panel area-explorer-map-panel">
             <div class="panel-head area-explorer-map-head">
               <div>
                 <h2>Explored Map</h2>
                 <p id="areaExplorerScopeSummary">Bases, markers, loot and signs from every run.</p>
               </div>
-            </div>
-            <div class="area-explorer-map-bar">
+              <div id="areaExplorerStats" class="area-explorer-stats" aria-label="This server at a glance"></div>
               <div class="chart-controls area-explorer-extent" role="group" aria-label="How far from 0, 0">
                 <button id="areaExplorerExtentIn" class="chart-range-button area-explorer-extent-step" type="button" aria-label="Show less of the map" title="Show less of the map">+</button>
                 <span id="areaExplorerExtentLabel" class="area-explorer-extent-label" aria-live="polite">±100k<span class="area-explorer-extent-tail"> blocks</span></span>
@@ -1473,37 +1466,23 @@
               <div id="areaExplorerMenu" class="area-explorer-menu" role="menu" aria-label="Map actions" hidden></div>
               <div id="areaExplorerMapNote" class="area-explorer-map-note" role="status" hidden></div>
             </div>
-            <div id="areaExplorerMapHint" class="area-explorer-map-hint"><p class="area-explorer-desktop-hint">Drag to move · Scroll to zoom · Tap a find</p><p class="area-explorer-mobile-hint">Drag with one finger. Pinch with two to zoom.</p><p>Hold the eye to choose marker types.</p></div>
+            <div id="areaExplorerMapHint" class="area-explorer-map-hint visually-hidden"><p class="area-explorer-desktop-hint">Drag to move · Scroll to zoom · Tap a find</p><p class="area-explorer-mobile-hint">Drag with one finger. Pinch with two to zoom.</p><p>Hold the eye to choose marker types.</p></div>
           </section>
 
-          <div class="area-explorer-side">
-            <section id="areaExplorerStatusPanel" class="panel area-explorer-status-panel">
-              <div class="panel-head">
-                <div>
-                  <h2>Live Run</h2>
-                  <p>Live position and heading, updated every second.</p>
-                </div>
-              </div>
+          <section id="areaExplorerInfo" class="panel area-explorer-info">
+            <div class="area-explorer-info-tabs" role="tablist" aria-label="Run details">
+              <button type="button" role="tab" id="areaExplorerTabRun" data-area-info-tab="run" aria-selected="true" aria-controls="areaExplorerStatusPanel"><span class="area-explorer-live-dot" aria-hidden="true"></span>Live run</button>
+              <button type="button" role="tab" id="areaExplorerTabHighlights" data-area-info-tab="highlights" aria-selected="false" aria-controls="areaExplorerHighlightsPane">Highlights</button>
+              <button type="button" role="tab" id="areaExplorerTabLog" data-area-info-tab="log" aria-selected="false" aria-controls="areaExplorerLogPanel">Run log</button>
+              <button type="button" role="tab" id="areaExplorerTabAdmin" class="admin-only" data-area-info-tab="admin" aria-selected="false" aria-controls="areaExplorerAdminPane" hidden>Mod</button>
+            </div>
+            <div id="areaExplorerStatusPanel" class="area-explorer-pane area-explorer-status-panel" role="tabpanel" aria-labelledby="areaExplorerTabRun" data-area-info-pane="run">
               <div id="areaExplorerStatus" class="area-explorer-status-list" aria-live="polite"></div>
-            </section>
-
-            <section class="panel area-explorer-highlights-panel">
-              <div class="panel-head">
-                <div>
-                  <h2>Highlights</h2>
-                  <p>What stands out here; tap one to list it.</p>
-                </div>
-              </div>
+            </div>
+            <div id="areaExplorerHighlightsPane" class="area-explorer-pane area-explorer-highlights-panel" role="tabpanel" aria-labelledby="areaExplorerTabHighlights" data-area-info-pane="highlights" hidden>
               <div id="areaExplorerHighlights" class="area-explorer-highlights"></div>
-            </section>
-
-            <section id="areaExplorerLogPanel" class="panel area-explorer-log-panel">
-              <div class="panel-head">
-                <div>
-                  <h2>Run Log</h2>
-                  <p>Starts, kicks and why, reconnects, warnings - newest first.</p>
-                </div>
-              </div>
+            </div>
+            <div id="areaExplorerLogPanel" class="area-explorer-pane area-explorer-log-panel" role="tabpanel" aria-labelledby="areaExplorerTabLog" data-area-info-pane="log" hidden>
               <div class="chart-controls area-explorer-log-filters" role="group" aria-label="Which events">
                 <button class="chart-range-button active" type="button" data-area-log-filter="" aria-pressed="true">All</button>
                 <button class="chart-range-button" type="button" data-area-log-filter="problems" aria-pressed="false">Problems</button>
@@ -1513,26 +1492,12 @@
               <div class="area-explorer-log-more">
                 <button id="areaExplorerLogMore" class="ghost-button" type="button" hidden>Show older</button>
               </div>
-            </section>
-
-            <section id="areaExplorerCommandsPanel" class="panel area-explorer-commands-panel admin-only" hidden>
-              <div class="panel-head">
-                <div>
-                  <h2>Site Commands</h2>
-                  <p>Areas and markers sent from the map, and how they went.</p>
-                </div>
-              </div>
-              <ol id="areaExplorerCommands" class="area-explorer-commands" aria-live="polite"></ol>
-            </section>
-
-            <section class="panel area-explorer-tokens-panel admin-only" hidden>
-              <div class="panel-head">
-                <div>
-                  <h2>Mod Tokens</h2>
-                  <p>One token per PC running the mod; revoke to cut it off.</p>
-                </div>
-              </div>
-              <form id="areaExplorerTokenForm" class="area-explorer-token-form">
+            </div>
+            <div id="areaExplorerAdminPane" class="area-explorer-pane area-explorer-admin-pane" role="tabpanel" aria-labelledby="areaExplorerTabAdmin" data-area-info-pane="admin" hidden>
+              <section class="area-explorer-tokens-panel admin-only" hidden>
+                <h3>Mod tokens</h3>
+                <p class="area-explorer-pane-note">One token per PC running the mod; revoke to cut it off.</p>
+                <form id="areaExplorerTokenForm" class="area-explorer-token-form">
                 <input id="areaExplorerTokenName" type="text" maxlength="64" placeholder="Token name, e.g. Gaming PC" aria-label="Token name" required>
                 <button type="submit">Create token</button>
               </form>
@@ -1542,8 +1507,14 @@
                 <button id="areaExplorerCopyToken" class="ghost-button" type="button">Copy</button>
               </div>
               <ul id="areaExplorerTokens" class="area-explorer-tokens"></ul>
-            </section>
-          </div>
+              </section>
+              <section id="areaExplorerCommandsPanel" class="area-explorer-commands-panel admin-only" hidden>
+                <h3>Site commands</h3>
+                <p class="area-explorer-pane-note">Areas and markers sent from the map, and how they went.</p>
+                <ol id="areaExplorerCommands" class="area-explorer-commands" aria-live="polite"></ol>
+              </section>
+            </div>
+          </section>
 
           <section id="areaExplorerFindsPanel" class="panel area-explorer-finds-panel">
             <button id="areaExplorerSheetHandle" class="area-explorer-sheet-handle" type="button" aria-expanded="false" aria-controls="areaExplorerFinds">
@@ -2036,6 +2007,6 @@
     <script src="/player-accent.js?v=1" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=391" defer></script>
+    <script src="/app.js?v=392" defer></script>
   </body>
 </html>
