@@ -12256,7 +12256,7 @@ function renderStoneMinerGenerator(payload) {
   const list = $('#stoneMinerLine');
   if (list) {
     list.innerHTML = blocks.length
-      ? blocks.map((block, index) => `<li title="${escapeHtml(`${block.x} ${block.y} ${block.z}`)}"><img src="/items/Stone.png" alt="" aria-hidden="true"><span>${index + 1}</span></li>`).join('')
+      ? blocks.map((block, index) => `<li style="--i:${index}" title="${escapeHtml(`${block.x} ${block.y} ${block.z}`)}"><img src="/items/Stone.png" alt="" aria-hidden="true"><span>${index + 1}</span></li>`).join('')
       : '<li class="miner-line-empty">Press Learn and break a block</li>';
   }
   const summary = $('#stoneMinerLineSummary');
@@ -12297,6 +12297,29 @@ function renderStoneMinerGenerator(payload) {
   hopperText.title = hopper?.at ? `checked ${formatDate(hopper.at)}` : 'Waiting for the bot to read the hopper contents.';
   const hopperPercent = hopper?.capacity ? (hopper.items / hopper.capacity) * 100 : 0;
   setMinerMeter('#stoneMinerHopperBar', hopperPercent, hopperPercent >= 100 ? 'low' : 'stack');
+
+  // A card lights up when it needs a look: amber soon, red now
+  const tone = (name, value) => {
+    const card = document.querySelector(`#tab-stone-miner [data-supply="${name}"]`);
+    if (card) card.dataset.tone = value || '';
+  };
+  tone('pickaxe', !carried ? '' : !pickaxe || (percent != null && percent <= 15) ? 'bad' : percent != null && percent <= 40 ? 'warn' : '');
+  tone('barrel', !barrel ? '' : !barrel.pickaxes ? 'bad' : barrel.pickaxes <= 1 ? 'warn' : '');
+  tone('food', !carried ? '' : !carried.food && barrel && !barrel.food ? 'bad' : !carried.food ? 'warn' : '');
+  tone('carried', stacks >= 2 ? 'warn' : '');
+  tone('hopper', !hopper ? '' : hopperPercent >= 100 ? 'bad' : hopperPercent >= 80 ? 'warn' : '');
+
+  // The bot's own head sits on its barrel
+  const head = $('#stoneMinerBotHead');
+  const account = state.accounts?.find(item => item.id === state.activeAccountId);
+  const username = account?.statusPayload?.username || account?.username;
+  if (head) {
+    const url = username ? accountHeadUrl(username) : '';
+    if (url && head.getAttribute('src') !== url) {
+      head.hidden = false;
+      head.src = url;
+    } else if (!url) head.hidden = true;
+  }
 }
 
 function renderStoneMiner(payload = {}) {
@@ -12308,7 +12331,10 @@ function renderStoneMiner(payload = {}) {
   const miner = payload.state || {};
   const minerState = miner.learning ? 'learning' : miner.running ? 'mining' : miner.enabled ? 'waiting' : 'stopped';
   const tab = $('#tab-stone-miner');
-  if (tab) tab.dataset.minerState = minerState;
+  if (tab) {
+    tab.dataset.minerState = minerState;
+    tab.dataset.minerProblem = String(Boolean(miner.enabled && (miner.lastErrorMessage || miner.hopperFull)));
+  }
   $('#stoneMinerState').textContent = miner.hopperFull && miner.enabled
     ? 'Hopper Full'
     : { learning: 'Learning', mining: 'Mining', waiting: 'Waiting', stopped: 'Stopped' }[minerState];
@@ -15292,6 +15318,10 @@ document.addEventListener('click', event => {
 
 });
 document.addEventListener('error', event => {
+  if (event.target?.id === 'stoneMinerBotHead') {
+    event.target.hidden = true;
+    return;
+  }
   const accountImage = event.target.closest?.('.account-avatar img');
   if (accountImage) {
     accountImage.closest('.account-avatar')?.classList.add('avatar-image-failed');
