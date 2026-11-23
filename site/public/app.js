@@ -12607,10 +12607,46 @@ function traderConfigurePayload() {
   return payload;
 }
 
+function renderLogSwitches(settings = {}) {
+  const container = $('#adminLogSwitches');
+  if (!container) return;
+  const muted = new Set((settings.mutedLogTags || []).map(tag => String(tag).toLowerCase()));
+  const tags = new Map();
+  for (const tag of [...(settings.logTags || []), ...(settings.mutedLogTags || [])]) {
+    const key = String(tag).toLowerCase();
+    if (!tags.has(key)) tags.set(key, String(tag));
+  }
+  const sorted = [...tags.values()].sort((a, b) => a.localeCompare(b));
+  const signature = JSON.stringify([sorted, [...muted].sort()]);
+  if (container.dataset.signature === signature) return;
+  container.dataset.signature = signature;
+  container.innerHTML = sorted.length
+    ? sorted.map(tag => {
+      const enabled = !muted.has(tag.toLowerCase());
+      return `<button type="button" class="${enabled ? '' : 'ghost-button'}" data-log-tag="${escapeHtml(tag)}" aria-pressed="${enabled}" title="${enabled ? 'Shown; click to hide' : 'Hidden; click to show'}">[${escapeHtml(tag)}]</button>`;
+    }).join('')
+    : '<p class="admin-log-switches-empty">No tagged log lines yet. They appear here as the bot writes them.</p>';
+}
+
+async function handleLogSwitchClick(event) {
+  const button = event.target.closest('[data-log-tag]');
+  if (!button || state.currentUser?.role !== 'admin') return;
+  const enabled = button.getAttribute('aria-pressed') !== 'true';
+  button.disabled = true;
+  try {
+    await queueAdminCommand('log_toggle', { tag: button.dataset.logTag, enabled });
+  } catch (err) {
+    setBanner(`Could not switch the log: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderAdminControlState(payload = {}) {
   state.adminControlState = payload;
   const settings = payload.settings || {};
   const bot = payload.bot || {};
+  renderLogSwitches(settings);
   setRollingNumber('#adminDatabasePlayers', payload.playerTotals?.allTime);
   setRollingNumber('#adminPearlLoads', payload.pearlLoads?.completed);
   const pearlLoadsDetail = $('#adminPearlLoadsDetail');
@@ -14587,6 +14623,7 @@ $('#adminPlaytimeCommands')?.addEventListener('click', event => {
   if (button) copyAdminPlaytimeCommand(button);
 });
 document.addEventListener('click', handleAdminBotCommand);
+document.addEventListener('click', handleLogSwitchClick);
 document.addEventListener('change', handleTraderSetupChange);
 // A floor Y being typed is not overwritten by the next status update
 document.addEventListener('input', event => {

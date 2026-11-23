@@ -64,6 +64,7 @@ const { chooseObserver } = require('./features/serverObserver');
 const { createFollowFeature } = require('./features/follow');
 const { createStoneMiner } = require('./features/stoneMiner');
 const { createTrader } = require('./features/trader');
+const { createLogSwitches } = require('./features/logSwitches');
 const { createKillAuraFeature } = require('./features/killAura');
 const { isValidKillAuraRange, normalizeKillAuraRange } = require('./features/killAura/range');
 const farm = require('./features/obsidianFarm');
@@ -1165,8 +1166,24 @@ const {
 } = createAdminSettingsRepository(pool);
 const {
   ensureSystemLogTable,
-  recordSystemLog
+  recordSystemLog: writeSystemLog
 } = createSystemLogRepository(pool);
+// Log lines are switched on and off by their leading tag from the admin page
+let logTagsSaveTimer = null;
+const logSwitches = createLogSwitches({
+  onTagsChanged: () => {
+    if (logTagsSaveTimer) return;
+    logTagsSaveTimer = setTimeout(() => {
+      logTagsSaveTimer = null;
+      saveAdminSetting('logTags', logSwitches.listTags()).catch(() => {});
+    }, 5000);
+    logTagsSaveTimer.unref?.();
+  }
+});
+function recordSystemLog(entry = {}) {
+  if (!logSwitches.allows(entry.message, entry.level || 'info')) return Promise.resolve(false);
+  return writeSystemLog(entry);
+}
 const webPushService = new WebPushService({ pool });
 const gameTimePushMonitor = new GameTimePushMonitor({
   getTargets: () => webPushService.listGameTimeTargets(),
@@ -1232,6 +1249,7 @@ function captureBotConsoleLog(level, args) {
 }
 
 console.log = (...args) => {
+  if (typeof args[0] === 'string' && !logSwitches.allows(args[0], 'info')) return;
   originalConsoleLog(...args);
   captureBotConsoleLog('info', args);
 };
@@ -1332,6 +1350,7 @@ const trader = createTrader({
   stateFile: path.join('data', 'bots', DEFAULT_ACCOUNT_ID, 'trader.json'),
   // Its only voice: the system log, never the game chat
   log: (message, level = 'info') => {
+    if (!logSwitches.allows(message, level)) return;
     originalConsoleLog(message);
     recordSystemLog({ level, category: 'trader', message, accountId: DEFAULT_ACCOUNT_ID }).catch(() => {});
   },
@@ -1403,7 +1422,8 @@ const runtimeSettings = {
   autoEat: String(process.env.AUTO_EAT || 'true').toLowerCase() !== 'false',
   geminiEnabled: String(process.env.GEMINI_ENABLED || 'true').toLowerCase() !== 'false',
   childPublicSpeech: String(process.env.CHILD_PUBLIC_SPEECH || 'true').toLowerCase() !== 'false',
-  messageCooldownMs: Number(process.env.WM_COMMAND_COOLDOWN_MS) || WM_COMMAND_COOLDOWN_MS
+  messageCooldownMs: Number(process.env.WM_COMMAND_COOLDOWN_MS) || WM_COMMAND_COOLDOWN_MS,
+  mutedLogTags: []
 };
 
 function normalizeRuntimeSettings(settings = runtimeSettings) {
@@ -1425,12 +1445,18 @@ function normalizeRuntimeSettings(settings = runtimeSettings) {
   settings.autoEat = Boolean(settings.autoEat);
   settings.geminiEnabled = Boolean(settings.geminiEnabled);
   settings.childPublicSpeech = Boolean(settings.childPublicSpeech);
+  settings.mutedLogTags = Array.isArray(settings.mutedLogTags)
+    ? settings.mutedLogTags.filter(tag => typeof tag === 'string' && tag.trim()).slice(0, 80)
+    : [];
   return settings;
 }
 
 async function loadRuntimeSettingsFromDB() {
   const loaded = await loadAdminSettings(runtimeSettings);
+  logSwitches.loadTags(loaded.logTags);
+  delete loaded.logTags;
   Object.assign(runtimeSettings, normalizeRuntimeSettings(loaded));
+  logSwitches.loadMuted(runtimeSettings.mutedLogTags);
 }
 
 async function persistRuntimeSetting(key) {
@@ -7346,6 +7372,16 @@ async function executeBotCommand(command) {
     const payload = await growingChild?.speak('button', [], 'minecraft');
     if (!payload) throw new Error('Growing Child AI is disabled or has nothing to say.');
     return { phrase: payload.phrase || null };
+  }
+
+  if (type === 'log_toggle') {
+    const tag = String(payload.tag || '').trim();
+    if (!tag) throw new Error('Choose a log to switch.');
+    const muted = !logSwitches.isMuted(tag);
+    runtimeSettings.mutedLogTags = logSwitches.setMuted(tag, typeof payload.enabled === 'boolean' ? !payload.enabled : muted);
+    await persistRuntimeSetting('mutedLogTags');
+    await saveAdminSetting('logTags', logSwitches.listTags());
+    return { tag, enabled: !logSwitches.isMuted(tag), mutedLogTags: runtimeSettings.mutedLogTags };
   }
 
   if (type === 'gemini_toggle') {

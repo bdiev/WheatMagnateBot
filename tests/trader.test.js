@@ -1849,7 +1849,7 @@ async function main() {
     await until(() => villager.trades[0].nbTradeUses === 9, 'trading resumes');
     await until(() => lines.some(line => /Crafted 1 emerald block/.test(line.message)), 'the craft is logged');
     assert.ok(lines.some(line => /Working again/.test(line.message)));
-    assert.ok(lines.some(line => /9 x paper\+>emerald/.test(line.message)));
+    assert.ok(!lines.some(line => /x paper\+>emerald/.test(line.message)), 'single trades are not logged');
     trader.stop();
     assert.ok(lines.some(line => /Stopped/.test(line.message)));
     await until(() => trader.getStatus().phase === 'idle', 'stopped');

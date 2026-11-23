@@ -5851,6 +5851,7 @@ async function queueAdminBotCommand(currentUser, body) {
     'child_say',
     'gemini_toggle',
     'child_public_toggle',
+    'log_toggle',
     'child_memory_delete',
     'child_memory_correct',
     'child_forget_user',
@@ -5899,6 +5900,20 @@ async function queueAdminBotCommand(currentUser, body) {
   }
   if (['stone_miner_learn', 'stone_miner_toggle', 'trader_toggle'].includes(commandType) && typeof payload.enabled !== 'boolean') {
     delete payload.enabled;
+  }
+
+  if (commandType === 'log_toggle') {
+    // Log switches belong to the whole bot process, not to one account
+    const tag = String(payload.tag || '').trim().replace(/\s+/g, ' ');
+    if (!/^[A-Za-z][A-Za-z0-9 _.\-]{0,31}$/.test(tag)) {
+      const err = new Error('Unknown log.');
+      err.statusCode = 400;
+      throw err;
+    }
+    return queueBotCommand(currentUser, commandType, {
+      tag,
+      ...(typeof payload.enabled === 'boolean' ? { enabled: payload.enabled } : {})
+    }, { accountId: DEFAULT_MINECRAFT_ACCOUNT_ID });
   }
 
   const accountId = await commandAccountId(body,currentUser) || DEFAULT_MINECRAFT_ACCOUNT_ID;
@@ -6213,7 +6228,9 @@ async function getAdminControlState(currentUser, url) {
       dangerRadius: settings.dangerRadius ?? 300,
       messageCooldownMs: settings.messageCooldownMs ?? 5000,
       geminiEnabled: settings.geminiEnabled ?? true,
-      childPublicSpeech: settings.childPublicSpeech ?? true
+      childPublicSpeech: settings.childPublicSpeech ?? true,
+      logTags: Array.isArray(settings.logTags) ? settings.logTags.filter(tag => typeof tag === 'string') : [],
+      mutedLogTags: Array.isArray(settings.mutedLogTags) ? settings.mutedLogTags.filter(tag => typeof tag === 'string') : []
     },
     bot: botStatus,
     inventory: Array.isArray(botStatus.inventory) ? botStatus.inventory : [],

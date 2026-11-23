@@ -1801,7 +1801,6 @@ function createTrader({
       sessionTrades += made;
       totalTrades += made;
       saveState();
-      log(`[Trader] ${made} x ${offer.key}.`);
       notifyChange();
     }
     return made;
