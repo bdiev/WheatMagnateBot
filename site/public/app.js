@@ -6877,10 +6877,23 @@ function renderAreaExplorerLog() {
     list.innerHTML = `<li class="area-explorer-empty">${ae.logFilter ? 'Nothing of this kind yet.' : 'No events yet - they show up once a mod with site-sync runs.'}</li>`;
     return;
   }
+  // The same event again and again (a kick loop, a warning every minute): one line, counted
+  const groups = [];
+  for (const event of ae.logEvents) {
+    const previous = groups.at(-1);
+    if (previous && previous.event.type === event.type && previous.event.level === event.level
+      && previous.event.message === event.message && (previous.event.player || previous.event.tokenName) === (event.player || event.tokenName)
+      && areaExplorerLogDay(previous.oldest.occurredAt) === areaExplorerLogDay(event.occurredAt)) {
+      previous.count += 1;
+      previous.oldest = event;
+      continue;
+    }
+    groups.push({ event, oldest: event, count: 1 });
+  }
   const today = areaExplorerLogDay(Date.now());
   const yesterday = areaExplorerLogDay(Date.now() - 86_400_000);
   let lastDay = null;
-  list.innerHTML = ae.logEvents.map(event => {
+  list.innerHTML = groups.map(({ event, oldest, count }) => {
     // A heading wherever the day changes: Today, Yesterday, then the date
     const day = areaExplorerLogDay(event.occurredAt);
     let heading = '';
@@ -6903,7 +6916,8 @@ function renderAreaExplorerLog() {
       <div class="area-explorer-log-body">
         <div class="area-explorer-log-head">
           <span class="area-explorer-log-type">${escapeHtml(AREA_EXPLORER_LOG_TYPES[event.type] || event.type)}</span>
-          <time datetime="${escapeHtml(new Date(event.occurredAt).toISOString())}" title="${escapeHtml(formatFullDateTime(event.occurredAt))}">${escapeHtml(formatTime(event.occurredAt))}</time>
+          ${count > 1 ? `<span class="area-explorer-log-repeat" title="${count} times">×${formatNumber(count)}</span>` : ''}
+          <time datetime="${escapeHtml(new Date(event.occurredAt).toISOString())}" title="${escapeHtml(formatFullDateTime(event.occurredAt))}">${count > 1 ? `${escapeHtml(formatTime(oldest.occurredAt))}–` : ''}${escapeHtml(formatTime(event.occurredAt))}</time>
         </div>
         <p class="area-explorer-log-message">${escapeHtml(event.message)}</p>
         <div class="area-explorer-log-meta">${meta}${where}</div>
@@ -6976,13 +6990,26 @@ function renderAreaExplorerHighlights(scope) {
     </button>`;
   };
   const sections = [];
+  // The scope at a glance: what's mapped, and each kind found; a tile lists its kind
+  const tiles = [];
   if (regions) {
     const km2 = regions * XAERO_REGION_PX * XAERO_REGION_PX / 1e6;
-    sections.push(`<div class="area-explorer-highlight-row">
-      <img src="/items/Filled_Map.png" alt="" width="24" height="24">
-      <div><span class="area-explorer-highlight-label">Mapped</span><strong>${formatNumber(regions)} regions · ≈${formatNumber(Math.round(km2))} km²</strong></div>
+    tiles.push(`<div class="area-explorer-tile" title="${formatNumber(regions)} regions">
+      <img src="/items/Filled_Map.png" alt="" width="24" height="24"><strong>≈${formatNumber(Math.round(km2))}</strong><span>km² mapped</span>
     </div>`);
   }
+  for (const [kind, icon, label, count] of [
+    ['BASE', 'Crafting_Table', 'Bases', scope?.bases || 0],
+    ['ITEM', 'Chest', 'Loot', scope?.items || 0],
+    ['SIGN', 'Oak_Sign', 'Signs', scope?.signs || 0],
+    ['END_PORTAL', 'Ender_Eye', 'End Portals', areaExplorerEndPortalCount(scope)]
+  ]) {
+    if (!count) continue;
+    tiles.push(`<button class="area-explorer-tile is-button kind-${kind.toLowerCase()}" type="button" data-area-filter-kind="${kind}" title="List the ${label.toLowerCase()}">
+      <img src="/items/${icon}.png" alt="" width="24" height="24"><strong>${formatNumber(count)}</strong><span>${label}</span>
+    </button>`);
+  }
+  if (tiles.length) sections.push(`<div class="area-explorer-tiles">${tiles.join('')}</div>`);
   if (scope?.latest) {
     const latest = scope.latest;
     const icon = areaExplorerFindIcon(latest);
@@ -7052,8 +7079,9 @@ function renderAreaExplorerStatus() {
   const live = areaExplorerLiveStatus();
   locate.disabled = !Number.isFinite(live?.x) || !Number.isFinite(live?.z);
   locate.title = locate.disabled ? 'No player position available' : `Show ${live.player || live.tokenName || 'player'}${live.online ? '' : "'s last known position"} on map`;
+  renderAreaExplorerHud(live);
   if (!statuses.length) {
-    container.innerHTML = '<p class="area-explorer-empty">No mod has reported in yet.</p>';
+    container.innerHTML = renderAreaExplorerFirstSteps();
     return;
   }
   container.innerHTML = statuses.map(status => {
@@ -7087,6 +7115,49 @@ function renderAreaExplorerStatus() {
   }).join('');
 }
 
+/** The run in a corner of the map: who, what it does, how far along and how long to go. */
+function renderAreaExplorerHud(live) {
+  const hud = $('#areaExplorerHud');
+  if (!hud) return;
+  if (!live?.online) {
+    hud.hidden = true;
+    return;
+  }
+  const percent = live.percent === null || live.percent === undefined ? null : Math.round(live.percent * 10) / 10;
+  const phase = live.paused ? 'Paused' : (AREA_EXPLORER_PHASES[live.phase] || live.phase || 'Exploring');
+  const eta = live.etaSeconds === null || live.etaSeconds === undefined ? '' : ` · ${formatDurationMs(live.etaSeconds * 1000)} left`;
+  const html = `<span class="area-explorer-hud-ring${percent === null ? ' is-empty' : ''}" style="--hud-percent:${percent ?? 0}" aria-hidden="true"><span>${percent === null ? '' : `${Math.floor(percent)}%`}</span></span>
+    <span class="area-explorer-hud-text"><strong>${escapeHtml(live.player || live.tokenName || 'Explorer')}</strong><small>${escapeHtml(`${phase}${eta}`)}</small></span>`;
+  if (hud.dataset.html !== html) {
+    hud.dataset.html = html;
+    hud.innerHTML = html;
+  }
+  hud.classList.toggle('is-paused', Boolean(live.paused));
+  hud.title = `Show ${live.player || live.tokenName || 'the explorer'} on the map`;
+  hud.hidden = false;
+  // Under the legend, whatever its height
+  const legend = $('.area-explorer-map-legend');
+  if (legend) hud.style.top = `${legend.offsetTop + legend.offsetHeight + 6}px`;
+}
+
+/** No mod has reported in yet: what to do, step by step. */
+function renderAreaExplorerFirstSteps() {
+  const ae = areaExplorerState();
+  const admin = state.currentUser?.role === 'admin';
+  const hasToken = (ae.activeTokens || 0) > 0;
+  const steps = [
+    { done: hasToken, title: 'Create a mod token', text: admin ? 'Under Mod Tokens below: one per PC that runs the mod.' : 'An administrator creates it under Mod Tokens.', action: admin && !hasToken ? '<button class="ghost-button" type="button" data-area-jump-tokens>Create token</button>' : '' },
+    { done: false, title: 'Paste it into the mod', text: "Open the mod's settings in game and paste the token into Site Sync." },
+    { done: false, title: 'Start exploring', text: 'Join the server with the mod on: its run shows up here within a second.' }
+  ];
+  const current = steps.findIndex(step => !step.done);
+  return `<ol class="area-explorer-steps">${steps.map((step, index) => `
+    <li data-state="${step.done ? 'done' : index === current ? 'current' : 'todo'}">
+      <span class="area-explorer-step-mark" aria-hidden="true">${step.done ? '' : index + 1}</span>
+      <span><strong>${escapeHtml(step.title)}</strong><small>${escapeHtml(step.text)}</small>${step.action || ''}</span>
+    </li>`).join('')}</ol>`;
+}
+
 async function loadAreaExplorerFinds() {
   const ae = areaExplorerState();
   const list = $('#areaExplorerFinds');
@@ -7101,10 +7172,16 @@ async function loadAreaExplorerFinds() {
   list.setAttribute('aria-busy', 'true');
   // "Nearest" is nearest the middle of the map in view, rounded so a nudge doesn't reload the list
   const near = ae.sort === 'nearest' && ae.view ? { nearX: Math.round(ae.view.cx / 64) * 64, nearZ: Math.round(ae.view.cz / 64) * 64 } : {};
-  const query = areaExplorerScopeParams({
-    kind: ae.kind, name: areaExplorerMarkerFilter(), q: ae.q, sort: ae.sort === 'newest' ? '' : ae.sort, ...near,
-    limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset
-  });
+  const base = { kind: ae.kind, name: areaExplorerMarkerFilter(), q: ae.q, sort: ae.sort === 'newest' ? '' : ae.sort, ...near };
+  // Pages scrolled in stay on a refresh: the list reloads as long as it has grown (at most 200 finds)
+  const baseKey = JSON.stringify([ae.scope, base]);
+  if (ae.findsBaseKey !== baseKey) {
+    ae.findsBaseKey = baseKey;
+    ae.findsBase = base;
+    ae.loadedPages = 1;
+  }
+  const pages = Math.min(ae.loadedPages || 1, Math.floor(200 / AREA_EXPLORER_PAGE_SIZE));
+  const query = areaExplorerScopeParams({ ...base, limit: AREA_EXPLORER_PAGE_SIZE * pages, offset: ae.offset });
   // Another list on its way (another kind, page, search...): its skeleton, unless it's in at once.
   // A refresh of the same list keeps what's there.
   let skeletonTimer = null;
@@ -7123,7 +7200,7 @@ async function loadAreaExplorerFinds() {
     const anchor = refresh ? areaExplorerListAnchor(list) : null;
     const shown = refresh ? areaExplorerListIds(list) : null;
     list.innerHTML = data.finds.length
-      ? data.finds.map(find => renderAreaExplorerFind(find)).join('')
+      ? (ae.sort === 'newest' ? areaExplorerFindsHtml(data.finds) : data.finds.map(find => renderAreaExplorerFind(find)).join(''))
       : `<li class="area-explorer-empty">${ae.q ? 'Nothing matches the search.' : ae.kind === 'FAVORITE' ? 'No favorites here yet: star a find to keep it in this tab.' : 'No finds of this kind yet.'}</li>`;
     if (!refresh) {
       list.scrollTop = 0;
@@ -7140,6 +7217,60 @@ async function loadAreaExplorerFinds() {
   } finally {
     clearTimeout(skeletonTimer);
     if (ae.findsRequestId === requestId) list.removeAttribute('aria-busy');
+  }
+}
+
+/** "Today", "Yesterday", then the date: the headings of the log and of the newest finds. */
+function areaExplorerDayLabel(value) {
+  const day = areaExplorerLogDay(value);
+  if (day === areaExplorerLogDay(Date.now())) return 'Today';
+  if (day === areaExplorerLogDay(Date.now() - 86_400_000)) return 'Yesterday';
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: state.accountTimezone }).format(new Date(value));
+}
+
+/** Newest first: the finds with a heading wherever the day changes; {@code continuing} goes on from the last page. */
+function areaExplorerFindsHtml(finds, { continuing = false } = {}) {
+  const ae = areaExplorerState();
+  let last = continuing ? ae.findsLastDay : null;
+  const html = finds.map(find => {
+    const day = find.foundAt ? areaExplorerLogDay(find.foundAt) : null;
+    let heading = '';
+    if (day && day !== last) {
+      last = day;
+      heading = `<li class="area-explorer-find-day" aria-hidden="true"><span>${escapeHtml(areaExplorerDayLabel(find.foundAt))}</span></li>`;
+    }
+    return heading + renderAreaExplorerFind(find);
+  }).join('');
+  ae.findsLastDay = last;
+  return html;
+}
+
+/** The next page of the same list, added under it once its end scrolls into view. */
+async function loadMoreAreaExplorerFinds() {
+  const ae = areaExplorerState();
+  const list = $('#areaExplorerFinds');
+  if (!list || ae.findsLoadingMore || !ae.scope || !ae.findsBase || list.getAttribute('aria-busy')) return;
+  const loaded = list.querySelectorAll('[data-find-id]').length;
+  if (!loaded || loaded >= ae.total) return;
+  ae.findsLoadingMore = true;
+  const requestId = ae.findsRequestId;
+  const baseKey = ae.findsBaseKey;
+  try {
+    const data = await fetchJson(`/api/area-explorer/finds?${areaExplorerScopeParams({ ...ae.findsBase, limit: AREA_EXPLORER_PAGE_SIZE, offset: loaded })}`);
+    if (ae.findsRequestId !== requestId || ae.findsBaseKey !== baseKey) return;
+    ae.total = data.total;
+    const known = areaExplorerListIds(list);
+    const fresh = data.finds.filter(find => !known.has(find.id));
+    list.insertAdjacentHTML('beforeend', ae.sort === 'newest'
+      ? areaExplorerFindsHtml(fresh, { continuing: true })
+      : fresh.map(find => renderAreaExplorerFind(find)).join(''));
+    ae.loadedPages = (ae.loadedPages || 1) + 1;
+    // A refresh of this list now reloads every page shown
+    const pages = Math.min(ae.loadedPages, Math.floor(200 / AREA_EXPLORER_PAGE_SIZE));
+    ae.renderedFindsQuery = areaExplorerScopeParams({ ...ae.findsBase, limit: AREA_EXPLORER_PAGE_SIZE * pages, offset: ae.offset });
+  } finally {
+    ae.findsLoadingMore = false;
+    renderAreaExplorerPager();
   }
 }
 
@@ -7250,7 +7381,8 @@ function renderAreaExplorerFind(find, { selected = false, showScope = false } = 
     const front = find.details || '', back = find.label || '';
     const sides = front && back.trim() === front.trim() ? [[front, 'both']] : [[front, ''], [back, 'back']].filter(([text]) => text);
     // The text in a span of its own: cut short to a few lines, the box's padding can't let the next one peek out
-    body = `<div class="area-explorer-signs">${sides.map(([text, side]) => `<pre class="area-explorer-sign${side ? ` is-${side}` : ''}"><span class="area-explorer-sign-text">${escapeHtml(text)}</span></pre>`).join('')}</div>`;
+    const wood = areaExplorerSignWood(find.name);
+    body = `<div class="area-explorer-signs"${wood ? ` data-wood="${wood}"` : ''}>${sides.map(([text, side]) => `<pre class="area-explorer-sign${side ? ` is-${side}` : ''}"><span class="area-explorer-sign-text">${escapeHtml(text)}</span></pre>`).join('')}</div>`;
   } else if (find.details) {
     body = `<p class="area-explorer-details">${escapeHtml(find.details)}</p>`;
   }
@@ -7287,6 +7419,14 @@ function renderAreaExplorerFind(find, { selected = false, showScope = false } = 
   </li>`;
 }
 
+// The wood a sign is made of, for its colour: longest names first, so Dark Oak isn't taken for Oak
+const AREA_EXPLORER_SIGN_WOODS = Object.freeze(['pale_oak', 'dark_oak', 'mangrove', 'bamboo', 'crimson', 'warped', 'cherry', 'acacia', 'jungle', 'spruce', 'birch', 'oak']);
+
+function areaExplorerSignWood(name) {
+  const key = String(name || '').toLowerCase().replace(/\s+/g, '_');
+  return AREA_EXPLORER_SIGN_WOODS.find(wood => key.includes(wood)) || '';
+}
+
 /** The star that keeps a find in the user's Favorites tab. */
 function renderAreaExplorerFavoriteButton(find) {
   const on = find.favorite === true;
@@ -7294,13 +7434,20 @@ function renderAreaExplorerFavoriteButton(find) {
   return `<button class="ghost-button area-explorer-favorite${on ? ' is-on' : ''}" type="button" data-area-favorite="${escapeHtml(find.id)}" aria-pressed="${on}" title="${title}" aria-label="${title}: ${escapeHtml(areaExplorerFindTitle(find))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg></button>`;
 }
 
+/** How many finds are listed; the next page comes in as the last one scrolls into view. */
 function renderAreaExplorerPager() {
   const ae = areaExplorerState();
-  const page = Math.floor(ae.offset / AREA_EXPLORER_PAGE_SIZE) + 1;
-  const pages = Math.max(1, Math.ceil(ae.total / AREA_EXPLORER_PAGE_SIZE));
-  $('#areaExplorerPage').textContent = ae.total ? `${page} / ${pages} · ${formatNumber(ae.total)} finds` : '-';
-  $('#areaExplorerPrev').disabled = ae.offset <= 0;
-  $('#areaExplorerNext').disabled = ae.offset + AREA_EXPLORER_PAGE_SIZE >= ae.total;
+  const list = $('#areaExplorerFinds');
+  const rows = list ? [...list.querySelectorAll('[data-find-id]')] : [];
+  $('#areaExplorerPage').textContent = ae.total ? `${formatNumber(rows.length)} of ${formatNumber(ae.total)} finds` : '-';
+  $('#areaExplorerPrev').hidden = true;
+  $('#areaExplorerNext').hidden = true;
+  if (!('IntersectionObserver' in window)) return;
+  ae.findsObserver ||= new IntersectionObserver(entries => {
+    if (entries.some(entry => entry.isIntersecting)) loadMoreAreaExplorerFinds().catch(error => setBanner(`Could not load more finds: ${error.message}`));
+  }, { rootMargin: '0px 0px 320px 0px' });
+  ae.findsObserver.disconnect();
+  if (rows.length && rows.length < ae.total) ae.findsObserver.observe(rows.at(-1));
 }
 
 // The map: the Xaero map, every find of the scope, the explorer and its area on top
@@ -7361,13 +7508,16 @@ function recordAreaExplorerTrail(live, now = Date.now()) {
   const last = samples.at(-1);
   if (last && (now - last.at > 2500 || Math.hypot(live.x - last.x, live.z - last.z) > 512)) samples.length = 0;
   if (!last || last.x !== live.x || last.z !== live.z || !samples.length) samples.push({ x: live.x, z: live.z, at: now });
-  ae.trail.samples = samples.filter(point => now - point.at < 3000).slice(-10);
+  // Five minutes of path, one point a report
+  ae.trail.samples = samples.filter(point => now - point.at < 300_000).slice(-300);
 }
 
 function areaExplorerTrail(live, now = Date.now()) {
   const trail = areaExplorerState().trail;
   if (!live?.online || trail?.key !== `${live.tokenId}|${live.server}|${live.dimension}`) return [];
-  return trail.samples.filter(point => now - point.at < 3000);
+  // Reports stopped: no path hanging on the map
+  if (!trail.samples.length || now - trail.samples.at(-1).at >= 3000) return [];
+  return trail.samples.filter(point => now - point.at < 300_000);
 }
 
 function applyAreaExplorerLiveStatus(live) {
@@ -8025,10 +8175,81 @@ function drawAreaExplorerPointsLayer(ctx, view, colors, width, height, ratio) {
     layerCtx.clearRect(0, 0, backingWidth, backingHeight);
     layerCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
     drawAreaExplorerPoints(layerCtx, view, colors, width, height);
+    drawAreaExplorerPointIcons(layerCtx, view, colors);
     layer.key = key;
     layer.visible = visible;
   }
   ctx.drawImage(layer.canvas, 0, 0, width, height);
+}
+
+// Closer in than this (pixels a block) the finds in view show their item, as in the list
+const AREA_EXPLORER_ICON_SCALE = 0.35;
+const AREA_EXPLORER_ICON_MAX = 400;
+
+/** Close in, each find drawn gets its item on a small tile over its dot; the dots stay further out. */
+function drawAreaExplorerPointIcons(ctx, view, colors) {
+  const ae = areaExplorerState();
+  const hits = ae.drawnHits || [];
+  if (view.scale < AREA_EXPLORER_ICON_SCALE || !hits.length || hits.length > AREA_EXPLORER_ICON_MAX) return;
+  ae.iconImages ||= new Map();
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  for (const { sx, sz, point } of hits) {
+    const { src } = areaExplorerFindIcon(point);
+    let image = ae.iconImages.get(src);
+    if (!image) {
+      image = new Image();
+      image.decoding = 'async';
+      // A picture in: the layer is drawn again with it
+      image.onload = () => { if (ae.pointsLayer) ae.pointsLayer.key = null; queueAreaExplorerMapDraw(); };
+      image.onerror = () => { image.failed = true; };
+      image.src = src;
+      ae.iconImages.set(src, image);
+    }
+    if (!image.complete || image.failed || !image.naturalWidth) continue;
+    const selected = point.id === ae.selectedId;
+    const size = selected ? 22 : 18;
+    const x = Math.round(sx - size / 2), y = Math.round(sz - size / 2);
+    ctx.fillStyle = colors.bg;
+    ctx.strokeStyle = selected ? colors.text : colors[point.kind];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x - 3, y - 3, size + 6, size + 6, 4);
+    else ctx.rect(x - 3, y - 3, size + 6, size + 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.drawImage(image, x, y, size, size);
+  }
+  ctx.restore();
+}
+
+/** The find hovered in the list, ringed on the map. */
+function positionAreaExplorerHover() {
+  const ae = areaExplorerState();
+  const ring = $('#areaExplorerHoverRing');
+  const canvas = $('#areaExplorerMap');
+  if (!ring || !canvas) return;
+  const target = ae.hoverFind;
+  if (!target || !ae.view) {
+    ring.hidden = true;
+    return;
+  }
+  const [sx, sz] = areaExplorerToScreen(ae.view, canvas, target.x, target.z);
+  ring.hidden = sx < -24 || sz < -24 || sx > canvas.clientWidth + 24 || sz > canvas.clientHeight + 24;
+  ring.style.transform = `translate(${Math.round(sx)}px, ${Math.round(sz)}px)`;
+}
+
+/** The map's scale: a bar about 90 pixels long, in a round number of blocks. */
+function renderAreaExplorerScale(view) {
+  const bar = $('#areaExplorerScale');
+  if (!bar || !(view?.scale > 0)) return;
+  const target = 90 / view.scale;
+  const power = 10 ** Math.floor(Math.log10(target));
+  const blocks = [5, 2, 1].map(step => step * power).find(value => value <= target) || power;
+  bar.style.setProperty('--scale-width', `${Math.max(12, Math.round(blocks * view.scale))}px`);
+  const label = bar.querySelector('b');
+  if (label) label.textContent = blocks >= 1000 ? `${formatNumber(blocks / 1000)}k blocks` : `${formatNumber(blocks)} ${blocks === 1 ? 'block' : 'blocks'}`;
+  bar.hidden = false;
 }
 
 /** What's under a tap or click: the nearest find drawn within reach. */
@@ -8125,17 +8346,19 @@ function drawAreaExplorerMap() {
     const trail = areaExplorerTrail(live, now);
     ctx.save();
     ctx.strokeStyle = colors.player;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     for (let i = 1; i < trail.length; i++) {
-      ctx.globalAlpha = 0.65 * Math.max(0, 1 - (now - trail[i - 1].at) / 3000);
+      // The older the path, the fainter: five minutes back it has faded to a trace
+      ctx.globalAlpha = 0.12 + 0.6 * Math.max(0, 1 - (now - trail[i - 1].at) / 300_000);
       const [ax, az] = areaExplorerToScreen(view, canvas, trail[i - 1].x, trail[i - 1].z);
       const [bx, bz] = areaExplorerToScreen(view, canvas, trail[i].x, trail[i].z);
       ctx.beginPath(); ctx.moveTo(ax, az); ctx.lineTo(bx, bz); ctx.stroke();
     }
     ctx.restore();
     if (trail.length > 1 && !ae.trailTimer && state.activeTab === 'area-explorer' && document.visibilityState !== 'hidden') {
-      ae.trailTimer = setTimeout(() => { ae.trailTimer = null; queueAreaExplorerMapDraw(); }, 50);
+      ae.trailTimer = setTimeout(() => { ae.trailTimer = null; queueAreaExplorerMapDraw(); }, 1000);
     }
     const [sx, sz] = areaExplorerToScreen(view, canvas, live.x, live.z);
     ctx.save();
@@ -8156,6 +8379,8 @@ function drawAreaExplorerMap() {
   ctx.lineWidth = 1;
   ctx.strokeRect(Math.round(tx1) + 0.5, Math.round(tz1) + 0.5, Math.round(tx2 - tx1), Math.round(tz2 - tz1));
   $('#areaExplorerGrid').textContent = `Grid ${step.toLocaleString('en-US')} blocks`;
+  renderAreaExplorerScale(view);
+  positionAreaExplorerHover();
   renderAreaExplorerExplored();
 }
 
@@ -8488,6 +8713,44 @@ function drawXaeroRegionMap(ctx, canvas, view, ratio) {
   ctx.imageSmoothingEnabled = true;
   // Dusk is moving: the next frame
   if (ae.dusk) queueAreaExplorerMapDraw();
+}
+
+/**
+ * A find hovered in the list is ringed on the map; a find under the mouse on the map lights up
+ * in the list.
+ */
+function bindAreaExplorerHoverSync() {
+  const ae = areaExplorerState();
+  const canvas = $('#areaExplorerMap');
+  const list = $('#areaExplorerFinds');
+  if (ae.hoverBound || !canvas) return;
+  ae.hoverBound = true;
+  const setHover = row => {
+    const next = row ? { id: row.dataset.findId, x: Number(row.dataset.findAt.split(',')[0]), z: Number(row.dataset.findAt.split(',')[1]) } : null;
+    if (ae.hoverFind?.id === next?.id) return;
+    ae.hoverFind = next;
+    positionAreaExplorerHover();
+  };
+  list?.addEventListener('mouseover', event => setHover(event.target.closest('[data-find-at]')));
+  list?.addEventListener('mouseleave', () => setHover(null));
+  let lit = null;
+  const light = id => {
+    if (lit?.dataset.findId === id) return;
+    lit?.classList.remove('is-map-hover');
+    lit = id ? list?.querySelector(`[data-find-id="${CSS.escape(id)}"]`) || null : null;
+    lit?.classList.add('is-map-hover');
+  };
+  canvas.addEventListener('pointermove', event => {
+    if (event.pointerType !== 'mouse' || event.buttons) return;
+    const rect = canvas.getBoundingClientRect();
+    const hit = areaExplorerHitAt(event.clientX - rect.left, event.clientY - rect.top, 8);
+    canvas.classList.toggle('is-over-find', Boolean(hit));
+    light(hit?.id || null);
+  });
+  canvas.addEventListener('pointerleave', () => {
+    canvas.classList.remove('is-over-find');
+    light(null);
+  });
 }
 
 function bindAreaExplorerMap() {
@@ -8860,6 +9123,10 @@ function renderAreaExplorerCommands() {
 
 async function loadAreaExplorerTokens() {
   const { tokens } = await fetchJson('/api/admin/area-explorer/tokens');
+  const ae = areaExplorerState();
+  const hadTokens = ae.activeTokens;
+  ae.activeTokens = tokens.filter(token => !token.revokedAt).length;
+  if (hadTokens !== ae.activeTokens && !(ae.summary?.statuses || []).length) renderAreaExplorerStatus();
   const list = $('#areaExplorerTokens');
   list.innerHTML = tokens.length
     ? tokens.map(token => `<li class="${token.revokedAt ? 'is-revoked' : ''}">
@@ -8868,6 +9135,38 @@ async function loadAreaExplorerTokens() {
         ${token.revokedAt ? '' : `<button class="ghost-button" type="button" data-revoke-area-token="${escapeHtml(token.id)}">Revoke</button>`}
       </li>`).join('')
     : '<li class="area-explorer-empty">No tokens yet.</li>';
+}
+
+/** The finds sheet on phones, the run on the map and the first steps' button. */
+function bindAreaExplorerExtras() {
+  $('#areaExplorerSheetHandle')?.addEventListener('click', () => setAreaExplorerSheet(!$('#areaExplorerFindsPanel').classList.contains('is-sheet-open')));
+  // A tap beside the open sheet, or Escape, slides it down
+  document.addEventListener('pointerdown', event => {
+    if (!$('#areaExplorerFindsPanel')?.classList.contains('is-sheet-open')) return;
+    if (!event.target.closest('#areaExplorerFindsPanel, .area-explorer-mobile-nav')) setAreaExplorerSheet(false);
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && $('#areaExplorerFindsPanel')?.classList.contains('is-sheet-open')) setAreaExplorerSheet(false);
+  });
+  $('#areaExplorerHud')?.addEventListener('click', focusAreaExplorerPlayer);
+  $('#areaExplorerStatus')?.addEventListener('click', event => {
+    if (!event.target.closest('[data-area-jump-tokens]')) return;
+    const tokens = $('.area-explorer-tokens-panel');
+    tokens?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setTimeout(() => $('#areaExplorerTokenName')?.focus({ preventScroll: true }), 400);
+  });
+}
+
+// Phones show the finds in a sheet over the page: a handle at the foot, pulled up to read
+function isAreaExplorerSheet() {
+  return window.matchMedia('(max-width: 640px)').matches;
+}
+
+function setAreaExplorerSheet(open) {
+  const panel = $('#areaExplorerFindsPanel');
+  if (!panel) return;
+  panel.classList.toggle('is-sheet-open', Boolean(open));
+  $('#areaExplorerSheetHandle')?.setAttribute('aria-expanded', String(Boolean(open)));
 }
 
 function setupAreaExplorer() {
@@ -8898,6 +9197,10 @@ function setupAreaExplorer() {
     return reloadScope();
   };
   $$('[data-area-jump]').forEach(button => button.addEventListener('click', () => {
+    if (button.dataset.areaJump === 'areaExplorerFindsPanel' && isAreaExplorerSheet()) {
+      setAreaExplorerSheet(true);
+      return;
+    }
     const target = document.getElementById(button.dataset.areaJump);
     target?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
   }));
@@ -8938,7 +9241,10 @@ function setupAreaExplorer() {
     ae.selectedId = null;
     $('#areaExplorerSelected').hidden = true;
     renderAreaExplorerScopes();
-    reloadScope().then(() => $('.area-explorer-finds-panel').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    reloadScope().then(() => {
+      if (isAreaExplorerSheet()) setAreaExplorerSheet(true);
+      else $('.area-explorer-finds-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   });
   $('#areaExplorerSort').value = ae.sort;
   $('#areaExplorerSort').addEventListener('change', event => {
@@ -9113,6 +9419,8 @@ function setupAreaExplorer() {
     const find = event.target.closest('.area-explorer-finds-panel [data-find-at]');
     if (find && (event.target.closest('[data-area-select]') || !event.target.closest('button, a, pre'))) {
       const [x, z] = find.dataset.findAt.split(',').map(Number);
+      // On a phone the sheet slides down, so the map shows what was picked
+      if (isAreaExplorerSheet()) setAreaExplorerSheet(false);
       focusAreaExplorerMap(x, z);
       selectAreaExplorerFind(find.dataset.findId).catch(error => setBanner(error.message));
       return;
@@ -15064,6 +15372,9 @@ $('#adminPlaytimeCommands')?.addEventListener('click', event => {
 });
 document.addEventListener('click', handleAdminBotCommand);
 document.addEventListener('click', handleLogSwitchClick);
+// The Area Explorer list and map point at each other's finds under the mouse
+bindAreaExplorerHoverSync();
+bindAreaExplorerExtras();
 document.addEventListener('change', handleTraderSetupChange);
 // A floor Y being typed is not overwritten by the next status update
 document.addEventListener('input', event => {

@@ -16661,3 +16661,492 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   outline: 3px solid color-mix(in srgb, var(--trader-accent) 45%, transparent);
   outline-offset: 2px;
 }
+
+/* ---------- Area Explorer: the map and the list point at each other's finds */
+.area-explorer-map.is-over-find { cursor: pointer; }
+
+.area-explorer-hover-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  display: block;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  pointer-events: none;
+}
+
+.area-explorer-hover-ring[hidden] { display: none; }
+
+.area-explorer-hover-ring::before,
+.area-explorer-hover-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 3px solid var(--text);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--area-map-bg);
+}
+
+.area-explorer-hover-ring::after {
+  border-color: var(--accent);
+  animation: area-explorer-hover-pulse 1.4s ease-out infinite;
+}
+
+@keyframes area-explorer-hover-pulse {
+  0% { opacity: .9; transform: scale(1); }
+  100% { opacity: 0; transform: scale(2); }
+}
+
+.area-explorer-finds-panel .area-explorer-find.is-map-hover {
+  border-color: var(--find-color);
+  background: color-mix(in srgb, var(--find-color) 10%, var(--panel));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--find-color) 35%, transparent);
+}
+
+/* ---------- The map's scale */
+.area-explorer-map-status .area-explorer-map-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.area-explorer-map-scale i {
+  display: block;
+  width: var(--scale-width, 60px);
+  height: 7px;
+  border: 2px solid var(--text);
+  border-top: 0;
+  transition: width 120ms ease;
+}
+
+.area-explorer-map-scale b {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ---------- The live run in a corner of the map */
+.area-explorer-hud {
+  position: absolute;
+  top: 46px;
+  left: 10px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: auto;
+  min-width: 0;
+  max-width: min(320px, calc(100% - 80px));
+  height: auto;
+  min-height: 0;
+  padding: 5px 12px 5px 5px;
+  border: 2px solid color-mix(in srgb, var(--area-player) 45%, var(--line));
+  border-radius: var(--card-radius);
+  color: var(--text);
+  background: var(--area-overlay);
+  box-shadow: var(--shadow-sm);
+  font: inherit;
+  text-align: left;
+  text-shadow: none;
+  cursor: pointer;
+}
+
+.area-explorer-hud[hidden] { display: none; }
+
+.area-explorer-hud:hover {
+  color: var(--text);
+  border-color: var(--area-player);
+  background: var(--area-overlay);
+  transform: none;
+}
+
+.area-explorer-hud-ring {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: conic-gradient(var(--area-player) calc(var(--hud-percent, 0) * 1%), var(--line-soft) 0);
+}
+
+.area-explorer-hud-ring::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: var(--panel);
+}
+
+.area-explorer-hud-ring.is-empty::before {
+  background: var(--panel) url("/items/Compass.png") center / 20px no-repeat;
+  image-rendering: pixelated;
+}
+
+.area-explorer-hud-ring span {
+  position: relative;
+  font-family: var(--font-pixel);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.area-explorer-hud-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.area-explorer-hud-text strong,
+.area-explorer-hud-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.area-explorer-hud-text strong { font-size: 13px; }
+
+.area-explorer-hud-text small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.area-explorer-hud.is-paused .area-explorer-hud-ring { filter: grayscale(1); }
+
+/* ---------- Highlights: the scope at a glance */
+.area-explorer-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.area-explorer-tile {
+  --tile-color: var(--accent);
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 0;
+  padding: 9px 10px 8px;
+  border: 2px solid var(--line-soft);
+  border-top: 3px solid var(--tile-color);
+  border-radius: 2px;
+  color: var(--text);
+  background: var(--panel-soft);
+  box-shadow: none;
+  font: inherit;
+  text-align: left;
+  text-shadow: none;
+  white-space: normal;
+}
+
+.area-explorer-tile.kind-base { --tile-color: var(--area-base); }
+.area-explorer-tile.kind-item { --tile-color: var(--area-loot); }
+.area-explorer-tile.kind-sign { --tile-color: var(--area-sign); }
+.area-explorer-tile.kind-end_portal { --tile-color: var(--area-marker); }
+
+.area-explorer-tile img {
+  width: 22px;
+  height: 22px;
+  margin-bottom: 2px;
+  image-rendering: pixelated;
+}
+
+.area-explorer-tile strong {
+  font-family: var(--font-pixel);
+  font-size: 17px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.area-explorer-tile span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.area-explorer-tile.is-button { cursor: pointer; }
+
+.area-explorer-tile.is-button:hover {
+  color: var(--text);
+  border-color: var(--tile-color);
+  background: color-mix(in srgb, var(--tile-color) 8%, var(--panel-soft));
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---------- Finds: a heading wherever the day changes */
+.area-explorer-find-day {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px 2px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  list-style: none;
+  text-transform: uppercase;
+}
+
+.area-explorer-find-day::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+/* ---------- Run log: repeats counted */
+.area-explorer-log-head time { margin-left: auto; }
+
+.area-explorer-log-repeat {
+  padding: 0 7px;
+  border-radius: 999px;
+  color: var(--log-color, var(--accent));
+  background: color-mix(in srgb, var(--log-color, var(--accent)) 14%, var(--panel));
+  font-size: 11px;
+  font-weight: 800;
+}
+
+/* ---------- Signs in their own wood, text in the middle as in the game */
+.area-explorer-signs {
+  --wood: #b8945f;
+  --wood-edge: #7e6136;
+  --sign-ink: #20150a;
+}
+
+.area-explorer-signs[data-wood="spruce"] { --wood: #7a5a38; --wood-edge: #4a3520; --sign-ink: #f6ead6; }
+.area-explorer-signs[data-wood="birch"] { --wood: #d8c48a; --wood-edge: #a99560; --sign-ink: #2b2210; }
+.area-explorer-signs[data-wood="jungle"] { --wood: #b3855b; --wood-edge: #7d5b3b; --sign-ink: #22160b; }
+.area-explorer-signs[data-wood="acacia"] { --wood: #ba6a3a; --wood-edge: #8a4a25; --sign-ink: #1e0f06; }
+.area-explorer-signs[data-wood="dark_oak"] { --wood: #553a24; --wood-edge: #2f1f13; --sign-ink: #f2e6d2; }
+.area-explorer-signs[data-wood="mangrove"] { --wood: #7a3a34; --wood-edge: #4f2220; --sign-ink: #f8e6e1; }
+.area-explorer-signs[data-wood="cherry"] { --wood: #e6b9b2; --wood-edge: #b98580; --sign-ink: #3a1d1b; }
+.area-explorer-signs[data-wood="bamboo"] { --wood: #d8c460; --wood-edge: #a8953c; --sign-ink: #2a250c; }
+.area-explorer-signs[data-wood="crimson"] { --wood: #74334d; --wood-edge: #4a1f31; --sign-ink: #f8dde8; }
+.area-explorer-signs[data-wood="warped"] { --wood: #2f8078; --wood-edge: #1f5752; --sign-ink: #e4fcf8; }
+.area-explorer-signs[data-wood="pale_oak"] { --wood: #e8e2d8; --wood-edge: #b3aa9b; --sign-ink: #2e2b26; }
+
+.area-explorer-sign {
+  border: 2px solid var(--wood-edge);
+  border-radius: 2px;
+  color: var(--sign-ink);
+  background:
+    repeating-linear-gradient(180deg, transparent 0 11px, color-mix(in srgb, var(--wood-edge) 35%, transparent) 11px 12px),
+    linear-gradient(90deg, color-mix(in srgb, #000 6%, var(--wood)), var(--wood) 30%, color-mix(in srgb, #fff 6%, var(--wood)) 70%, var(--wood));
+  box-shadow: inset 1px 1px 0 rgb(255 255 255 / .18), inset -1px -1px 0 rgb(0 0 0 / .2);
+  text-align: center;
+}
+
+.area-explorer-sign.is-back::before,
+.area-explorer-sign.is-both::before {
+  color: color-mix(in srgb, var(--sign-ink) 65%, transparent);
+}
+
+:root[data-theme="dark"] .area-explorer-sign { filter: brightness(.92); }
+
+/* ---------- First steps, before any mod reports in */
+.area-explorer-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.area-explorer-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 2px solid var(--line-soft);
+  border-radius: 2px;
+  background: var(--panel);
+}
+
+.area-explorer-steps li > span:last-child {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.area-explorer-steps strong { font-size: 14px; }
+
+.area-explorer-steps small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.area-explorer-steps button {
+  min-height: 34px;
+  margin-top: 4px;
+}
+
+.area-explorer-step-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.area-explorer-steps li[data-state="current"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+
+.area-explorer-steps li[data-state="current"] .area-explorer-step-mark {
+  border-color: var(--accent-strong);
+  color: #fff;
+  background: var(--accent);
+}
+
+.area-explorer-steps li[data-state="done"] { opacity: .7; }
+
+.area-explorer-steps li[data-state="done"] .area-explorer-step-mark {
+  border-color: var(--accent-strong);
+  background: var(--accent);
+}
+
+.area-explorer-steps li[data-state="done"] .area-explorer-step-mark::before {
+  content: "";
+  width: 8px;
+  height: 4px;
+  margin-top: -3px;
+  border: solid #fff;
+  border-width: 0 0 3px 3px;
+  transform: rotate(-45deg);
+}
+
+/* ---------- Phones: the finds in a sheet pulled up from the foot */
+.area-explorer-sheet-handle { display: none; }
+
+@media (max-width: 640px) {
+  /* A transformed tab would hold the fixed sheet inside it instead of at the screen's foot */
+  #tab-area-explorer.active {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    animation: none;
+    transform: none;
+  }
+
+  .area-explorer-layout > .area-explorer-finds-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    height: min(82svh, 760px);
+    margin: 0;
+    overflow: hidden;
+    border-width: 2px 0 0;
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 28px rgb(0 0 0 / .35);
+    animation: none;
+    transform: translateY(calc(100% - 58px - env(safe-area-inset-bottom, 0px)));
+    transition: transform 320ms cubic-bezier(.2, .9, .25, 1), box-shadow 320ms ease;
+  }
+
+  .area-explorer-layout > .area-explorer-finds-panel.is-sheet-open {
+    transform: none;
+    box-shadow: 0 -8px 28px rgb(0 0 0 / .35), 0 0 0 100vmax rgb(0 0 0 / .45);
+  }
+
+  .area-explorer-finds-panel > .panel-head { display: none; }
+
+  .area-explorer-sheet-handle {
+    display: grid;
+    flex: none;
+    justify-items: center;
+    gap: 6px;
+    width: 100%;
+    min-height: 58px;
+    height: auto;
+    padding: 8px 14px 10px;
+    border: 0;
+    border-bottom: 1px solid var(--line-soft);
+    border-radius: 0;
+    color: var(--text);
+    background: var(--panel);
+    box-shadow: none;
+    text-shadow: none;
+  }
+
+  .area-explorer-sheet-handle:hover {
+    color: var(--text);
+    background: var(--panel);
+    box-shadow: none;
+    transform: none;
+  }
+
+  .area-explorer-sheet-grip {
+    width: 42px;
+    height: 5px;
+    border-radius: 999px;
+    background: var(--line);
+  }
+
+  .area-explorer-sheet-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 800;
+  }
+
+  .area-explorer-sheet-title img { image-rendering: pixelated; }
+
+  .area-explorer-sheet-title b {
+    padding: 1px 8px;
+    border-radius: 999px;
+    color: var(--muted);
+    background: var(--panel-soft);
+    font-size: 12px;
+  }
+
+  .area-explorer-finds-panel > .area-explorer-toolbar { flex: none; }
+
+  .area-explorer-finds-panel > .area-explorer-finds-wrap {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .area-explorer-finds-wrap > .area-explorer-finds {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    align-content: start;
+  }
+
+  .area-explorer-finds-panel > .area-explorer-pager {
+    flex: none;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .area-explorer-hud { max-width: calc(100% - 20px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .area-explorer-hover-ring::after { animation: none; }
+  .area-explorer-layout > .area-explorer-finds-panel { transition: none; }
+  .area-explorer-tile.is-button:hover { transform: none; }
+}
