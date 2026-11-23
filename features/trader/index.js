@@ -2015,6 +2015,16 @@ function createTrader({
     return useful;
   }
 
+  // How much a chest holds of the items still needed, however much is needed:
+  // the fullest chest is emptied first, not just one that holds enough
+  function heldIn(pos, left) {
+    const stock = sourceStock.get(positionKey(pos));
+    if (!stock) return 0;
+    let held = 0;
+    for (const [name, count] of left) if (count > 0) held += stock.get(name) || 0;
+    return held;
+  }
+
   // Whole stacks, the chest holding the most of what is needed first, then the
   // next fullest, until enough is taken, the trip is full, or only the reserved
   // slots are free. With more than one source they are looked into first, as
@@ -2032,7 +2042,7 @@ function createTrader({
       // Ties go to the floor the bot is on, then keep the order of the setup
       const pos = desired.sources
         .filter(source => !visited.has(source) && usefulIn(source, left) > 0)
-        .sort((a, b) => usefulIn(b, left) - usefulIn(a, left) || hereRank(a) - hereRank(b))[0];
+        .sort((a, b) => heldIn(b, left) - heldIn(a, left) || hereRank(a) - hereRank(b))[0];
       if (!pos) break;
       visited.add(pos);
       const window = await openContainer(context, pos, 'A source chest');

@@ -1484,6 +1484,36 @@ async function main() {
     trader.dispose();
   });
 
+  await test('a small need is still taken from the fullest source chest', async () => {
+    const second = { x: 0, y: 64, z: -2 };
+    const third = { x: 0, y: 66, z: -2 };
+    const villager = { trades: [rawTrade('stone', 1, 'emerald', 1, { maximumNbTradeUses: 10 })] };
+    const bot = fakeBot({ source: [stack('stone', 64)], villagers: [villager] });
+    const secondItems = [stack('stone', 64), stack('stone', 64)];
+    const thirdItems = [stack('stone', 64), stack('stone', 64), stack('stone', 64), stack('stone', 64)];
+    for (const [pos, items] of [[second, secondItems], [third, thirdItems]]) {
+      bot.setBlock(pos, 'chest');
+      bot.setChestSize(pos, 27, items);
+    }
+    const taken = [];
+    const click = bot.clickWindow;
+    bot.clickWindow = async (slot, button, mode) => {
+      const window = bot.currentWindow;
+      if (window.stored && slot < window.inventoryStart) {
+        taken.push(window.stored === secondItems ? 'second' : window.stored === thirdItems ? 'third' : 'first');
+      }
+      return click(slot, button, mode);
+    };
+    const trader = createTrader({ idleIntervalMs: 60_000 });
+    trader.attachBot(bot);
+    await trader.scan();
+    trader.configure({ sources: [SOURCE, second, third], output: OUTPUT });
+    trader.start();
+    await until(() => villager.trades[0].nbTradeUses === 10 && trader.getStatus().phase !== 'restocking', 'all sold', 4000);
+    assert.equal(taken[0], 'third', `fullest first: ${taken}`);
+    trader.dispose();
+  });
+
   await test('one trip takes 18 stacks, keeps 9 slots free, and serves every villager in one go', async () => {
     const at = [[2.5, 64, 0.5], [-1.5, 64, 0.5], [0.5, 64, 2.5], [0.5, 64, -1.5], [1.5, 64, 1.5]];
     const villagers = at.map(position => ({ at: position, trades: [rawTrade('stone', 20, 'emerald', 1)] }));
