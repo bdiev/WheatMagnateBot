@@ -12297,13 +12297,12 @@ body.kill-aura-modal-open {
 @keyframes account-status-pulse-green { 0%,100% { box-shadow:0 0 0 1px var(--line),0 0 0 0 rgb(47 212 120 / .42); } 50% { box-shadow:0 0 0 1px var(--line),0 0 0 5px rgb(47 212 120 / 0); } }
 @keyframes account-status-pulse-blue { 0%,100% { box-shadow:0 0 0 1px var(--line),0 0 0 0 rgb(75 145 229 / .52); transform:scale(.92); } 50% { box-shadow:0 0 0 1px var(--line),0 0 0 6px rgb(75 145 229 / 0); transform:scale(1.08); } }
 @keyframes account-status-blink { 0%,100% { opacity:.55; } 50% { opacity:1; } }
-@media (prefers-reduced-motion:reduce) { .account-status-dot { animation:none!important; } .account-switcher-list,.account-switcher-list > *,.account-switcher-backdrop,.account-switcher-caret,.account-switcher-current .account-avatar { transition:none!important; animation:none!important; } }
+@media (prefers-reduced-motion:reduce) { .account-status-dot { animation:none!important; } .account-switcher-list,.account-switcher-list > *,.account-switcher-backdrop,.account-switcher-current .account-avatar { transition:none!important; animation:none!important; } }
 @keyframes account-backdrop-in { from { opacity:0; } to { opacity:1; } }
 @keyframes account-backdrop-out { from { opacity:1; } to { opacity:0; } }
 .account-add { flex:0 0 42px; width:42px; min-width:42px; max-width:42px; font-size:22px; font-weight:500; line-height:1; }
 .account-switcher-list .account-add { position:sticky; right:0; z-index:2; }
 .account-switcher-current { display:none; }
-.account-switcher-caret { display:none; }
 .tab-button.account-tab-restricted { display:none!important; }
 .account-modal-overlay { position:fixed; inset:0; z-index:1200; display:grid; place-items:center; padding:18px; background:color-mix(in srgb,var(--bg) 72%,transparent); backdrop-filter:blur(8px); animation:overlayIn 180ms ease; }
 .account-modal-overlay[hidden] { display:none; }
@@ -12370,9 +12369,6 @@ body.kill-aura-modal-open {
   .account-switcher-current { display:block; width:var(--button-height); height:var(--button-height); }
   .account-switcher-current .account-avatar { width:var(--button-height); min-width:var(--button-height); max-width:var(--button-height); height:var(--button-height); min-height:var(--button-height); max-height:var(--button-height); transition:border-color 160ms ease,box-shadow 220ms ease,transform 220ms cubic-bezier(.2,1.2,.4,1); }
   .account-switcher.expanded .account-switcher-current .account-avatar { transform:scale(1.06); box-shadow:inset 0 -3px 0 var(--account-color,var(--accent)),0 0 0 3px color-mix(in srgb,var(--account-color,var(--accent)) 38%,transparent),0 6px 18px rgb(0 0 0 / .35); }
-  .account-switcher-caret { position:absolute; z-index:4; left:-5px; bottom:-5px; display:grid; place-items:center; width:15px; height:15px; border:2px solid var(--bg); border-radius:3px; background:var(--account-color,var(--accent)); box-shadow:0 0 0 1px var(--line); pointer-events:none; transition:transform 240ms cubic-bezier(.2,1.2,.4,1); }
-  .account-switcher-caret::before { content:""; width:0; height:0; border-left:3.5px solid transparent; border-right:3.5px solid transparent; border-top:4px solid #fff; margin-top:1px; }
-  .account-switcher.expanded .account-switcher-caret { transform:rotate(180deg); }
   .account-switcher-list {
     position:fixed;
     z-index:180;

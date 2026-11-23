@@ -1554,7 +1554,7 @@ function renderCurrentAccountButton(account) {
     return;
   }
   slot.dataset.signature = signature;
-  slot.innerHTML = `<button class="account-avatar active account-switcher-toggle" type="button" data-account-id="${escapeHtml(account.id)}" data-account-current="true" data-initial="${escapeHtml(String(account.displayName || avatarUsername || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-haspopup="true" aria-expanded="${expanded}" aria-controls="accountSwitcherList" aria-label="${escapeHtml(account.displayName)}: choose another account" title="${escapeHtml(account.displayName)}"><img src="${accountHeadUrl(avatarUsername)}" draggable="false" data-account-avatar-username="${escapeHtml(avatarUsername)}" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span><span class="account-switcher-caret" aria-hidden="true"></span></button>`;
+  slot.innerHTML = `<button class="account-avatar active account-switcher-toggle" type="button" data-account-id="${escapeHtml(account.id)}" data-account-current="true" data-initial="${escapeHtml(String(account.displayName || avatarUsername || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-haspopup="true" aria-expanded="${expanded}" aria-controls="accountSwitcherList" aria-label="${escapeHtml(account.displayName)}: choose another account" title="${escapeHtml(account.displayName)}"><img src="${accountHeadUrl(avatarUsername)}" draggable="false" data-account-avatar-username="${escapeHtml(avatarUsername)}" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
 }
 
 async function loadAccounts() {
