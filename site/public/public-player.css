@@ -209,6 +209,18 @@ body[data-public-player] .player-profile-chat { padding: 0 var(--profile-space) 
   body[data-public-player] .player-profile-grid strong,
   body[data-public-player] .player-profile-grid .player-profile-value-button { font-size: 16px; }
 }
+/* Profile refresh: status, body render and facts on the dark scenic head */
+body[data-public-player] .player-profile-head::before,
+body[data-public-player] .player-profile-sticky { display: none; }
+body[data-public-player] .player-profile-head.has-body { grid-template-columns: 80px minmax(0, 1fr) auto; }
+body[data-public-player] .player-profile-status { color: rgba(246, 243, 231, .78); }
+body[data-public-player] .player-profile-status strong,
+body[data-public-player] .player-profile-status time { color: #fff; }
+body[data-public-player] .player-profile-status[data-status="online"] strong { color: #7be07f; }
+body[data-public-player] .player-profile-facts { margin: 0 var(--profile-space) var(--profile-space); }
+@media (max-width: 700px) {
+  body[data-public-player] .player-profile-head.has-body { grid-template-columns: 64px minmax(0, 1fr); }
+}
 body[data-public-player] #playerProfileClose,
 body[data-public-player] [data-whisper-player],
 body[data-public-player] [data-player-refresh-command] { display: none; }

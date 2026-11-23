@@ -3808,7 +3808,7 @@ function lastSeenProfileValue(profile) {
 }
 
 function renderPlayerProfileSkeleton() {
-  const metricCards = Array.from({ length: 8 }, () => `
+  const metricCards = Array.from({ length: 3 }, () => `
     <div class="player-profile-skeleton-card">
       <span class="profile-skeleton-line short"></span>
       <span class="profile-skeleton-line value"></span>
@@ -3833,6 +3833,7 @@ function renderPlayerProfileSkeleton() {
         </div>
       </header>
       <section class="player-profile-skeleton-grid">${metricCards}</section>
+      <section class="player-profile-skeleton-facts">${Array.from({ length: 5 }, () => '<span class="profile-skeleton-line short"></span>').join('')}</section>
       <section class="player-profile-skeleton-section">
         <span class="profile-skeleton-line heading"></span>
         <div class="player-profile-skeleton-sessions">${sessionRows}</div>
@@ -3993,6 +3994,14 @@ function renderPlayerActivityPattern(pattern) {
     : '-';
   const longest = pattern.longestSession;
   const since = formatActivitySince(pattern.firstObservedAt, pattern.timeZone);
+  // The closed section still shows the shape of the day: online time per hour
+  // summed over every weekday, so the peak reads without opening it.
+  const hourTotals = Array.from({ length: 24 }, (_, hour) => pattern.heatmap
+    .reduce((sum, row) => sum + (Number(row?.[hour]) || 0), 0));
+  const hourMax = Math.max(...hourTotals);
+  const preview = hourMax > 0
+    ? `<span class="player-activity-preview" aria-hidden="true">${hourTotals.map(seconds => `<i style="--level:${seconds > 0 ? Math.max(12, Math.round(Math.sqrt(seconds / hourMax) * 100)) : 0}%"></i>`).join('')}</span>`
+    : '';
   return `
     <details class="player-profile-activity">
       <summary class="player-profile-section-head">
@@ -4000,6 +4009,7 @@ function renderPlayerActivityPattern(pattern) {
           <h3>Activity pattern</h3>
           <small>Sessions observed by the bot${since ? ` since ${escapeHtml(since)}` : ''} · ${escapeHtml(pattern.timeZone)}</small>
         </div>
+        ${preview}
         <span class="player-activity-peak"><small>Peak</small><strong>${escapeHtml(peak)}</strong></span>
       </summary>
       <div class="player-activity-stats">
@@ -4030,6 +4040,125 @@ function renderPlayerActivityPattern(pattern) {
         </div>
       </div>
     </details>`;
+}
+
+const PLAYER_PROFILE_METRIC_ICONS = {
+  playtime: '<path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/>',
+  registered: '<rect x="3" y="5" width="18" height="16" rx="1"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  lastSeen: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'
+};
+
+function renderPlayerProfileMetricIcon(name) {
+  return `<svg class="player-profile-metric-icon" viewBox="0 0 24 24" aria-hidden="true">${PLAYER_PROFILE_METRIC_ICONS[name]}</svg>`;
+}
+
+const PLAYER_PROFILE_REFRESH_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>';
+
+function renderPlayerProfileRefreshButton(command, label, title) {
+  return `<button class="player-profile-refresh-button" type="button" data-player-refresh-command="${command}" aria-label="${escapeHtml(label)}" title="${escapeHtml(title)}">${PLAYER_PROFILE_REFRESH_ICON}</button>`;
+}
+
+// Calendar day in the account time zone, so "Today" matches the times shown.
+function playerProfileDayKey(value) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return '';
+  const cacheKey = `day-key:${state.accountTimezone}`;
+  if (!dateTimeFormatters.has(cacheKey)) dateTimeFormatters.set(cacheKey, new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit', timeZone: state.accountTimezone
+  }));
+  return dateTimeFormatters.get(cacheKey).format(date);
+}
+
+function playerProfileDayLabel(value) {
+  const key = playerProfileDayKey(value);
+  if (!key) return '';
+  if (key === playerProfileDayKey(Date.now())) return 'Today';
+  if (key === playerProfileDayKey(Date.now() - 24 * 60 * 60 * 1000)) return 'Yesterday';
+  const cacheKey = `day-label:${state.accountTimezone}`;
+  if (!dateTimeFormatters.has(cacheKey)) dateTimeFormatters.set(cacheKey, new Intl.DateTimeFormat('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: state.accountTimezone
+  }));
+  return dateTimeFormatters.get(cacheKey).format(new Date(value));
+}
+
+// Names of the bot accounts on this dashboard: a message naming one is
+// addressed to us and gets highlighted in the profile's chat history.
+function playerProfileMentionPattern() {
+  const names = [...new Set((state.accounts || [])
+    .flatMap(account => [account.statusPayload?.username, account.username])
+    .map(name => String(name || '').trim())
+    .filter(name => /^[A-Za-z0-9_]{3,16}$/.test(name)))];
+  return names.length ? new RegExp(`(^|[^A-Za-z0-9_])(${names.join('|')})(?![A-Za-z0-9_])`, 'i') : null;
+}
+
+// Front view of the skin: head, body, arms and legs plus their outer layers,
+// cut straight from the texture onto a 16x32 canvas the CSS scales up.
+function drawPlayerProfileBody(canvas, textureUrl, model) {
+  if (!canvas || !textureUrl) return;
+  const image = new Image();
+  image.decoding = 'async';
+  image.onload = () => {
+    if (!canvas.isConnected) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const legacy = image.naturalHeight === image.naturalWidth / 2;
+    const scale = image.naturalWidth / 64;
+    const armWidth = model === 'slim' ? 3 : 4;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.imageSmoothingEnabled = false;
+    const part = (sx, sy, sw, sh, dx, dy, mirror = false) => {
+      if (mirror) {
+        context.save();
+        context.translate(dx + sw, dy);
+        context.scale(-1, 1);
+        context.drawImage(image, sx * scale, sy * scale, sw * scale, sh * scale, 0, 0, sw, sh);
+        context.restore();
+      } else {
+        context.drawImage(image, sx * scale, sy * scale, sw * scale, sh * scale, dx, dy, sw, sh);
+      }
+    };
+    const rightArmX = 4 - armWidth;
+    // Base layer
+    part(8, 8, 8, 8, 4, 0);
+    part(20, 20, 8, 12, 4, 8);
+    part(44, 20, armWidth, 12, rightArmX, 8);
+    part(4, 20, 4, 12, 4, 20);
+    if (legacy) {
+      part(44, 20, armWidth, 12, 12, 8, true);
+      part(4, 20, 4, 12, 8, 20, true);
+    } else {
+      part(36, 52, armWidth, 12, 12, 8);
+      part(20, 52, 4, 12, 8, 20);
+    }
+    // Outer layer
+    part(40, 8, 8, 8, 4, 0);
+    if (!legacy) {
+      part(20, 36, 8, 12, 4, 8);
+      part(44, 36, armWidth, 12, rightArmX, 8);
+      part(52, 52, armWidth, 12, 12, 8);
+      part(4, 36, 4, 12, 4, 20);
+      part(4, 52, 4, 12, 8, 20);
+    }
+    canvas.classList.add('is-ready');
+  };
+  image.src = textureUrl;
+}
+
+function drawPlayerProfileBodies(root, profile) {
+  const textureUrl = profile?.skin?.hash ? `/api/minecraft-skin/${encodeURIComponent(profile.skin.hash)}.png` : '';
+  root?.querySelectorAll('canvas[data-player-body]').forEach(canvas => {
+    if (canvas.dataset.playerBody !== textureUrl || canvas._drawnTexture === textureUrl) return;
+    canvas._drawnTexture = textureUrl;
+    drawPlayerProfileBody(canvas, textureUrl, profile.skin.model);
+  });
+}
+
+function updatePlayerProfileStickyHead() {
+  const card = $('#playerProfileOverlay')?.querySelector('.player-profile-card');
+  const head = card?.querySelector('.player-profile-head');
+  if (!card) return;
+  const visible = Boolean(head) && card.scrollTop > head.offsetTop + head.offsetHeight - 24;
+  card.classList.toggle('is-head-collapsed', visible);
 }
 
 function renderPlayerProfile(profile) {
@@ -4083,7 +4212,7 @@ function renderPlayerProfile(profile) {
             <span>${whitelistLabel}</span>
           </button>`
     : '';
-  const storedAdminTags = (Array.isArray(profile.adminTags) ? profile.adminTags : [])
+  const storedAdminTags = (state.currentUser?.role === 'admin' && Array.isArray(profile.adminTags) ? profile.adminTags : [])
     .filter(tag => String(tag).trim().toLowerCase() !== 'new player');
   const adminTagMarkup = [
     ...storedAdminTags.map(tag => `<span class="admin-player-tag">${escapeHtml(tag)}</span>`),
@@ -4091,13 +4220,33 @@ function renderPlayerProfile(profile) {
       ? ['<span class="admin-player-tag is-new-player" title="Automatic tag: shown for 14 days after registration">New Player</span>']
       : [])
   ].join('');
-  const adminMetadata = state.currentUser?.role === 'admin' && (Object.hasOwn(profile, 'adminNotes') || Object.hasOwn(profile, 'adminTags'))
+  // Tags sit under the name now; only the notes keep a section of their own.
+  const adminMetadata = state.currentUser?.role === 'admin' && String(profile.adminNotes || '').trim()
     ? `<section class="player-profile-admin-metadata">
-        <h3>Admin metadata</h3>
-        <div><span>Tags</span><strong>${adminTagMarkup || 'None'}</strong></div>
-        <div><span>Notes</span><p>${profile.adminNotes ? escapeHtml(profile.adminNotes) : 'No admin notes.'}</p></div>
+        <h3>Admin notes</h3>
+        <p>${escapeHtml(profile.adminNotes)}</p>
       </section>`
     : '';
+  const maxSessionSeconds = Math.max(60, ...gameSessions.map(session => Number(session.durationSeconds) || 0));
+  let previousSessionDay = '';
+  const sessionMarkup = gameSessions.map(session => {
+    const dayKey = playerProfileDayKey(session.startedAt);
+    const dayHeading = dayKey && dayKey !== previousSessionDay
+      ? `<h4 class="player-profile-day">${escapeHtml(playerProfileDayLabel(session.startedAt))}</h4>`
+      : '';
+    previousSessionDay = dayKey || previousSessionDay;
+    const share = Math.max(3, Math.round((Number(session.durationSeconds) || 0) / maxSessionSeconds * 100));
+    return `${dayHeading}
+            <article class="player-profile-session${session.isCurrent ? ' is-current' : ''}">
+              <span class="player-profile-session-marker" aria-hidden="true"></span>
+              <div>
+                <strong>${escapeHtml(formatDate(session.startedAt))}</strong>
+                <small>${session.isCurrent ? 'Online now' : `Ended ${escapeHtml(formatDate(session.endedAt))}`}</small>
+              </div>
+              <time${session.isCurrent ? ` data-current-session-start="${escapeHtml(session.startedAt)}"` : ''}>${escapeHtml(formatDurationMs((Number(session.durationSeconds) || 0) * 1000))}</time>
+              <span class="player-profile-session-bar" style="--session-share:${share}%" aria-hidden="true"></span>
+            </article>`;
+  }).join('');
   const gameSessionsSection = `
     <section class="player-profile-sessions">
       <header class="player-profile-section-head">
@@ -4109,23 +4258,59 @@ function renderPlayerProfile(profile) {
       </header>
       <div class="player-profile-session-list${gameSessions.length > 3 ? ' is-scrollable' : ''}" data-player-profile-scroll="game-sessions"${gameSessions.length > 3 ? ' tabindex="0" aria-label="Game sessions, newest first"' : ''}>
         ${gameSessions.length
-          ? gameSessions.map(session => `
-            <article class="player-profile-session${session.isCurrent ? ' is-current' : ''}">
-              <span class="player-profile-session-marker" aria-hidden="true"></span>
-              <div>
-                <strong>${escapeHtml(formatDate(session.startedAt))}</strong>
-                <small>${session.isCurrent ? 'Online now' : `Ended ${escapeHtml(formatDate(session.endedAt))}`}</small>
-              </div>
-              <time${session.isCurrent ? ` data-current-session-start="${escapeHtml(session.startedAt)}"` : ''}>${escapeHtml(formatDurationMs((Number(session.durationSeconds) || 0) * 1000))}</time>
-            </article>
-          `).join('')
+          ? sessionMarkup
           : '<div class="empty">No completed game sessions recorded yet.</div>'}
       </div>
     </section>`;
+  const mentionPattern = profile.isBot ? null : playerProfileMentionPattern();
+  let previousChatDay = '';
+  const chatMarkup = recentMessages.map(message => {
+    const dayKey = playerProfileDayKey(message.createdAt);
+    const separator = dayKey && dayKey !== previousChatDay
+      ? `<div class="player-profile-chat-day" role="separator"><span>${escapeHtml(playerProfileDayLabel(message.createdAt))}</span></div>`
+      : '';
+    previousChatDay = dayKey || previousChatDay;
+    const isMention = Boolean(mentionPattern?.test(String(message.message || '')));
+    return `${separator}
+          <article class="player-profile-message${profile.isBot ? ' player-profile-message-bot' : ''}${message.isVisible === false ? ' is-hidden' : ''}${isMention ? ' is-mention' : ''}"${message.isVisible === false ? ' title="Hidden from public chat"' : ` data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat" role="button" tabindex="0"`}>
+            <div class="chat-message-body">
+              <div class="chat-message-head">
+                <span class="chat-message-name">${escapeHtml(profileUsername)}</span>
+                ${profile.isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
+                ${message.isVisible === false ? '<span class="chat-hidden-badge">Hidden</span>' : ''}
+                ${isMention ? '<span class="chat-mention-badge">Mention</span>' : ''}
+                <time class="chat-time" datetime="${escapeHtml(message.createdAt || '')}" title="${escapeHtml(formatPlayerProfileChatTimestamp(message.createdAt))}">${escapeHtml(dayKey ? formatChatTime(message.createdAt) : formatPlayerProfileChatTimestamp(message.createdAt))}</time>
+              </div>
+              <div class="chat-text">${linkifyChatMessage(message.message)}</div>
+            </div>
+          </article>`;
+  }).join('');
+  const currentSession = gameSessions.find(session => session.isCurrent);
+  const onlineSince = profile.isOnline ? (currentSession?.startedAt || profile.onlineSince || null) : null;
+  // Live times render empty and are filled by the profile clock, so the
+  // header markup stays identical between refreshes and is not rebuilt.
+  const statusDetail = profile.isOnline
+    ? (onlineSince ? `<span>for <time data-current-session-start="${escapeHtml(onlineSince)}"></time></span>` : '')
+    : `<span>${profile.lastSeen ? `last seen <time data-profile-relative-time="${escapeHtml(profile.lastSeen)}"></time>` : 'never seen online'}</span>`;
+  const statusLine = `<p class="player-profile-status" data-status="${profile.isOnline ? 'online' : 'offline'}"><span class="player-profile-status-dot" aria-hidden="true"></span><strong>${profile.isOnline ? 'Online' : 'Offline'}</strong>${statusDetail}</p>`;
+  const avatarUrl = playerHeadUrl(profile.username, 96, { uuid: profile.uuid });
+  const bodyTexture = profile.skin?.hash ? `/api/minecraft-skin/${encodeURIComponent(profile.skin.hash)}.png` : '';
+  const isEmptyValue = value => value == null || value === '' || value === '-';
+  const metricAttrs = (key, raw) => ` data-profile-metric="${key}" data-metric-value="${escapeHtml(String(raw ?? ''))}"`;
+  const hasRegistration = Boolean(profile.registrationAt || profile.registrationDisplay);
+  const last24h = Number(profile.chat?.last24h) || 0;
   return `
-    <header class="player-profile-head">
+    <div class="player-profile-sticky" aria-hidden="true">
+      <button class="player-profile-sticky-bar" type="button" data-player-profile-top tabindex="-1">
+        <img src="${avatarUrl}" alt="" onerror="this.style.visibility='hidden'">
+        <strong>${escapeHtml(profile.username)}</strong>
+        ${statusLine}
+        <span class="player-profile-sticky-up">&uarr;</span>
+      </button>
+    </div>
+    <header class="player-profile-head${bodyTexture ? ' has-body' : ''}">
       <button class="player-profile-avatar-wrap" type="button" data-player-skins="${escapeHtml(profileUsername)}" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="View ${escapeHtml(profileUsername)} skin history (${profile.isOnline ? 'online' : 'offline'})" title="View and rotate player skins">
-        <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96, { uuid: profile.uuid })}" alt="" loading="eager" onerror="this.style.visibility='hidden'">
+        <img class="player-profile-avatar" src="${avatarUrl}" alt="" loading="eager" onerror="this.style.visibility='hidden'">
       </button>
       <div class="player-profile-summary">
         <div class="player-profile-identity">
@@ -4134,15 +4319,18 @@ function renderPlayerProfile(profile) {
           </div>
           <div class="player-profile-badges">
             ${renderPlayerPingBadge(profile)}
-            <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
+            ${profile.isWhitelisted ? '<span class="pill is-whitelisted">whitelisted</span>' : ''}
             ${profile.isIgnored ? '<span class="pill ignored">ignored</span>' : ''}
           </div>
         </div>
+        ${statusLine}
+        ${adminTagMarkup ? `<div class="player-profile-tags">${adminTagMarkup}</div>` : ''}
         <div class="player-profile-meta">
           ${profile.uuid ? `<span class="player-profile-uuid uuid-copy" role="button" tabindex="0" data-copy-uuid="${escapeHtml(profile.uuid)}" title="Copy Minecraft UUID" aria-label="Copy UUID ${escapeHtml(profile.uuid)}"><small>UUID</small><code data-compact-uuid="${escapeHtml(String(profile.uuid).replaceAll('-', ''))}">${escapeHtml(profile.uuid)}</code></span>` : ''}
           ${nameHistoryControl}
         </div>
       </div>
+      ${bodyTexture ? `<button class="player-profile-body-wrap" type="button" data-player-skins="${escapeHtml(profileUsername)}" aria-label="View ${escapeHtml(profileUsername)} skin history" title="View and rotate player skins"><canvas class="player-profile-body" width="16" height="32" data-player-body="${escapeHtml(bodyTexture)}" aria-hidden="true"></canvas></button>` : ''}
       <div class="player-profile-actions">
         <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profileUsername)}">
           <svg class="player-profile-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
@@ -4157,77 +4345,63 @@ function renderPlayerProfile(profile) {
       </div>
     </header>
     <section class="player-profile-grid">
-      <div>
+      <div class="player-profile-stat">
         <header class="player-profile-metric-head">
-          <span>Playtime</span>
-          <button class="player-profile-refresh-button" type="button" data-player-refresh-command="!pt" aria-label="Refresh playtime for ${escapeHtml(profileUsername)}" title="Request current playtime">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
-          </button>
+          <span>${renderPlayerProfileMetricIcon('playtime')}Playtime</span>
+          ${renderPlayerProfileRefreshButton('!pt', `Refresh playtime for ${profileUsername}`, 'Request current playtime')}
         </header>
-        <strong>${escapeHtml(profile.playtime || '-')}</strong>
+        <strong class="${isEmptyValue(profile.playtime) ? 'is-empty' : ''}"${metricAttrs('playtime', profile.playtime)}>${escapeHtml(profile.playtime || '-')}</strong>
       </div>
-      <div>
+      <div class="player-profile-stat">
         <header class="player-profile-metric-head">
-          <span>Registered</span>
-          <button class="player-profile-refresh-button" type="button" data-player-refresh-command="!jd" aria-label="Refresh registration date for ${escapeHtml(profileUsername)}" title="Request current registration date">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
-          </button>
+          <span>${renderPlayerProfileMetricIcon('registered')}Registered</span>
+          ${renderPlayerProfileRefreshButton('!jd', `Refresh registration date for ${profileUsername}`, 'Request current registration date')}
         </header>
-        <button class="player-profile-value-button" type="button" data-profile-toggle="registration-date" title="${registrationTitle}">
+        <button class="player-profile-value-button${hasRegistration ? '' : ' is-empty'}" type="button" data-profile-toggle="registration-date" title="${registrationTitle}"${metricAttrs('registered', profile.registrationAt || profile.registrationDisplay)}>
           ${escapeHtml(registrationProfileValue(profile))}
         </button>
       </div>
-      <div>
+      <div class="player-profile-stat">
         <header class="player-profile-metric-head">
-          <span>Last Seen</span>
-          ${profile.isOnline || profile.lastSeen ? '' : `
-            <button class="player-profile-refresh-button" type="button" data-player-refresh-command="!seen" aria-label="Request last seen for ${escapeHtml(profileUsername)}" title="Request last seen">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
-            </button>`}
+          <span>${renderPlayerProfileMetricIcon('lastSeen')}Last Seen</span>
+          ${profile.isOnline || profile.lastSeen ? '' : renderPlayerProfileRefreshButton('!seen', `Request last seen for ${profileUsername}`, 'Request last seen')}
         </header>
         ${profile.isOnline
-          ? '<strong>Online now</strong>'
+          ? '<strong class="is-online">Online now</strong>'
           : profile.lastSeen
           ? `<button class="player-profile-value-button" type="button" data-profile-toggle="last-seen-date" title="${lastSeenTitle}">${escapeHtml(lastSeenProfileValue(profile))}</button>`
-          : '<strong>Never</strong>'}
-      </div>
-      <div>
-        <header class="player-profile-metric-head">
-          <span>Chat Messages</span>
-          ${messageRefreshRequested ? '' : `
-            <button class="player-profile-refresh-button" type="button" data-player-refresh-command="!messages" aria-label="Refresh chat messages for ${escapeHtml(profileUsername)}" title="Request current chat message count">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
-            </button>`}
-        </header>
-        <strong>${formatNumber(profile.chat?.totalMessages)}</strong>
-      </div>
-      <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
-      <div><span>Last Message</span><strong${profile.chat?.lastMessageAt ? ` data-profile-relative-time="${escapeHtml(profile.chat.lastMessageAt)}"` : ''}>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
-      <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
-      <div>
-        <span>Signs</span>
-        ${renderPlayerSignsButton(profileUsername)}
+          : '<strong class="is-empty">Never</strong>'}
       </div>
     </section>
+    <dl class="player-profile-facts">
+      <div>
+        <dt>Chat messages</dt>
+        <dd><strong${metricAttrs('messages', profile.chat?.totalMessages)}>${formatNumber(profile.chat?.totalMessages)}</strong>${messageRefreshRequested ? '' : renderPlayerProfileRefreshButton('!messages', `Refresh chat messages for ${profileUsername}`, 'Request current chat message count')}</dd>
+      </div>
+      <div>
+        <dt>Messages 24h</dt>
+        <dd><strong class="${last24h ? '' : 'is-empty'}"${metricAttrs('messages24h', last24h)}>${formatNumber(last24h)}</strong></dd>
+      </div>
+      <div>
+        <dt>Last Message</dt>
+        <dd><strong${profile.chat?.lastMessageAt ? ` data-profile-relative-time="${escapeHtml(profile.chat.lastMessageAt)}"` : ' class="is-empty"'}>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></dd>
+      </div>
+      <div>
+        <dt>Nearby</dt>
+        <dd><strong class="${nearby ? '' : 'is-empty'}"${metricAttrs('nearby', nearby?.distance)}>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></dd>
+      </div>
+      <div>
+        <dt>Signs</dt>
+        <dd>${renderPlayerSignsButton(profileUsername)}</dd>
+      </div>
+    </dl>
     ${gameSessionsSection}
     ${renderPlayerActivityPattern(profile.activityPattern)}
     ${adminMetadata}
     <section class="player-profile-chat">
       <h3>Recent Chat</h3>
       ${recentMessages.length
-        ? recentMessages.map(message => `
-          <article class="player-profile-message${profile.isBot ? ' player-profile-message-bot' : ''}${message.isVisible === false ? ' is-hidden' : ''}"${message.isVisible === false ? ' title="Hidden from public chat"' : ` data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat" role="button" tabindex="0"`}>
-            <div class="chat-message-body">
-              <div class="chat-message-head">
-                <span class="chat-message-name">${escapeHtml(profileUsername)}</span>
-                ${profile.isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
-                ${message.isVisible === false ? '<span class="chat-hidden-badge">Hidden</span>' : ''}
-                <time class="chat-time" datetime="${escapeHtml(message.createdAt || '')}">${escapeHtml(formatPlayerProfileChatTimestamp(message.createdAt))}</time>
-              </div>
-              <div class="chat-text">${linkifyChatMessage(message.message)}</div>
-            </div>
-          </article>
-        `).join('')
+        ? chatMarkup
         : '<div class="empty">No recorded chat messages for this player.</div>'}
       ${profile.chat?.hasMoreMessages
         ? `<button class="ghost-button player-profile-load-more" type="button" data-player-chat-more="${escapeHtml(profile.chat.nextBeforeMessageId || '')}">Load older messages</button>`
@@ -4332,13 +4506,19 @@ function updatePlayerProfileSessionClock() {
   // Replacing even one live timestamp can invalidate a selection whose range
   // crosses that text node. The interval catches up after selection ends.
   if (hasActiveTextSelectionWithin(content)) return;
+  fillPlayerProfileLiveTimes(document);
+}
+
+function fillPlayerProfileLiveTimes(root) {
   const now = Date.now();
-  for (const clock of clocks) {
+  for (const clock of root.querySelectorAll('[data-current-session-start]')) {
     const startedAt = new Date(clock.dataset.currentSessionStart).getTime();
-    if (Number.isFinite(startedAt)) clock.textContent = formatDurationMs(Math.max(0, now - startedAt));
+    const text = Number.isFinite(startedAt) ? formatDurationMs(Math.max(0, now - startedAt)) : '';
+    if (clock.textContent !== text) clock.textContent = text;
   }
-  for (const relativeTime of relativeTimes) {
-    relativeTime.textContent = formatRecentDate(relativeTime.dataset.profileRelativeTime);
+  for (const relativeTime of root.querySelectorAll('[data-profile-relative-time]')) {
+    const text = formatRecentDate(relativeTime.dataset.profileRelativeTime);
+    if (relativeTime.textContent !== text) relativeTime.textContent = text;
   }
 }
 
@@ -4411,11 +4591,17 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   // which shows up as a visible flicker on phones. Keep the previous header
   // element in place when its markup didn't actually change.
   const previousHead = content.querySelector('.player-profile-head');
-  const previousHeadHtml = previousHead?.outerHTML || null;
+  // Compare against the markup the head was rendered from: the live clock,
+  // the name fitter and the body canvas all change the element afterwards.
+  const previousHeadHtml = previousHead?._renderedHtml || null;
+  const previousMetrics = new Map([...content.querySelectorAll('[data-profile-metric]')]
+    .map(element => [element.dataset.profileMetric, element.dataset.metricValue]));
   clearTimeout(state.playerProfileRevealTimer);
   state.playerProfileRevealTimer = null;
   content.classList.remove('is-loading', 'profile-data-enter');
   content.innerHTML = renderPlayerProfile(profile);
+  const renderedHead = content.querySelector('.player-profile-head');
+  if (renderedHead) renderedHead._renderedHtml = renderedHead.outerHTML;
   if (publicPlayerUsername) {
     content.querySelectorAll('[data-whisper-player], [data-player-refresh-command]').forEach(control => control.remove());
     content.querySelectorAll('[data-chat-message-id]').forEach(message => {
@@ -4425,11 +4611,27 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   ensurePlayerSignCount(profile.username);
   fitPlayerProfileName();
   const nextHead = content.querySelector('.player-profile-head');
-  if (previousHead && nextHead && previousHeadHtml === nextHead.outerHTML) {
+  if (previousHead && nextHead && previousHeadHtml && previousHeadHtml === nextHead._renderedHtml) {
     nextHead.replaceWith(previousHead);
+  }
+  fillPlayerProfileLiveTimes(content);
+  drawPlayerProfileBodies(content, profile);
+  // A value that changed since the last render (usually after a !pt / !jd /
+  // !messages request) flashes once so the refresh visibly landed.
+  if (!animate && previousMetrics.size) {
+    content.querySelectorAll('[data-profile-metric]').forEach(element => {
+      const before = previousMetrics.get(element.dataset.profileMetric);
+      if (before !== undefined && before !== element.dataset.metricValue) element.classList.add('is-updated');
+    });
   }
   applyPlayerProfileAccent(profile);
   restorePlayerProfileViewState(content, viewState);
+  const card = content.closest('.player-profile-card');
+  if (card && !card._stickyHeadBound) {
+    card._stickyHeadBound = true;
+    card.addEventListener('scroll', updatePlayerProfileStickyHead, { passive: true });
+  }
+  updatePlayerProfileStickyHead();
   requestAnimationFrame(fitPlayerProfileName);
   document.fonts?.ready?.then(() => {
     if (!$('#playerProfileOverlay')?.hidden) fitPlayerProfileName();
@@ -4920,6 +5122,12 @@ async function handlePlayerProfileClick(event) {
     event.preventDefault();
     if (publicPlayerUsername) return;
     await openChatContext(chatMessage.dataset.chatMessageId);
+    return;
+  }
+  if (event.target.closest('[data-player-profile-top]')) {
+    event.preventDefault();
+    const card = event.target.closest('.player-profile-card');
+    card?.scrollTo({ top: 0, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     return;
   }
   const loadMore = event.target.closest('[data-player-chat-more]');

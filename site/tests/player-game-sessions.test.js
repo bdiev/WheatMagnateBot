@@ -119,7 +119,7 @@ assert.match(profileIndexMigrationSource, /game_chat_messages_player_uuid_profil
   'player profile lookup indexes must cover chat and nearby history');
 assert.match(appSource, /function lastSeenProfileValue\(profile\)\s*\{\s*if \(profile\.isOnline\) return 'Online now';/,
   'an online profile must never present its previous Last Seen age as the current status');
-assert.match(appSource, /<span>Last Seen<\/span>[\s\S]*profile\.isOnline\s*\? '<strong>Online now<\/strong>'/,
+assert.match(appSource, /Last Seen<\/span>[\s\S]*profile\.isOnline\s*\? '<strong class="is-online">Online now<\/strong>'/,
   'the Last Seen metric must explicitly render Online now for a connected profile');
 assert.match(serverSource, /async function searchSeenPlayers[\s\S]*FROM bot_accounts account[\s\S]*LEFT JOIN bot_account_runtime_state runtime[\s\S]*runtimesByUsername[\s\S]*Boolean\(row\.is_online\) \|\| runtimePresence\.isOnline/,
   'Seen search must merge fresh bot-account runtime presence into player activity results');

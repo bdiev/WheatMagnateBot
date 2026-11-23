@@ -4796,9 +4796,24 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
     toInt(gameSessionEventsResult.rows[0]?.total_sessions),
     gameSessions.length
   );
+  // The header draws the full body from the stored skin; no Mojang call here,
+  // the skins dialog keeps that history fresh.
+  let skin = null;
+  if (profile.player_uuid) {
+    try {
+      const skinResult = await pool.query(`
+        SELECT texture_hash, model FROM player_skin_history
+        WHERE player_uuid=$1::uuid
+        ORDER BY last_seen DESC,id DESC LIMIT 1
+      `, [profile.player_uuid]);
+      const row = skinResult.rows[0];
+      if (row?.texture_hash) skin = { hash: String(row.texture_hash).toLowerCase(), model: row.model === 'slim' ? 'slim' : 'classic' };
+    } catch { /* The profile still renders with just the head. */ }
+  }
 
   return {
     username: profile.username || username,
+    skin,
     uuid: profile.player_uuid || null,
     nameHistory: Array.isArray(profile.name_history) ? profile.name_history : [],
     isWhitelisted: Boolean(profile.is_whitelisted),
@@ -7114,7 +7129,7 @@ async function requestHandler(req, res) {
     const html = (await fs.promises.readFile(path.join(PUBLIC_DIR, 'index.html'), 'utf8'))
       .replace('<title>WheatMagnateBot</title>', `<title>${username} - WheatMagnateBot</title>`)
       .replace('<body>', `<body data-public-player="${username}">`)
-      .replace('</head>', '<link rel="stylesheet" href="/public-player.css?v=12"></head>');
+      .replace('</head>', '<link rel="stylesheet" href="/public-player.css?v=13"></head>');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(req.method === 'HEAD' ? undefined : html);
     return;

@@ -16661,3 +16661,616 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   outline: 3px solid color-mix(in srgb, var(--trader-accent) 45%, transparent);
   outline-offset: 2px;
 }
+
+/* ===== Player profile visual refresh =====
+   Status line and tags under the name, a pixel banner and full-body skin in
+   the head, three hero metrics plus a compact facts strip, session timeline
+   bars with day groups, an activity preview, chat day separators and
+   mentions, hover-only refresh buttons with an update flash, and a compact
+   sticky head once the real one scrolls away. */
+
+.player-profile-head {
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--accent) 26%, transparent), color-mix(in srgb, var(--accent) 6%, transparent) 58%, transparent 82%),
+    var(--panel-soft);
+}
+
+.player-profile-head::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    conic-gradient(color-mix(in srgb, var(--accent) 16%, transparent) 0 25%, transparent 0 50%, color-mix(in srgb, var(--accent) 16%, transparent) 0 75%, transparent 0) 0 0 / 16px 16px;
+  -webkit-mask-image: linear-gradient(105deg, #000 0, rgba(0, 0, 0, .55) 30%, transparent 62%);
+  mask-image: linear-gradient(105deg, #000 0, rgba(0, 0, 0, .55) 30%, transparent 62%);
+  opacity: .55;
+}
+
+.player-profile-actions {
+  position: relative;
+}
+
+.player-profile-head.has-body {
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+}
+
+.player-profile-body-wrap {
+  position: relative;
+  grid-column: 3;
+  grid-row: 1;
+  align-self: end;
+  display: block;
+  width: 48px;
+  min-width: 48px;
+  height: 96px;
+  min-height: 0;
+  margin: 0 4px -16px 12px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  text-shadow: none;
+  cursor: zoom-in;
+  transition: transform 160ms ease;
+}
+
+.player-profile-body-wrap:hover,
+.player-profile-body-wrap:focus-visible {
+  background: transparent;
+  box-shadow: none;
+  transform: translateY(-3px);
+}
+
+.player-profile-body-wrap:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 48%, transparent);
+  outline-offset: 4px;
+}
+
+.player-profile-body {
+  display: block;
+  width: 48px;
+  height: 96px;
+  image-rendering: pixelated;
+  opacity: 0;
+  filter: drop-shadow(3px 3px 0 rgba(0, 0, 0, .28));
+  transition: opacity 220ms ease;
+}
+
+.player-profile-body.is-ready {
+  opacity: 1;
+}
+
+/* Status: the first thing a profile answers */
+.player-profile-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.player-profile-status strong {
+  color: var(--text);
+  font-weight: 900;
+}
+
+.player-profile-status[data-status="online"] strong {
+  color: #3fa845;
+}
+
+:root[data-theme="dark"] .player-profile-status[data-status="online"] strong {
+  color: #6bd770;
+}
+
+.player-profile-status time {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.player-profile-status-dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+
+.player-profile-status[data-status="online"] .player-profile-status-dot {
+  background: #55c85a;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #55c85a 24%, transparent);
+  animation: mc-pulse-glow 1.8s ease-in-out infinite;
+}
+
+.player-profile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.player-profile-tags .admin-player-tag {
+  min-height: 20px;
+  padding: 2px 7px;
+  font-size: 10px;
+}
+
+.player-profile-badges .pill.is-whitelisted {
+  border-color: color-mix(in srgb, #55c85a 45%, var(--line));
+  color: #3fa845;
+  background: color-mix(in srgb, #55c85a 10%, var(--panel));
+}
+
+:root[data-theme="dark"] .player-profile-badges .pill.is-whitelisted {
+  color: #6bd770;
+}
+
+/* Hero metrics */
+.player-profile-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-bottom: 10px;
+}
+
+.player-profile-grid > .player-profile-stat {
+  padding: 12px 14px 13px;
+}
+
+.player-profile-metric-head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.player-profile-metric-icon {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--accent-strong);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.player-profile-grid > .player-profile-stat strong,
+.player-profile-grid > .player-profile-stat .player-profile-value-button {
+  margin-top: 6px;
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.player-profile-grid strong.is-online {
+  color: #3fa845;
+}
+
+:root[data-theme="dark"] .player-profile-grid strong.is-online {
+  color: #6bd770;
+}
+
+/* Missing data reads as missing, not as a value */
+.player-profile-grid .is-empty,
+.player-profile-facts .is-empty {
+  color: var(--muted);
+  font-weight: 600;
+  opacity: .8;
+}
+
+/* Secondary facts: one quiet strip */
+.player-profile-facts {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 14px 16px;
+  overflow: hidden;
+  border: 2px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--line);
+  box-shadow: var(--shadow-inset);
+}
+
+.player-profile-facts > div {
+  min-width: 0;
+  padding: 8px 12px 9px;
+  background: var(--panel-soft);
+}
+
+.player-profile-facts dt {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .03em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.player-profile-facts dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 24px;
+  margin: 3px 0 0;
+}
+
+.player-profile-facts dd > strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-profile-facts .player-profile-value-button {
+  width: auto;
+  margin: 0;
+  font-size: 14px;
+}
+
+.player-profile-facts .player-profile-refresh-button {
+  flex-basis: 22px;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+}
+
+/* Refresh controls appear on demand where a pointer can hover */
+@media (hover: hover) and (pointer: fine) {
+  .player-profile-grid .player-profile-refresh-button,
+  .player-profile-facts .player-profile-refresh-button {
+    opacity: 0;
+    transition: opacity 140ms ease, border-color 160ms ease, background-color 160ms ease, transform 160ms ease;
+  }
+
+  .player-profile-stat:hover .player-profile-refresh-button,
+  .player-profile-stat:focus-within .player-profile-refresh-button,
+  .player-profile-facts > div:hover .player-profile-refresh-button,
+  .player-profile-facts > div:focus-within .player-profile-refresh-button,
+  .player-profile-refresh-button.is-refreshing {
+    opacity: 1;
+  }
+}
+
+/* A value that changed after a refresh flashes once */
+.player-profile-grid .is-updated,
+.player-profile-facts .is-updated {
+  border-radius: 2px;
+  animation: player-profile-value-updated 1.6s ease-out;
+}
+
+@keyframes player-profile-value-updated {
+  0%, 30% {
+    color: var(--accent-strong);
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+/* Sessions: grouped by day, each with a bar for its length */
+.player-profile-day {
+  margin: 2px 0 -3px;
+  padding: 2px 2px 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.player-profile-day:first-child {
+  margin-top: 0;
+}
+
+.player-profile-session-list.is-scrollable .player-profile-day {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 3px;
+  background: var(--panel);
+}
+
+.player-profile-session-list {
+  grid-auto-rows: max-content;
+}
+
+.player-profile-session {
+  row-gap: 7px;
+  min-height: 0;
+}
+
+.player-profile-session-bar {
+  grid-column: 2 / -1;
+  width: var(--session-share);
+  height: 4px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 58%, transparent);
+}
+
+.player-profile-session.is-current .player-profile-session-bar {
+  background: repeating-linear-gradient(90deg, #55c85a 0 6px, color-mix(in srgb, #55c85a 55%, transparent) 6px 12px);
+  background-size: 24px 100%;
+  animation: player-session-bar-flow 900ms linear infinite;
+}
+
+@keyframes player-session-bar-flow {
+  to { background-position: 24px 0; }
+}
+
+/* Activity: a 24-hour preview while the section is closed */
+.player-profile-section-head > .player-activity-preview {
+  display: grid;
+  flex: 0 0 168px;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  align-items: end;
+  gap: 1px;
+  height: 26px;
+  margin-left: auto;
+  padding-bottom: 1px;
+  border-bottom: 1px solid var(--line);
+}
+
+.player-activity-preview i {
+  display: block;
+  height: var(--level);
+  min-height: 2px;
+  border-radius: 1px 1px 0 0;
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
+}
+
+.player-profile-activity > summary > div {
+  min-width: 0;
+}
+
+.player-profile-activity[open] .player-activity-preview {
+  display: none;
+}
+
+/* Chat: day separators and messages addressed to the bot */
+.player-profile-chat-day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 1px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.player-profile-chat-day::before,
+.player-profile-chat-day::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line);
+}
+
+.player-profile-message.is-mention {
+  border-left-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 13%, var(--hud-bg));
+}
+
+.player-profile-message.is-mention:hover,
+.player-profile-message.is-mention:focus-visible {
+  border-left-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 20%, var(--hud-bg-soft));
+}
+
+.player-profile-message.is-mention .chat-message-head {
+  justify-content: flex-start;
+}
+
+.player-profile-message.is-mention .chat-time {
+  margin-left: auto;
+}
+
+.chat-mention-badge {
+  border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  border-radius: 2px;
+  padding: 2px 6px;
+  color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
+  font-family: var(--font-pixel);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+/* Compact head once the real one has scrolled away */
+.player-profile-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: 0;
+}
+
+.player-profile-sticky-bar,
+.player-profile-sticky-bar:hover,
+.player-profile-sticky-bar:active:not(:disabled) {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 46px;
+  border: 0;
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 0;
+  padding: 6px 16px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-soft));
+  box-shadow: 0 6px 14px rgba(0, 0, 0, .16);
+  font: inherit;
+  text-align: left;
+  text-shadow: none;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 200ms cubic-bezier(.2, .9, .2, 1);
+}
+
+.player-profile-card.is-head-collapsed .player-profile-sticky-bar {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.player-profile-sticky-bar img {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border: 2px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-radius: 2px;
+  image-rendering: pixelated;
+}
+
+.player-profile-sticky-bar > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--accent-strong);
+  font-family: "Minecraft Rus", var(--font-display);
+  font-size: 16px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+}
+
+.player-profile-sticky-bar .player-profile-status {
+  flex-wrap: nowrap;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 11px;
+}
+
+.player-profile-sticky-up {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+/* Skeleton follows the new layout */
+.player-profile-skeleton-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.player-profile-skeleton-grid .player-profile-skeleton-card {
+  height: 74px;
+}
+
+.player-profile-skeleton-facts {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 14px 16px;
+  border: 2px solid var(--line);
+  border-radius: 3px;
+  padding: 14px 12px;
+}
+
+#playerProfileContent.profile-data-enter > .player-profile-facts {
+  animation: player-profile-data-reveal 480ms cubic-bezier(.16, 1, .3, 1) 70ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-profile-status[data-status="online"] .player-profile-status-dot,
+  .player-profile-session.is-current .player-profile-session-bar,
+  .player-profile-grid .is-updated,
+  .player-profile-facts .is-updated {
+    animation: none;
+  }
+
+  .player-profile-sticky-bar,
+  .player-profile-body-wrap {
+    transition: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .player-profile-head.has-body {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .player-profile-body-wrap {
+    display: none;
+  }
+
+  .player-profile-status {
+    margin-top: 2px;
+  }
+
+  .player-profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-bottom: 7px;
+  }
+
+  .player-profile-grid > .player-profile-stat:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .player-profile-grid > .player-profile-stat strong,
+  .player-profile-grid > .player-profile-stat .player-profile-value-button {
+    font-size: 16px;
+  }
+
+  .player-profile-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0 8px 10px;
+    border-radius: 4px;
+  }
+
+  .player-profile-facts > div {
+    padding: 8px 10px;
+  }
+
+  .player-profile-facts > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .player-profile-section-head > .player-activity-preview {
+    flex-basis: 96px;
+    height: 20px;
+  }
+
+  .player-profile-sticky-bar,
+  .player-profile-sticky-bar:hover {
+    padding-inline: 10px;
+  }
+
+  .player-profile-skeleton-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .player-profile-skeleton-grid .player-profile-skeleton-card:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .player-profile-skeleton-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0 8px 10px;
+  }
+}
