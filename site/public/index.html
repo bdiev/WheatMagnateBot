@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=325">
+  <link rel="stylesheet" href="/styles.css?v=327">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -846,6 +846,7 @@
                 <span class="stat-label">Trader</span>
                 <div class="trader-state-value"><i aria-hidden="true"></i><strong id="traderState">-</strong></div>
               </div>
+              <button id="traderToggleButton" class="trader-primary-button trader-power-button" type="button" data-bot-command="trader_toggle">Start Trader</button>
             </div>
             <p id="traderStatus" class="trader-hero-status" aria-live="polite">Scan from the bot's spot, then choose the chests.</p>
             <ol id="traderPhases" class="trader-phases" aria-label="Trading round">
@@ -861,7 +862,6 @@
               <svg viewBox="0 0 44 44" aria-hidden="true"><circle class="trader-countdown-track" cx="22" cy="22" r="19"></circle><circle class="trader-countdown-bar" cx="22" cy="22" r="19" pathLength="100"></circle></svg>
               <span><strong id="traderCountdownValue">-</strong><small>next check</small></span>
             </div>
-            <button id="traderToggleButton" class="trader-primary-button trader-power-button" type="button" data-bot-command="trader_toggle">Start Trader</button>
             <small id="traderUpdated" class="trader-updated">last update: -</small>
           </div>
         </section>
@@ -2027,6 +2027,6 @@
     <script src="/player-accent.js?v=1" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=386" defer></script>
+    <script src="/app.js?v=387" defer></script>
   </body>
 </html>

@@ -12256,7 +12256,7 @@ function renderStoneMinerGenerator(payload) {
   const list = $('#stoneMinerLine');
   if (list) {
     list.innerHTML = blocks.length
-      ? blocks.map((block, index) => `<li style="--i:${index}" title="${escapeHtml(`${block.x} ${block.y} ${block.z}`)}"><img src="/items/Stone.png" alt="" aria-hidden="true"><span>${index + 1}</span></li>`).join('')
+      ? blocks.map((block, index) => `<li title="${escapeHtml(`${block.x} ${block.y} ${block.z}`)}"><img src="/items/Stone.png" alt="" aria-hidden="true"><span>${index + 1}</span></li>`).join('')
       : '<li class="miner-line-empty">Press Learn and break a block</li>';
   }
   const summary = $('#stoneMinerLineSummary');
