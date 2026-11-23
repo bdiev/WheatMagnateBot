@@ -21,6 +21,34 @@ assert.notEqual(
   'identity must keep very similar avatars visually distinguishable'
 );
 
+// A grid of pixels, mostly one colour with a share of another
+function mixedPixels(base, detail, detailShare, count = 400) {
+  const detailCount = Math.round(count * detailShare);
+  return Uint8ClampedArray.from(Array.from({ length: count }, (_, index) => [...(index < detailCount ? detail : base), 255]).flat());
+}
+
+// A black skin with a couple of white dots is neutral, not a random hue
+const blackSkin = pickPlayerAccent(mixedPixels([18, 18, 20], [240, 240, 240], 0.04), 'bdiev_');
+assert.equal(blackSkin.source, 'neutral', 'black and white avatars must not invent a hue');
+assert.ok(blackSkin.saturation <= 14, 'a neutral accent must stay nearly grey');
+const neutralTheme = createPlayerAccentTheme(blackSkin);
+const [, neutralSaturation] = neutralTheme['--player-accent-light'].match(/hsl\([\d.]+ (\d+)%/);
+assert.ok(Number(neutralSaturation) <= 14, 'the neutral theme must not be pushed back to a vivid saturation');
+
+// Near-black reds read as black to the eye: still neutral
+assert.equal(pickPlayerAccent(solidPixels(24, 12, 12), 'DarkPlayer').source, 'neutral');
+
+// Two vivid eye pixels on a grey head do not colour the whole profile
+assert.equal(pickPlayerAccent(mixedPixels([120, 120, 125], [40, 90, 230], 0.03), 'GreyPlayer').source, 'neutral');
+
+// A grey hoodie with a red print takes the red, not a fallback hue
+const greyWithRed = pickPlayerAccent(mixedPixels([110, 110, 110], [210, 40, 40], 0.25), 'HoodiePlayer');
+assert.equal(greyWithRed.source, 'avatar');
+assert.ok(greyWithRed.hue < 20 || greyWithRed.hue > 340, 'a clear colour beside grey must be the accent');
+
+// An unreadable image keeps a stable hue from the name
+assert.equal(pickPlayerAccent([], 'Nobody').source, 'fallback');
+
 const theme = createPlayerAccentTheme(redAccent);
 assert.match(theme['--player-accent-light'], /^hsl\(/);
 assert.match(theme['--player-accent-dark'], /^hsl\(/);
@@ -33,7 +61,7 @@ const serviceWorkerSource = fs.readFileSync(path.join(__dirname, '..', 'public',
 assert.match(appSource, /function applyPlayerProfileAccent\(profile\)[\s\S]*accentFromImage\(image, key\)[\s\S]*setPlayerProfileAccent\(theme\)/);
 assert.match(stylesSource, /\.player-profile-card\.has-player-accent[\s\S]*--accent:\s*var\(--player-accent-light\)/);
 assert.match(stylesSource, /\.player-profile-actions > \.player-profile-message-action:first-child[\s\S]*background:\s*var\(--accent\)/);
-assert.ok(indexSource.indexOf('/player-accent.js?v=1') < indexSource.indexOf('/app.js?v='), 'accent extraction must load before the app');
+assert.ok(indexSource.search(/\/player-accent\.js\?v=\d+/) >= 0 && indexSource.search(/\/player-accent\.js\?v=\d+/) < indexSource.indexOf('/app.js?v='), 'accent extraction must load before the app');
 assert.match(serviceWorkerSource, /'\/player-accent\.js'/, 'accent extraction must be available in the offline app shell');
 assert.match(appSource, /setPlayerProfileLoading\(true\)[\s\S]*renderPlayerProfileSkeleton\(\)/, 'the profile card must enter its neutral loading theme before rendering the skeleton');
 assert.match(stylesSource, /\.player-profile-card\.profile-loading\s*\{[^}]*--accent:\s*#c9ccca;[^}]*border-color:\s*var\(--line\);/s, 'the loading theme must blend into the current surface with a low-contrast neutral accent');

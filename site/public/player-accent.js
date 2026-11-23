@@ -37,19 +37,39 @@
     return { hue, saturation, lightness };
   }
 
+  // Below this share of colourful pixels a skin reads as black, white or
+  // grey, and its accent stays neutral instead of inventing a hue.
+  const CHROMATIC_SHARE_MINIMUM = 0.1;
+
   function pickPlayerAccent(pixels, identity = 'player') {
     const bins = new Map();
     let opaquePixelCount = 0;
+    let chromaticPixelCount = 0;
+    // Faint colour cast of the whole avatar, for tinting a neutral accent
+    let tintX = 0;
+    let tintY = 0;
+    let tintWeight = 0;
     for (let index = 0; index + 3 < pixels.length; index += 4) {
       const alpha = pixels[index + 3];
       if (alpha < 96) continue;
+      opaquePixelCount += 1;
       const red = pixels[index];
       const green = pixels[index + 1];
       const blue = pixels[index + 2];
       const hsl = rgbToHsl(red, green, blue);
+      // HSL saturation calls a near-black (20,10,10) "33% saturated"; chroma
+      // measures how much colour the eye actually sees.
+      const chroma = (Math.max(red, green, blue) - Math.min(red, green, blue)) / 255;
+      if (chroma >= 0.035) {
+        const angle = hsl.hue * Math.PI / 180;
+        tintX += Math.cos(angle) * chroma;
+        tintY += Math.sin(angle) * chroma;
+        tintWeight += chroma;
+      }
+      if (chroma < 0.16 || hsl.lightness < 0.1 || hsl.lightness > 0.92) continue;
+      chromaticPixelCount += 1;
       const lightnessFit = 1 - Math.min(0.72, Math.abs(hsl.lightness - 0.5) * 1.25);
-      const vividness = 0.22 + (hsl.saturation * hsl.saturation * 1.9);
-      const weight = vividness * lightnessFit * (alpha / 255);
+      const weight = (0.35 + chroma * 1.8) * lightnessFit * (alpha / 255);
       const key = `${red >> 5}:${green >> 5}:${blue >> 5}`;
       const bin = bins.get(key) || { count: 0, score: 0, red: 0, green: 0, blue: 0 };
       bin.count += 1;
@@ -58,17 +78,23 @@
       bin.green += green * weight;
       bin.blue += blue * weight;
       bins.set(key, bin);
-      opaquePixelCount += 1;
     }
 
-    const minimumCount = Math.max(1, Math.floor(opaquePixelCount * 0.012));
-    const candidates = [...bins.values()]
-      .filter(bin => bin.count >= minimumCount)
-      .sort((left, right) => (right.score * (1 + Math.log1p(right.count) * 0.07)) - (left.score * (1 + Math.log1p(left.count) * 0.07)));
-    const selected = candidates[0];
     const hash = identityHash(identity);
+    // Nothing readable (the image failed): a stable hue from the name
+    if (!opaquePixelCount) return { hue: hash % 360, saturation: 68, source: 'fallback' };
+
+    const minimumCount = Math.max(1, Math.floor(chromaticPixelCount * 0.03));
+    const candidates = chromaticPixelCount / opaquePixelCount < CHROMATIC_SHARE_MINIMUM
+      ? []
+      : [...bins.values()]
+        .filter(bin => bin.count >= minimumCount)
+        .sort((left, right) => (right.score * (1 + Math.log1p(right.count) * 0.07)) - (left.score * (1 + Math.log1p(left.count) * 0.07)));
+    const selected = candidates[0];
     if (!selected || !selected.score) {
-      return { hue: hash % 360, saturation: 68, source: 'fallback' };
+      const tintHue = tintWeight ? (Math.atan2(tintY, tintX) * 180 / Math.PI + 360) % 360 : 0;
+      const tintStrength = Math.hypot(tintX, tintY) / opaquePixelCount;
+      return { hue: Math.round(tintHue), saturation: clamp(Math.round(tintStrength * 90), 0, 14), source: 'neutral' };
     }
 
     const average = rgbToHsl(
@@ -77,11 +103,10 @@
       selected.blue / selected.score
     );
     const identityOffset = ((hash / 0xffffffff) * 5.5) - 2.75;
-    const hasAvatarHue = average.saturation >= 0.1;
     return {
-      hue: hasAvatarHue ? (average.hue + identityOffset + 360) % 360 : hash % 360,
+      hue: (average.hue + identityOffset + 360) % 360,
       saturation: clamp(Math.round(average.saturation * 112), 58, 84),
-      source: hasAvatarHue ? 'avatar' : 'fallback'
+      source: 'avatar'
     };
   }
 
@@ -118,18 +143,25 @@
 
   function createPlayerAccentTheme(accent) {
     const hue = Number(accent?.hue) || 0;
-    const saturation = clamp(Number(accent?.saturation) || 68, 58, 84);
-    const lightAccent = 38;
-    const darkAccent = 62;
+    // Black, white and grey skins get graphite in the light theme and silver
+    // in the dark one, keeping only a faint cast of their own colour.
+    const neutral = accent?.source === 'neutral';
+    const saturation = neutral
+      ? clamp(Number(accent?.saturation) || 0, 0, 14)
+      : clamp(Number(accent?.saturation) || 68, 58, 84);
+    const lightAccent = neutral ? 30 : 38;
+    const darkAccent = neutral ? 72 : 62;
+    const lightStrong = neutral ? `${saturation}% 20%` : `${Math.max(52, saturation - 4)}% 27%`;
+    const darkStrong = neutral ? `${saturation}% 84%` : `${Math.max(60, saturation)}% 74%`;
     const lightContrast = contrastColor(hue, saturation, lightAccent);
     const darkContrast = contrastColor(hue, saturation, darkAccent);
     return {
       '--player-accent-light': `hsl(${hue.toFixed(1)} ${saturation}% ${lightAccent}%)`,
-      '--player-accent-light-strong': `hsl(${hue.toFixed(1)} ${Math.max(52, saturation - 4)}% 27%)`,
+      '--player-accent-light-strong': `hsl(${hue.toFixed(1)} ${lightStrong})`,
       '--player-accent-light-contrast': lightContrast.color,
       '--player-accent-light-contrast-shadow': lightContrast.shadow,
       '--player-accent-dark': `hsl(${hue.toFixed(1)} ${saturation}% ${darkAccent}%)`,
-      '--player-accent-dark-strong': `hsl(${hue.toFixed(1)} ${Math.max(60, saturation)}% 74%)`,
+      '--player-accent-dark-strong': `hsl(${hue.toFixed(1)} ${darkStrong})`,
       '--player-accent-dark-contrast': darkContrast.color,
       '--player-accent-dark-contrast-shadow': darkContrast.shadow
     };
