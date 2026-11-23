@@ -12713,13 +12713,29 @@ function renderLogSwitches(settings = {}) {
   container.innerHTML = sorted.length
     ? sorted.map(tag => {
       const enabled = !muted.has(tag.toLowerCase());
-      return `<button type="button" class="admin-log-switch" role="switch" aria-checked="${enabled}" data-log-tag="${escapeHtml(tag)}" style="--tag-hue:${logTagHue(tag)}" title="${enabled ? 'Shown; click to hide' : 'Hidden; click to show'}">
+      const name = logTagDisplayName(tag);
+      return `<button type="button" class="admin-log-switch" role="switch" aria-checked="${enabled}" aria-label="${escapeHtml(name)} log" data-log-tag="${escapeHtml(tag)}" style="--tag-hue:${logTagHue(tag)}" title="[${escapeHtml(tag)}] — ${enabled ? 'shown; click to hide' : 'hidden; click to show'}">
+        <span class="admin-log-switch-icon" aria-hidden="true">${escapeHtml(name.charAt(0).toUpperCase())}</span>
+        <span class="admin-log-switch-name"><strong>${escapeHtml(name)}</strong><small>${enabled ? 'Shown' : 'Muted'}</small></span>
         <span class="admin-log-switch-track" aria-hidden="true"><span></span></span>
-        <span class="admin-log-switch-name">${escapeHtml(tag)}</span>
-        <small>${enabled ? 'On' : 'Off'}</small>
       </button>`;
     }).join('')
     : '<p class="admin-log-switches-empty">No tagged log lines yet. They appear here as the bot writes them.</p>';
+  updateLogSwitchCount();
+}
+
+// "GrowingChild" reads as "Growing Child"; the tag itself stays as written
+function logTagDisplayName(tag) {
+  return String(tag).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
+}
+
+function updateLogSwitchCount() {
+  const count = $('#adminLogSwitchesCount');
+  const switches = [...document.querySelectorAll('#adminLogSwitches .admin-log-switch')];
+  if (!count) return;
+  count.hidden = switches.length === 0;
+  const shown = switches.filter(button => button.getAttribute('aria-checked') === 'true').length;
+  count.innerHTML = `<strong>${shown}</strong> / ${switches.length} shown`;
 }
 
 async function handleLogSwitchClick(event) {
@@ -12731,7 +12747,8 @@ async function handleLogSwitchClick(event) {
   const setShown = value => {
     button.setAttribute('aria-checked', String(value));
     const label = button.querySelector('small');
-    if (label) label.textContent = value ? 'On' : 'Off';
+    if (label) label.textContent = value ? 'Shown' : 'Muted';
+    updateLogSwitchCount();
   };
   setShown(enabled);
   button.setAttribute('aria-busy', 'true');
