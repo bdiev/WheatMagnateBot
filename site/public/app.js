@@ -11677,10 +11677,74 @@ function renderObsidianDebugLogDownload(entry) {
   ><span aria-hidden="true">&#8595;</span> Download logs</a>`;
 }
 
+// Same tag, same colour: in the log list and on the Log Switches
+function logTagHue(tag) {
+  let hash = 0;
+  for (const char of String(tag).toLowerCase()) hash = (hash * 31 + char.codePointAt(0)) >>> 0;
+  return hash % 360;
+}
+
+// "[Trader] Crafted 2 blocks. [StoneMagnate]" -> module tag, text, account
+function splitSystemLogMessage(message) {
+  let text = String(message || '');
+  let tag = null;
+  let account = null;
+  const lead = /^\s*\[([A-Za-z][A-Za-z0-9 _.\-]{0,31})\]\s*/.exec(text);
+  if (lead) {
+    tag = lead[1].trim();
+    text = text.slice(lead[0].length);
+  }
+  const tail = /\s+\[([A-Za-z0-9_]{2,16})\]\s*$/.exec(text);
+  if (tail) {
+    account = tail[1];
+    text = text.slice(0, tail.index);
+  }
+  return { tag, text, account };
+}
+
+function systemLogDayKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: state.accountTimezone }).format(date);
+}
+
+function systemLogDayLabel(value) {
+  const key = systemLogDayKey(value);
+  if (!key) return 'Unknown date';
+  if (key === systemLogDayKey(Date.now())) return 'Today';
+  if (key === systemLogDayKey(Date.now() - 86_400_000)) return 'Yesterday';
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: state.accountTimezone }).format(new Date(value));
+}
+
+function formatSystemLogTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: state.accountTimezone }).format(date);
+}
+
+function renderSystemLogTime(value) {
+  const date = new Date(value);
+  const title = Number.isNaN(date.getTime()) ? '' : ` datetime="${escapeHtml(date.toISOString())}" title="${escapeHtml(formatDate(value))}"`;
+  return `<time class="admin-log-time"${title}>${formatSystemLogTime(value)}</time>`;
+}
+
+function renderSystemLogTag(tag) {
+  return tag ? `<span class="admin-log-tag" style="--tag-hue:${logTagHue(tag)}">${escapeHtml(tag)}</span>` : '';
+}
+
+function renderSystemLogCategory(category, tag) {
+  const plain = value => String(value || '').toLowerCase().replace(/[\s_-]+/g, '');
+  // "trader" next to the Trader tag says nothing new
+  if (tag && plain(category) === plain(tag)) return '';
+  return `<span class="admin-log-category">${escapeHtml(String(category).replace(/_/g, ' '))}</span>`;
+}
+
 function renderAdminSystemLogEntry(entry) {
   const logId = String(entry.id || '');
   const level = escapeHtml(entry.level || 'info');
-  const category = escapeHtml(entry.category || entry.kind || 'system');
+  const message = splitSystemLogMessage(entry.message);
+  const category = renderSystemLogCategory(entry.category || entry.kind || 'system', message.tag);
+  const account = message.account ? `<span class="admin-log-account">${escapeHtml(message.account)}</span>` : '';
   const actor = entry.actor ? `<span class="admin-log-actor">${escapeHtml(entry.actor)}</span>` : '';
   const kind = escapeHtml(entry.kind || 'system');
   const details = renderLogDetails(entry.details);
@@ -11695,13 +11759,15 @@ function renderAdminSystemLogEntry(entry) {
     <article class="admin-log-entry ${level}" data-kind="${kind}">
       <div class="admin-log-content">
         <div class="admin-log-main">
-          <span class="admin-log-time">${formatDate(entry.createdAt)}</span>
+          ${renderSystemLogTime(entry.createdAt)}
           <span class="pill ${level}">${level}</span>
-          <span class="admin-log-category">${category}</span>
+          ${renderSystemLogTag(message.tag)}
+          ${category}
+          ${account}
           ${actor}
           <span class="admin-log-record-id">ID ${escapeHtml(logId)}</span>
         </div>
-        <p>${escapeHtml(entry.message || '')}</p>
+        <p class="admin-log-message">${escapeHtml(message.text)}</p>
         ${debugLogReference}
         ${details ? `<details class="admin-log-details"${detailsId}${detailsOpen}><summary>Details</summary>${details}</details>` : ''}
       </div>
@@ -11751,22 +11817,28 @@ function renderAdminSystemLogGroup(group) {
     (SYSTEM_LOG_LEVEL_RANK[entry.level] ?? 1) > (SYSTEM_LOG_LEVEL_RANK[top] ?? 1) ? entry.level : top
   ), pattern[0].level || 'info'));
   const categories = [...new Set(pattern.map(entry => entry.category || entry.kind || 'system'))];
+  const message = splitSystemLogMessage(newest.message);
   const groupId = `group-${String(oldest.id || '')}`;
   const detailsOpen = state.adminOpenLogDetails.has(groupId) ? ' open' : '';
   return `
     <article class="admin-log-entry admin-log-group ${level}" data-kind="${escapeHtml(newest.kind || 'system')}">
       <div class="admin-log-content">
         <div class="admin-log-main">
-          <span class="admin-log-time">${formatDate(oldest.createdAt)} – ${formatDate(newest.createdAt)}</span>
+          <span class="admin-log-time" title="${escapeHtml(formatDate(oldest.createdAt))} – ${escapeHtml(formatDate(newest.createdAt))}">${formatSystemLogTime(oldest.createdAt)} – ${formatSystemLogTime(newest.createdAt)}</span>
           <span class="pill ${level}">${level}</span>
-          <span class="admin-log-category">${escapeHtml(categories.join(', '))}</span>
+          ${group.period > 1 ? '' : renderSystemLogTag(message.tag)}
+          ${group.period > 1
+            ? `<span class="admin-log-category">${escapeHtml(categories.join(', ').replace(/_/g, ' '))}</span>`
+            : renderSystemLogCategory(categories[0], message.tag)}
+          ${group.period > 1 || !message.account ? '' : `<span class="admin-log-account">${escapeHtml(message.account)}</span>`}
           <span class="admin-log-repeat-count" title="${group.entries.length} entries">&times;${group.repeats}</span>
         </div>
         ${group.period > 1
-          ? `<p>Repeated cycle of ${group.period} events:</p><ul class="admin-log-cycle">${pattern.map(entry => (
-            `<li><span class="pill ${escapeHtml(entry.level || 'info')}">${escapeHtml(entry.level || 'info')}</span> ${escapeHtml(entry.message || '')}</li>`
-          )).join('')}</ul>`
-          : `<p>${escapeHtml(newest.message || '')}</p>`}
+          ? `<p class="admin-log-message">Repeated cycle of ${group.period} events:</p><ul class="admin-log-cycle">${pattern.map(entry => {
+            const part = splitSystemLogMessage(entry.message);
+            return `<li><span class="pill ${escapeHtml(entry.level || 'info')}">${escapeHtml(entry.level || 'info')}</span> ${renderSystemLogTag(part.tag)} <span>${escapeHtml(part.text)}</span></li>`;
+          }).join('')}</ul>`
+          : `<p class="admin-log-message">${escapeHtml(message.text)}</p>`}
         <details class="admin-log-details admin-log-group-details" data-log-id="${escapeHtml(groupId)}"${detailsOpen}>
           <summary>Show all ${group.entries.length} entries</summary>
           <div class="admin-log-group-entries">${group.entries.map(renderAdminSystemLogEntry).join('')}</div>
@@ -11776,10 +11848,20 @@ function renderAdminSystemLogGroup(group) {
   `;
 }
 
+function systemLogMatchesSearch(entry, words) {
+  if (!words.length) return true;
+  const haystack = [entry.message, entry.category, entry.level, entry.actor, entry.id].join(' ').toLowerCase();
+  return words.every(word => haystack.includes(word));
+}
+
 function renderAdminSystemLogs(logs = []) {
   const list = $('#adminSystemLogs');
   if (!list) return;
-  const renderSignature = stableSignature(logs.map(entry => [
+  state.adminSystemLogsData = logs;
+  const search = String($('#adminLogSearch')?.value || '').trim().toLowerCase();
+  const words = search.split(/\s+/).filter(Boolean);
+  logs = logs.filter(entry => systemLogMatchesSearch(entry, words));
+  const renderSignature = stableSignature([search, state.accountTimezone, systemLogDayKey(Date.now())]) + stableSignature(logs.map(entry => [
     entry.id,
     entry.level,
     entry.category,
@@ -11796,7 +11878,7 @@ function renderAdminSystemLogs(logs = []) {
     else state.adminOpenLogDetails.delete(details.dataset.logId);
   });
   if (!logs.length) {
-    const filtered = ($('#adminLogType')?.value || 'all') !== 'all' || ($('#adminLogLevel')?.value || 'all') !== 'all';
+    const filtered = words.length > 0 || ($('#adminLogType')?.value || 'all') !== 'all' || ($('#adminLogLevel')?.value || 'all') !== 'all';
     list.innerHTML = `<div class="empty">${filtered ? 'No log entries match these filters.' : 'No system log entries yet.'}</div>`;
     state.adminOpenLogDetails.clear();
     state.renderSignatures['#adminSystemLogs'] = renderSignature;
@@ -11809,7 +11891,15 @@ function renderAdminSystemLogs(logs = []) {
     if (!visibleIds.has(id)) state.adminOpenLogDetails.delete(id);
   });
 
-  list.innerHTML = groupRepeatedSystemLogs(logs).map(renderAdminSystemLogGroup).join('');
+  let lastDay = null;
+  list.innerHTML = groupRepeatedSystemLogs(logs).map(group => {
+    const day = systemLogDayKey(group.entries[0].createdAt);
+    const separator = day !== lastDay
+      ? `<h3 class="admin-log-day"><span>${escapeHtml(systemLogDayLabel(group.entries[0].createdAt))}</span></h3>`
+      : '';
+    lastDay = day;
+    return separator + renderAdminSystemLogGroup(group);
+  }).join('');
   state.renderSignatures['#adminSystemLogs'] = renderSignature;
 
   list.querySelectorAll('.admin-log-details[data-log-id]').forEach(details => {
@@ -12623,7 +12713,11 @@ function renderLogSwitches(settings = {}) {
   container.innerHTML = sorted.length
     ? sorted.map(tag => {
       const enabled = !muted.has(tag.toLowerCase());
-      return `<button type="button" class="${enabled ? '' : 'ghost-button'}" data-log-tag="${escapeHtml(tag)}" aria-pressed="${enabled}" title="${enabled ? 'Shown; click to hide' : 'Hidden; click to show'}">[${escapeHtml(tag)}]</button>`;
+      return `<button type="button" class="admin-log-switch" role="switch" aria-checked="${enabled}" data-log-tag="${escapeHtml(tag)}" style="--tag-hue:${logTagHue(tag)}" title="${enabled ? 'Shown; click to hide' : 'Hidden; click to show'}">
+        <span class="admin-log-switch-track" aria-hidden="true"><span></span></span>
+        <span class="admin-log-switch-name">${escapeHtml(tag)}</span>
+        <small>${enabled ? 'On' : 'Off'}</small>
+      </button>`;
     }).join('')
     : '<p class="admin-log-switches-empty">No tagged log lines yet. They appear here as the bot writes them.</p>';
 }
@@ -12631,14 +12725,23 @@ function renderLogSwitches(settings = {}) {
 async function handleLogSwitchClick(event) {
   const button = event.target.closest('[data-log-tag]');
   if (!button || state.currentUser?.role !== 'admin') return;
-  const enabled = button.getAttribute('aria-pressed') !== 'true';
-  button.disabled = true;
+  if (button.getAttribute('aria-busy') === 'true') return;
+  const enabled = button.getAttribute('aria-checked') !== 'true';
+  // Flip at once; the bot's answer redraws the list with the saved state
+  const setShown = value => {
+    button.setAttribute('aria-checked', String(value));
+    const label = button.querySelector('small');
+    if (label) label.textContent = value ? 'On' : 'Off';
+  };
+  setShown(enabled);
+  button.setAttribute('aria-busy', 'true');
   try {
     await queueAdminCommand('log_toggle', { tag: button.dataset.logTag, enabled });
   } catch (err) {
+    setShown(!enabled);
     setBanner(`Could not switch the log: ${err.message}`);
   } finally {
-    button.disabled = false;
+    button.removeAttribute('aria-busy');
   }
 }
 
@@ -14528,6 +14631,7 @@ $('#adminPlayerDeleteModal')?.addEventListener('click', event => { if (event.tar
 $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);
 $('#adminLogType')?.addEventListener('change', loadAdminSystemLogs);
+$('#adminLogSearch')?.addEventListener('input', () => renderAdminSystemLogs(state.adminSystemLogsData || []));
 $('#childAiRefresh')?.addEventListener('click', loadChildAiAdmin);
 $('#childAiMemories')?.addEventListener('click', handleChildAiMemoryAction);
 $('#childAiExampleForm')?.addEventListener('submit', addChildAiExample);
