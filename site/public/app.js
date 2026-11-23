@@ -12924,9 +12924,8 @@ function renderTraderControl(trader) {
   status.title = text;
   const toggle = $('#traderToggleButton');
   if (toggle) {
-    // A lever: on while the Trader works, off while it is stopped
-    toggle.setAttribute('aria-checked', String(Boolean(trader.enabled)));
-    toggle.setAttribute('aria-label', trader.enabled ? 'Stop Trader' : 'Start Trader');
+    toggle.textContent = trader.enabled ? 'Stop Trader' : 'Start Trader';
+    toggle.dataset.power = trader.enabled ? 'on' : 'off';
     toggle.disabled = !trader.enabled && (!ready || hasDraft || !connected);
     toggle.title = trader.enabled ? 'Stop the Trader'
       : !connected ? 'The bot is not in game'
