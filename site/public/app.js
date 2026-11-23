@@ -1515,7 +1515,7 @@ function renderAccountSwitcher() {
   const switcher = $('#accountSwitcher');
   if (switcher) switcher.hidden = !canSwitch;
   document.body.classList.toggle('account-switching-disabled',!canSwitch);
-  const accountButtons = state.accounts.map(account => {
+  const accountButtons = state.accounts.map((account, index) => {
     const active = account.id === state.activeAccountId;
     const uptime = account.startedAt ? formatDurationMs(Math.max(0, Date.now() - new Date(account.startedAt).getTime())) : 'not running';
     const roleLabel = account.role === 'pearl_loader' ? 'Pearl Loader' : 'General bot';
@@ -1523,14 +1523,38 @@ function renderAccountSwitcher() {
     const avatarUsername = account.statusPayload?.username || account.username;
     const pinned = Boolean(account.isDefault);
     const orderHint = pinned ? 'Primary account is pinned first' : 'Drag to reorder; open menu for Move left/right';
-    return `<button class="account-avatar${active ? ' active' : ''}${pinned ? ' account-avatar-pinned' : ' account-avatar-reorderable'}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" data-account-primary="${pinned}" draggable="${!pinned}" data-initial="${escapeHtml(String(account.displayName || avatarUsername || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(`${tooltip} · ${orderHint}`)}"><img src="${accountHeadUrl(avatarUsername)}" draggable="false" data-account-avatar-username="${escapeHtml(avatarUsername)}" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
+    return `<button class="account-avatar${active ? ' active' : ''}${pinned ? ' account-avatar-pinned' : ' account-avatar-reorderable'}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" data-account-primary="${pinned}" draggable="${!pinned}" data-initial="${escapeHtml(String(account.displayName || avatarUsername || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')};--i:${index}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(`${tooltip} · ${orderHint}`)}"><img src="${accountHeadUrl(avatarUsername)}" draggable="false" data-account-avatar-username="${escapeHtml(avatarUsername)}" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
   }).join('');
   const addButton = state.currentUser?.role === 'admin'
     ? '<button id="accountAddButton" class="account-avatar account-add admin-only" type="button" aria-label="Add Minecraft account">+</button>'
     : '';
   list.innerHTML = accountButtons + addButton;
+  const addIndex = list.querySelector('#accountAddButton');
+  if (addIndex) addIndex.style.setProperty('--i', String(state.accounts.length));
   const current = state.accounts.find(account => account.id === state.activeAccountId);
+  renderCurrentAccountButton(current);
   applyAccountTabScope(current);
+}
+
+// Phones show the selected head on its own; it stays in the header while the
+// menu below it lists the other accounts
+function renderCurrentAccountButton(account) {
+  const slot = $('#accountSwitcherCurrent');
+  if (!slot) return;
+  if (!account) {
+    slot.innerHTML = '';
+    return;
+  }
+  const avatarUsername = account.statusPayload?.username || account.username;
+  const expanded = $('#accountSwitcher')?.classList.contains('expanded') || false;
+  const signature = stableSignature([account.id, avatarUsername, account.color, account.displayName, accountStatusClass(account)]);
+  const existing = slot.firstElementChild;
+  if (existing && slot.dataset.signature === signature) {
+    existing.setAttribute('aria-expanded', String(expanded));
+    return;
+  }
+  slot.dataset.signature = signature;
+  slot.innerHTML = `<button class="account-avatar active account-switcher-toggle" type="button" data-account-id="${escapeHtml(account.id)}" data-account-current="true" data-initial="${escapeHtml(String(account.displayName || avatarUsername || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-haspopup="true" aria-expanded="${expanded}" aria-controls="accountSwitcherList" aria-label="${escapeHtml(account.displayName)}: choose another account" title="${escapeHtml(account.displayName)}"><img src="${accountHeadUrl(avatarUsername)}" draggable="false" data-account-avatar-username="${escapeHtml(avatarUsername)}" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span><span class="account-switcher-caret" aria-hidden="true"></span></button>`;
 }
 
 async function loadAccounts() {
@@ -1725,12 +1749,28 @@ function setMobileAccountSwitcherOpen(open) {
     clearSeenSearch({ collapse: true });
     setWhisperOpen(false);
   }
+  const wasOpen = switcher.classList.contains('expanded');
   switcher.classList.toggle('expanded',Boolean(open));
   positionMobileAccountSwitcher();
   switcher.setAttribute('aria-expanded',String(Boolean(open)));
+  $('#accountSwitcherCurrent .account-switcher-toggle')?.setAttribute('aria-expanded',String(Boolean(open)));
   document.body.classList.toggle('account-switcher-open',Boolean(open));
   const backdrop = $('#accountSwitcherBackdrop');
-  if (backdrop) backdrop.hidden = !open;
+  if (!backdrop) return;
+  clearTimeout(backdrop.closeTimer);
+  if (open) {
+    backdrop.classList.remove('closing');
+    backdrop.hidden = false;
+  } else if (wasOpen && !backdrop.hidden) {
+    // Let the backdrop fade with the menu instead of vanishing at once
+    backdrop.classList.add('closing');
+    backdrop.closeTimer = setTimeout(() => {
+      backdrop.hidden = true;
+      backdrop.classList.remove('closing');
+    }, 200);
+  } else {
+    backdrop.hidden = true;
+  }
 }
 
 async function refreshCsrfToken() {
@@ -14512,7 +14552,7 @@ $('#accountModalClose')?.addEventListener('click', () => setAccountModalOpen(fal
 $('#accountModalCancel')?.addEventListener('click', () => setAccountModalOpen(false));
 $('#accountModal')?.addEventListener('click', event => { if (event.target.id === 'accountModal') setAccountModalOpen(false); });
 $('#accountForm')?.addEventListener('submit', submitAccount);
-$('#accountSwitcherList')?.addEventListener('click', event => {
+$('#accountSwitcher')?.addEventListener('click', event => {
   if (Date.now() < accountLongPressConsumedUntil || Date.now() < state.accountDragConsumedUntil) { event.preventDefault(); return; }
   if (event.target.closest('#accountAddButton')) { setMobileAccountSwitcherOpen(false); setAccountModalOpen(true); return; }
   const avatar=event.target.closest('[data-account-id]');
@@ -14520,6 +14560,7 @@ $('#accountSwitcherList')?.addEventListener('click', event => {
   const accountId=avatar.dataset.accountId;
   const mobile=matchMedia('(max-width: 700px)').matches;
   const switcher=$('#accountSwitcher');
+  if (mobile && avatar.dataset.accountCurrent === 'true') { setMobileAccountSwitcherOpen(!switcher?.classList.contains('expanded')); return; }
   if (mobile && accountId === state.activeAccountId && !switcher?.classList.contains('expanded')) { setMobileAccountSwitcherOpen(true); return; }
   selectAccount(accountId);
   setMobileAccountSwitcherOpen(false);
@@ -14568,7 +14609,7 @@ $('#accountSwitcherList')?.addEventListener('dragend', () => {
   state.accountDragId=null;
   $$('.account-avatar-dragging,.account-avatar-drop-target').forEach(element => element.classList.remove('account-avatar-dragging','account-avatar-drop-target'));
 });
-$('#accountSwitcherList')?.addEventListener('pointerdown', event => {
+$('#accountSwitcher')?.addEventListener('pointerdown', event => {
   const avatar=event.target.closest('[data-account-id]');
   if (!avatar || !matchMedia('(max-width: 700px)').matches || event.pointerType === 'mouse') return;
   cancelAccountLongPress();
@@ -14579,9 +14620,9 @@ $('#accountSwitcherList')?.addEventListener('pointerdown', event => {
     openAccountMenu(avatar.dataset.accountId,avatar);
   },550);
 });
-for (const eventName of ['pointerup','pointercancel','pointerleave']) $('#accountSwitcherList')?.addEventListener(eventName,cancelAccountLongPress);
-$('#accountSwitcherList')?.addEventListener('contextmenu', event => { const avatar=event.target.closest('[data-account-id]'); if(!avatar)return; event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); });
-$('#accountSwitcherList')?.addEventListener('keydown', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar && (event.key==='ContextMenu' || (event.shiftKey&&event.key==='F10'))) { event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); } });
+for (const eventName of ['pointerup','pointercancel','pointerleave']) $('#accountSwitcher')?.addEventListener(eventName,cancelAccountLongPress);
+$('#accountSwitcher')?.addEventListener('contextmenu', event => { const avatar=event.target.closest('[data-account-id]'); if(!avatar)return; event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); });
+$('#accountSwitcher')?.addEventListener('keydown', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar && (event.key==='ContextMenu' || (event.shiftKey&&event.key==='F10'))) { event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); } });
 document.addEventListener('pointerdown', event => {
   const menu=document.querySelector('.account-context-menu');
   const insideMenu=Boolean(event.target.closest('.account-context-menu'));
