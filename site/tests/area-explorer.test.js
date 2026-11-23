@@ -365,16 +365,11 @@ function testWiring() {
   assert.match(appSource, /'End Portal': 'ender_eye'/, 'a marker shows the item that stands for it');
   assert.match(appSource, /data-fallback="\$\{escapeHtml\(icon\.fallback\)\}"/, 'an icon that fails falls back to its kind');
   assert.match(appSource, /class="area-explorer-find-count"/, 'a stack shows its size on the icon');
-  // The map across the whole width; the run, highlights, log and tokens as tabs of one panel beside the finds
-  const side = indexSource.slice(indexSource.indexOf('<section id="areaExplorerInfo"'), indexSource.indexOf('<section id="areaExplorerFindsPanel"'));
-  for (const panel of ['area-explorer-status-panel', 'area-explorer-highlights-panel', 'area-explorer-log-panel', 'area-explorer-tokens-panel']) {
-    assert.ok(side.includes(panel), `${panel} is in the tabbed panel`);
+  // The map across the whole width; the run, highlights and tokens in one column beside the finds
+  const side = indexSource.slice(indexSource.indexOf('<div class="area-explorer-side">'), indexSource.indexOf('<section class="panel area-explorer-finds-panel">'));
+  for (const panel of ['area-explorer-status-panel', 'area-explorer-highlights-panel', 'area-explorer-tokens-panel']) {
+    assert.ok(side.includes(panel), `${panel} is in the side column`);
   }
-  for (const tab of ['run', 'highlights', 'log', 'admin']) {
-    assert.match(side, new RegExp(`data-area-info-tab="${tab}"`), `the ${tab} tab`);
-    assert.match(side, new RegExp(`data-area-info-pane="${tab}"`), `the ${tab} pane`);
-  }
-  assert.match(side, /class="admin-only" data-area-info-tab="admin"/, 'only administrators get the Mod tab');
   // The most valuable loot in the highlights; loot picked up in game taken off by an administrator
   assert.match(appSource, /Most valuable<\/span>/);
   assert.match(appSource, /ae\.valuableExpanded \? scope\.valuableItems : scope\.valuableItems\.slice\(0, AREA_EXPLORER_TOP_VALUABLE\)/, 'the first few, and all of them on Show all');
