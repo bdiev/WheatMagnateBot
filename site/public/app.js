@@ -179,6 +179,9 @@ const state = {
   traderData: null,
   traderDraft: null,
   traderOtherTradesOpen: false,
+  traderFloorView: null,
+  traderCountdownTarget: null,
+  traderCountdownSpan: 0,
   killAuraSelectedMobs: new Set(),
   killAuraModalSelectionSnapshot: new Set(),
   killAuraTargetsDirty: false,
@@ -12497,34 +12500,174 @@ function traderTradeGroups(villagers) {
 
 // Every price the bot has seen for this trade, as what can be chosen for its limit.
 // The prices on screen and a limit set earlier are there even if not in the record
-function traderLimitOptions(trader, group, limit) {
+function traderLimitPrices(trader, group, limit) {
   const prices = new Set(trader.priceHistory?.[group.key] || []);
   for (const offer of group.offers) prices.add(offer.price1);
   if (limit !== null) prices.add(limit);
-  const options = [...prices].sort((a, b) => a - b)
-    .map(price => `<option value="${price}"${price === limit ? ' selected' : ''}>${formatNumber(price)}</option>`);
-  return `<option value=""${limit === null ? ' selected' : ''}>Any</option>${options.join('')}`;
+  return [...prices].sort((a, b) => a - b);
+}
+
+// The limit as a row of price chips: Any, then every known price
+function traderLimitChips(trader, group, limit) {
+  const name = `trader-limit-${group.key}`;
+  const current = new Set(group.offers.map(offer => offer.price1));
+  const chip = (value, label, extra = '') => `
+    <label class="trader-chip${extra}">
+      <input type="radio" name="${escapeHtml(name)}" value="${value}" data-trader-limit="${escapeHtml(group.key)}"${String(limit ?? '') === String(value) ? ' checked' : ''}>
+      <span>${label}</span>
+    </label>`;
+  return chip('', 'Any') + traderLimitPrices(trader, group, limit).map(price => chip(
+    price,
+    formatNumber(price),
+    `${current.has(price) ? ' is-current' : ''}${limit !== null && price > limit ? ' is-above' : ''}`
+  )).join('');
+}
+
+function traderCompactCount(value) {
+  const number = Number(value) || 0;
+  if (number >= 10_000) return `${Math.round(number / 1000)}k`;
+  if (number >= 1000) return `${(number / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(number);
+}
+
+// One inventory slot: the item and how many, like in the game
+function traderSlot(name, count, { title = '' } = {}) {
+  return `<span class="trader-slot" title="${escapeHtml(title || traderItemName(name))}">${itemIcon({ name })}${count ? `<b>${escapeHtml(count)}</b>` : ''}</span>`;
+}
+
+// Which floor the chest list and map show: both, or one of them
+function traderFloorView(trader) {
+  if (!traderOnFloors(trader) || !traderFloorsSet(trader)) return null;
+  const view = state.traderFloorView;
+  return trader.floors.includes(view) ? view : null;
+}
+
+// The chests, the table and the bot's spot seen from above: north up
+function renderTraderMap(trader, containers, roles) {
+  const map = $('#traderMap');
+  if (!map) return;
+  const points = containers.map(container => ({
+    x: container.x, z: container.z, kind: roles[traderPositionKey(container)] || 'unused',
+    icon: container.name, label: `${container.double ? 'Double ' : ''}${traderItemName(container.name)}`, key: traderPositionKey(container), y: container.y
+  }));
+  if (trader.craftingTable) {
+    points.push({ ...trader.craftingTable, kind: 'table', icon: 'crafting_table', label: 'Crafting Table', key: traderPositionKey(trader.craftingTable) });
+  }
+  const anchor = trader.anchor;
+  if (!points.length || !anchor) {
+    map.hidden = true;
+    renderStable('#traderMap', '', null);
+    return;
+  }
+  const xs = [anchor.x, ...points.map(point => point.x)];
+  const zs = [anchor.z, ...points.map(point => point.z)];
+  const minX = Math.min(...xs) - 1;
+  const maxX = Math.max(...xs) + 1;
+  const minZ = Math.min(...zs) - 1;
+  const maxZ = Math.max(...zs) + 1;
+  const columns = maxX - minX + 1;
+  const rows = maxZ - minZ + 1;
+  if (columns > 24 || rows > 24) {
+    map.hidden = true;
+    return;
+  }
+  const cells = new Map();
+  for (const point of points) {
+    const id = `${point.x},${point.z}`;
+    if (!cells.has(id)) cells.set(id, []);
+    cells.get(id).push(point);
+  }
+  // A source beats the output, which beats anything else, when blocks stack
+  const rank = { source: 0, output: 1, table: 2, unused: 3 };
+  let html = '';
+  for (let z = minZ; z <= maxZ; z += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const stack = (cells.get(`${x},${z}`) || []).sort((a, b) => rank[a.kind] - rank[b.kind]);
+      const isAnchor = anchor.x === x && anchor.z === z;
+      if (!stack.length) {
+        html += `<span class="trader-map-cell${isAnchor ? ' is-bot' : ''}"${isAnchor ? ' title="The bot\'s spot"' : ''}>${isAnchor ? '<i aria-hidden="true"></i>' : ''}</span>`;
+        continue;
+      }
+      const top = stack[0];
+      const title = stack.map(point => `${point.label} · ${point.x} ${point.y} ${point.z}${point.kind === 'source' ? ' · source' : point.kind === 'output' ? ' · output' : ''}`).join('\n');
+      html += `<button type="button" class="trader-map-cell is-block" data-kind="${escapeHtml(top.kind)}" data-trader-map-key="${escapeHtml(top.key)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${itemIcon({ name: top.icon })}${stack.length > 1 ? `<b>${stack.length}</b>` : ''}</button>`;
+    }
+  }
+  map.hidden = false;
+  renderStable('#traderMap', `
+    <div class="trader-map-grid" style="--map-columns:${columns};--map-rows:${rows}">${html}</div>
+    <div class="trader-map-legend"><span class="trader-map-north" aria-label="North is up">N ↑</span><span data-kind="source">Source</span><span data-kind="output">Output</span><span data-kind="table">Table</span><span data-kind="bot">Bot</span></div>`,
+  [points, anchor]);
+}
+
+function renderTraderSupplies(trader, groups) {
+  const stock = Object.entries(trader.stock || {}).sort((a, b) => b[1] - a[1]);
+  // The cheapest price of an enabled trade that takes this item
+  const cheapest = new Map();
+  for (const group of groups) {
+    if (!group.plain || !traderTradeEnabled(group)) continue;
+    const price = group.price1[0];
+    if (price > 0 && (!cheapest.has(group.input1) || price < cheapest.get(group.input1))) cheapest.set(group.input1, price);
+  }
+  let tradesLeft = 0;
+  const slots = stock.map(([name, count]) => {
+    const price = cheapest.get(name);
+    const trades = price ? Math.floor(count / price) : null;
+    if (trades) tradesLeft += trades;
+    return `
+      <div class="trader-supply${trades === null ? ' is-idle' : ''}">
+        ${traderSlot(name, traderCompactCount(count), { title: `${formatNumber(count)} ${traderItemName(name)}` })}
+        <span class="trader-supply-name"><strong>${escapeHtml(traderItemName(name))}</strong><small>${trades === null ? 'not traded' : `≈ ${formatNumber(trades)} ${trades === 1 ? 'trade' : 'trades'}`}</small></span>
+      </div>`;
+  }).join('');
+  renderStable('#traderSupplies', slots || '<p class="trader-empty">The source chests look empty, or nothing was read from them yet.</p>', [stock, [...cheapest]]);
+  const text = $('#traderStock');
+  if (text) {
+    text.textContent = !stock.length
+      ? 'What the source chests hold.'
+      : tradesLeft
+        ? `Enough for about ${formatNumber(tradesLeft)} trades at the current prices.`
+        : 'Nothing here pays for an enabled trade.';
+  }
+  const alert = $('#traderOutputAlert');
+  if (alert) alert.hidden = !trader.outputFull;
 }
 
 function renderTraderSetup(trader) {
   const roles = traderChestRoles(trader);
-  const containers = trader.containers || [];
-  const options = key => [['', 'Not used'], ['source', 'Source'], ['output', 'Output']]
-    .map(([value, label]) => `<option value="${value}"${(roles[key] || '') === value ? ' selected' : ''}>${label}</option>`)
-    .join('');
+  const floorView = traderFloorView(trader);
+  const allContainers = trader.containers || [];
+  const containers = floorView === null ? allContainers : allContainers.filter(container => container.floor === floorView);
+  const roleButtons = (key, label) => [['source', 'Source'], ['output', 'Output'], ['', 'Off']]
+    .map(([value, text]) => `
+      <label class="trader-role" data-role="${value || 'unused'}">
+        <input type="radio" name="trader-role-${escapeHtml(key)}" value="${value}" data-trader-role="${escapeHtml(key)}"${(roles[key] || '') === value ? ' checked' : ''} aria-label="${escapeHtml(label)}: ${text}">
+        <span>${text}</span>
+      </label>`).join('');
   // Sources first, then the output; on two floors the configured floor 1 first in each
   const rank = container => ({ source: 0, output: 1 })[roles[traderPositionKey(container)]] ?? 2;
   const floorRank = container => (traderOnFloors(trader) && traderFloorsSet(trader) ? trader.floors.indexOf(container.floor) : 0);
+  const floorTabs = $('#traderFloorTabs');
+  if (floorTabs) {
+    const show = traderOnFloors(trader) && traderFloorsSet(trader) && allContainers.length > 0;
+    floorTabs.hidden = !show;
+    if (show) {
+      const count = floor => allContainers.filter(container => floor === null || container.floor === floor).length;
+      const tab = (value, label) => `<button type="button" class="trader-floor-tab" data-trader-floor-view="${value === null ? 'all' : value}" aria-pressed="${floorView === value}">${escapeHtml(label)} <small>${formatNumber(count(value))}</small></button>`;
+      renderStable('#traderFloorTabs', tab(null, 'Both floors') + trader.floors.map((floor, index) => tab(floor, `Floor ${index + 1}`)).join(''), [trader.floors, floorView, allContainers.length]);
+    }
+  }
+  renderTraderMap(trader, containers, roles);
   renderStable('#traderContainers', containers.length
     ? [...containers].sort((a, b) => rank(a) - rank(b) || floorRank(a) - floorRank(b)).map(container => {
       const key = traderPositionKey(container);
       const label = `${container.double ? 'Double ' : ''}${traderItemName(container.name)}`;
       const floor = traderFloorLabel(trader, container.floor);
       return `
-        <li class="trader-row" data-trader-chest-role="${escapeHtml(roles[key] || 'unused')}">
+        <li class="trader-row" data-trader-chest-role="${escapeHtml(roles[key] || 'unused')}" data-trader-chest-key="${escapeHtml(key)}">
           ${itemIcon({ name: container.name })}
           <span class="trader-row-name"><strong>${escapeHtml(label)}</strong><small>${floor ? `<span class="trader-floor-tag">${escapeHtml(floor)}</span> · ` : ''}${escapeHtml(key.replaceAll(',', ' '))}</small></span>
-          <select data-trader-role="${escapeHtml(key)}" aria-label="Role of ${escapeHtml(label)}">${options(key)}</select>
+          <span class="trader-roles" role="radiogroup" aria-label="Role of ${escapeHtml(label)}">${roleButtons(key, label)}</span>
         </li>`;
     }).join('')
     : `<li class="trader-empty">${traderOnFloors(trader) ? 'Nothing yet: put the bot in its scaffolding column on either floor and press Scan.' : 'Nothing yet: put the bot in place and press Scan.'}</li>`, [containers, roles, trader.mode || null, trader.floors || null]);
@@ -12543,24 +12686,37 @@ function renderTraderSetup(trader) {
     const first = `${range(group.price1[0], group.price1[1])} ${escapeHtml(traderItemName(group.input1))}`;
     const second = group.input2 ? ` + ${range(group.price2[0], group.price2[1])} ${escapeHtml(traderItemName(group.input2))}` : '';
     const count = group.offers.length;
-    const currentPrices = [...new Set(group.offers.map(offer => offer.price1))].sort((a, b) => a - b);
+    const usedShare = group.maxUses ? Math.min(100, Math.round(group.uses / group.maxUses * 100)) : 0;
     const details = [
       `${formatNumber(count)} ${count === 1 ? 'villager' : 'villagers'}`,
-      `${formatNumber(group.uses)}/${formatNumber(group.maxUses)} used`,
-      currentPrices.length > 1 ? `now ${currentPrices.map(formatNumber).join(', ')}` : '',
       overLimit ? `${formatNumber(overLimit)} above the limit` : ''
     ].filter(Boolean).join(' · ');
+    const enabled = group.plain && traderTradeEnabled(group);
     return `
-      <div class="trader-offer${group.plain ? '' : ' is-unusable'}${overLimit ? ' is-over-limit' : ''}">
+      <div class="trader-offer${group.plain ? '' : ' is-unusable'}${overLimit ? ' is-over-limit' : ''}${enabled ? ' is-on' : ''}">
         <label class="trader-offer-main">
-          <input type="checkbox" data-trader-trade="${escapeHtml(group.key)}"${group.plain && traderTradeEnabled(group) ? ' checked' : ''}${group.plain ? '' : ' disabled'}>
-          ${itemIcon({ name: group.selling ? group.input1 : group.output })}
+          <input class="trader-switch-input" type="checkbox" data-trader-trade="${escapeHtml(group.key)}"${enabled ? ' checked' : ''}${group.plain ? '' : ' disabled'}>
+          <span class="trader-switch" aria-hidden="true"><span></span></span>
+          <span class="trader-trade-gui" aria-hidden="true">
+            ${traderSlot(group.input1, range(group.price1[0], group.price1[1]))}
+            ${group.input2 ? `<i class="trader-trade-plus">+</i>${traderSlot(group.input2, range(group.price2[0], group.price2[1]))}` : ''}
+            <i class="trader-trade-arrow"></i>
+            ${traderSlot(group.output, range(group.outputCount[0], group.outputCount[1]))}
+          </span>
           <span class="trader-row-name">
             <strong>${first}${second} → ${range(group.outputCount[0], group.outputCount[1])} ${escapeHtml(traderItemName(group.output))}</strong>
             <small>${group.plain ? details : 'Special item · not supported'}</small>
           </span>
         </label>
-        ${group.plain ? `<label class="trader-limit"><small>Max price</small><select data-trader-limit="${escapeHtml(group.key)}" aria-label="Highest price in ${escapeHtml(traderItemName(group.input1))}">${traderLimitOptions(trader, group, limit)}</select></label>` : ''}
+        ${group.plain ? `
+          <div class="trader-uses${usedShare >= 100 ? ' is-full' : ''}" title="${formatNumber(group.uses)} of ${formatNumber(group.maxUses)} trades used until the next restock">
+            <span class="trader-uses-bar"><span style="width:${usedShare}%"></span></span>
+            <small>${usedShare >= 100 ? 'Sold out · waiting for a restock' : `${formatNumber(group.uses)}/${formatNumber(group.maxUses)} used`}</small>
+          </div>
+          <div class="trader-limit" role="radiogroup" aria-label="Highest price in ${escapeHtml(traderItemName(group.input1))}">
+            <small>Max price</small>
+            <div class="trader-chips">${traderLimitChips(trader, group, limit)}</div>
+          </div>` : ''}
       </div>`;
   };
   const selling = groups.filter(group => group.selling);
@@ -12589,21 +12745,134 @@ function renderTraderSetup(trader) {
       ? `Crafting table at ${traderPositionKey(trader.craftingTable).replaceAll(',', ' ')}.${traderOnFloors(trader) ? ' The bot uses it from the nearer floor.' : ''}`
       : 'No crafting table in reach: emeralds stay in the inventory between rounds. Place one and scan again to make blocks.';
   }
-  const stock = Object.entries(trader.stock || {}).sort((a, b) => b[1] - a[1]);
-  const stockText = $('#traderStock');
-  if (stockText) {
-    stockText.textContent = stock.length
-      ? `In the sources: ${stock.map(([name, count]) => `${formatNumber(count)} ${traderItemName(name)}`).join(', ')}`
-      : '';
-  }
+  renderTraderSupplies(trader, groups);
   const hasDraft = Boolean(state.traderDraft);
   const save = $('#traderSaveButton');
   if (save) {
     save.disabled = !hasDraft;
     save.textContent = 'Save Setup';
   }
+  const saveRow = $('#traderSaveRow');
+  if (saveRow) saveRow.classList.toggle('is-dirty', hasDraft);
+  const discard = $('#traderDiscardButton');
+  if (discard) discard.hidden = !hasDraft;
   const saveStatus = $('#traderSaveStatus');
   if (saveStatus) saveStatus.textContent = hasDraft ? 'You have unsaved changes.' : 'No unsaved changes.';
+}
+
+// Where in its round the bot is: these steps, in this order
+const TRADER_STEP_OF_PHASE = {
+  reading: 'restock', restocking: 'restock',
+  trading: 'trade',
+  crafting: 'craft',
+  depositing: 'store', returning: 'store', flushing: 'store',
+  waiting: 'wait', waiting_stock: 'wait', waiting_work: 'wait', waiting_price: 'wait'
+};
+const TRADER_STEPS = ['restock', 'trade', 'craft', 'store', 'wait'];
+
+function renderTraderPhases(trader) {
+  const steps = $('#traderPhases');
+  if (!steps) return;
+  const active = trader.enabled && trader.connected ? TRADER_STEP_OF_PHASE[trader.phase] || null : null;
+  const index = TRADER_STEPS.indexOf(active);
+  const problem = Boolean(trader.enabled && trader.lastErrorMessage);
+  steps.classList.toggle('is-idle', !trader.enabled);
+  for (const item of steps.querySelectorAll('[data-trader-step]')) {
+    const position = TRADER_STEPS.indexOf(item.dataset.traderStep);
+    const stepState = index < 0 ? 'idle' : position < index ? 'done' : position === index ? (problem ? 'problem' : 'active') : 'idle';
+    item.dataset.state = stepState;
+    if (stepState === 'active' || stepState === 'problem') item.setAttribute('aria-current', 'step');
+    else item.removeAttribute('aria-current');
+  }
+}
+
+function renderTraderGuide(trader) {
+  const guide = $('#traderGuide');
+  const list = $('#traderGuideSteps');
+  if (!guide || !list) return;
+  const needsFloors = traderOnFloors(trader) && !traderFloorsSet(trader);
+  const villagers = (trader.villagers || []).filter(villager => villager.inReach !== false);
+  const anyTrade = traderTradeGroups(villagers).some(group => group.plain && traderTradeEnabled(group));
+  const steps = [
+    { done: Boolean(trader.anchor) && !needsFloors, title: 'Scan', text: traderOnFloors(trader) ? 'Enter both floor Ys, put the bot in its scaffolding column and press Scan.' : 'Stand the bot among its chests and villagers and press Scan.' },
+    { done: Boolean(trader.sources?.length && trader.output), title: 'Chests', text: 'Mark the chests with resources as Source and one chest as Output.' },
+    { done: anyTrade, title: 'Trades', text: 'Switch on the trades to make and set price limits if you want them.' },
+    { done: Boolean(trader.enabled), title: 'Start', text: 'Save the setup and press Start Trader.' }
+  ];
+  const finished = steps.slice(0, 3).every(step => step.done);
+  guide.hidden = Boolean(trader.enabled) || (finished && (trader.totalTrades || 0) > 0);
+  const current = steps.findIndex(step => !step.done);
+  renderStable('#traderGuideSteps', steps.map((step, index) => `
+    <li class="trader-guide-step" data-state="${step.done ? 'done' : index === current ? 'current' : 'todo'}">
+      <span class="trader-guide-mark" aria-hidden="true">${step.done ? '' : index + 1}</span>
+      <span><strong>${escapeHtml(step.title)}</strong><small>${escapeHtml(step.text)}</small></span>
+    </li>`).join(''), [steps.map(step => step.done), current, traderOnFloors(trader)]);
+}
+
+// The ring empties until the bot looks at the villagers again
+function updateTraderCountdown() {
+  const box = $('#traderCountdown');
+  const trader = state.traderData;
+  if (!box) return;
+  const at = trader?.enabled && trader.nextCheckAt ? Date.parse(trader.nextCheckAt) : NaN;
+  const left = at - Date.now();
+  if (!Number.isFinite(left) || left <= 0) {
+    box.hidden = true;
+    return;
+  }
+  if (state.traderCountdownTarget !== at) {
+    state.traderCountdownTarget = at;
+    state.traderCountdownSpan = Math.max(left, 1000);
+  }
+  box.hidden = false;
+  const share = Math.max(0, Math.min(1, left / state.traderCountdownSpan));
+  box.style.setProperty('--countdown', String(share * 100));
+  const value = $('#traderCountdownValue');
+  if (value) value.textContent = left >= 60_000 ? formatDurationMs(left) : `${Math.ceil(left / 1000)}s`;
+}
+
+function renderTraderStats(trader) {
+  setRollingNumber('#traderTotalBlocks', trader.totalBlocks || 0);
+  setRollingNumber('#traderTotalTrades', trader.totalTrades || 0);
+  $('#traderSessionBlocks').textContent = `this session: ${formatNumber(trader.sessionBlocks || 0)}`;
+  $('#traderSessionTrades').textContent = `this session: ${formatNumber(trader.sessionTrades || 0)}`;
+  const started = Date.parse(trader.sessionStartedAt || '');
+  const running = Boolean(trader.enabled && Number.isFinite(started));
+  const elapsed = running ? Math.max(0, Date.now() - started) : 0;
+  const hours = elapsed / 3_600_000;
+  const rate = $('#traderRate');
+  const rateBlocks = $('#traderRateBlocks');
+  const sessionTime = $('#traderSessionTime');
+  const since = $('#traderSessionSince');
+  // A few minutes in, the hourly rate still says little
+  if (rate) rate.textContent = running && hours >= 0.05 ? `${formatNumber(Math.round((trader.sessionTrades || 0) / hours))}/h` : '-';
+  if (rateBlocks) rateBlocks.textContent = running && hours >= 0.05
+    ? `blocks per hour: ${formatNumber(Math.round((trader.sessionBlocks || 0) / hours * 10) / 10)}`
+    : 'blocks per hour: -';
+  if (sessionTime) sessionTime.textContent = running ? formatDurationMs(elapsed) : '-';
+  if (since) since.textContent = running ? `since ${formatDate(trader.sessionStartedAt)}` : 'not running';
+}
+
+function renderTrader(payload = {}) {
+  const trader = payload.state || {};
+  state.traderData = trader;
+  const tab = $('#tab-trader');
+  if (!tab) return;
+  const stateName = trader.enabled
+    ? (trader.lastErrorMessage ? 'problem' : trader.running ? 'running' : 'waiting')
+    : trader.scanning ? 'scanning' : 'stopped';
+  tab.dataset.traderState = stateName;
+  $('#traderState').textContent = trader.enabled
+    ? (trader.outputFull ? 'Output Full' : trader.lastErrorMessage ? 'Retrying' : trader.running ? 'Running' : 'Waiting for the bot')
+    : trader.scanning ? 'Scanning' : 'Stopped';
+  $('#traderUpdated').textContent = `last update: ${formatDate(trader.observedAt)}`;
+  renderTraderStats(trader);
+  renderTraderFarm(trader);
+  renderTraderControl(trader);
+  renderTraderPhases(trader);
+  renderTraderGuide(trader);
+  updateTraderCountdown();
+  renderTraderSetup(trader);
 }
 
 function renderTraderControl(trader) {
@@ -12656,29 +12925,6 @@ function renderTraderControl(trader) {
   }
 }
 
-function renderTrader(payload = {}) {
-  const trader = payload.state || {};
-  state.traderData = trader;
-  const tab = $('#tab-trader');
-  if (!tab) return;
-  const stateName = trader.enabled
-    ? (trader.lastErrorMessage ? 'problem' : trader.running ? 'running' : 'waiting')
-    : 'stopped';
-  tab.dataset.traderState = stateName;
-  $('#traderState').textContent = trader.enabled
-    ? (trader.outputFull ? 'Output Full' : trader.lastErrorMessage ? 'Retrying' : trader.running ? 'Running' : 'Waiting for the bot')
-    : 'Stopped';
-  $('#traderUpdated').textContent = `last update: ${formatDate(trader.observedAt)}`;
-  $('#traderTotalBlocks').textContent = formatNumber(trader.totalBlocks || 0);
-  $('#traderSessionBlocks').textContent = `this session: ${formatNumber(trader.sessionBlocks || 0)}`;
-  $('#traderTotalTrades').textContent = formatNumber(trader.totalTrades || 0);
-  $('#traderSessionTrades').textContent = `this session: ${formatNumber(trader.sessionTrades || 0)}`;
-  renderTraderFarm(trader);
-  renderTraderControl(trader);
-  // Redrawing would close a dropdown that is open; the next update catches up
-  if (!document.activeElement?.matches?.('#tab-trader select')) renderTraderSetup(trader);
-}
-
 async function loadTrader() {
   if (state.currentUser?.role !== 'admin') return;
   await ensureItemIcons().catch(() => null);
@@ -12699,6 +12945,7 @@ function handleTraderSetupChange(event) {
   // for the next click elsewhere; see renderTrader
   let focus = null;
   if (role) {
+    focus = `[name="${CSS.escape(role.name)}"]:checked`;
     const roles = { ...traderChestRoles(trader) };
     if (role.value === 'output') {
       for (const key of Object.keys(roles)) if (roles[key] === 'output') delete roles[key];
@@ -12708,6 +12955,7 @@ function handleTraderSetupChange(event) {
     if (role.value) roles[role.dataset.traderRole] = role.value;
     draft.roles = roles;
   } else if (priceLimit) {
+    focus = `[name="${CSS.escape(priceLimit.name)}"]:checked`;
     const value = Math.floor(Number(priceLimit.value));
     draft.limits[priceLimit.dataset.traderLimit] = priceLimit.value.trim() && value >= 1 ? Math.min(value, 9999) : null;
   } else {
@@ -14791,6 +15039,39 @@ document.addEventListener('change', handleTraderSetupChange);
 document.addEventListener('input', event => {
   if (event.target?.matches?.('#tab-trader [data-trader-floor]')) event.target.dataset.dirty = '1';
 });
+// Unsaved Trader changes can be dropped without a reload
+$('#traderDiscardButton')?.addEventListener('click', () => {
+  state.traderDraft = null;
+  if (state.traderData) {
+    renderTraderControl(state.traderData);
+    renderTraderGuide(state.traderData);
+    renderTraderSetup(state.traderData);
+  }
+});
+document.addEventListener('click', event => {
+  const floorTab = event.target.closest?.('[data-trader-floor-view]');
+  if (floorTab && state.traderData) {
+    const value = floorTab.dataset.traderFloorView;
+    state.traderFloorView = value === 'all' ? null : Number(value);
+    renderTraderSetup(state.traderData);
+    return;
+  }
+  // A block on the map points at its row in the list
+  const block = event.target.closest?.('[data-trader-map-key]');
+  if (!block) return;
+  const row = document.querySelector(`#traderContainers [data-trader-chest-key="${CSS.escape(block.dataset.traderMapKey)}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  row.classList.remove('is-flashing');
+  void row.offsetWidth;
+  row.classList.add('is-flashing');
+});
+// The countdown and the session clock move between status updates
+setInterval(() => {
+  if (state.activeTab !== 'trader' || !state.traderData || document.hidden) return;
+  updateTraderCountdown();
+  renderTraderStats(state.traderData);
+}, 1000);
 // Status updates redraw the list: the folded part stays as it was left
 document.addEventListener('toggle', event => {
   if (event.target?.id === 'traderOtherTrades') state.traderOtherTradesOpen = event.target.open;
