@@ -17274,3 +17274,245 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
     margin: 0 8px 10px;
   }
 }
+
+/* ===== Skins and signs dialogs dressed like the player profile =====
+   Same accent colour, banner head with the player's head and name, section
+   heads with the accent bar, metric-card tiles and the facts strip. */
+
+.player-skins-dialog.has-player-accent {
+  --accent: var(--player-accent-light);
+  --accent-strong: var(--player-accent-light-strong);
+  --player-accent-contrast: var(--player-accent-light-contrast);
+  --player-accent-contrast-shadow: var(--player-accent-light-contrast-shadow);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+}
+
+:root[data-theme="dark"] .player-skins-dialog.has-player-accent {
+  --accent: var(--player-accent-dark);
+  --accent-strong: var(--player-accent-dark-strong);
+  --player-accent-contrast: var(--player-accent-dark-contrast);
+  --player-accent-contrast-shadow: var(--player-accent-dark-contrast-shadow);
+}
+
+.player-dialog-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 14px;
+  min-height: 88px;
+  padding: 16px 64px 16px 18px;
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--accent) 26%, transparent), color-mix(in srgb, var(--accent) 6%, transparent) 58%, transparent 82%),
+    var(--panel-soft);
+}
+
+.player-dialog-head::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    conic-gradient(color-mix(in srgb, var(--accent) 16%, transparent) 0 25%, transparent 0 50%, color-mix(in srgb, var(--accent) 16%, transparent) 0 75%, transparent 0) 0 0 / 16px 16px;
+  -webkit-mask-image: linear-gradient(105deg, #000 0, rgba(0, 0, 0, .55) 30%, transparent 62%);
+  mask-image: linear-gradient(105deg, #000 0, rgba(0, 0, 0, .55) 30%, transparent 62%);
+  opacity: .55;
+}
+
+.player-dialog-head > div {
+  position: relative;
+  min-width: 0;
+}
+
+.player-dialog-head .eyebrow {
+  margin-bottom: 2px;
+  color: var(--accent-strong);
+  font-size: 10px;
+}
+
+.player-dialog-head h2 {
+  overflow: hidden;
+  font-size: 26px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  text-shadow: 2px 2px 0 var(--bevel-dark);
+  white-space: nowrap;
+}
+
+.player-dialog-avatar {
+  position: relative;
+  display: block;
+  width: 52px;
+  height: 52px;
+  border: 3px solid color-mix(in srgb, var(--accent) 62%, var(--line));
+  border-radius: 2px;
+  background: var(--panel);
+  box-shadow: var(--shadow-inset), 3px 3px 0 color-mix(in srgb, var(--accent) 28%, rgba(0, 0, 0, .3));
+  image-rendering: pixelated;
+}
+
+.player-dialog-avatar[hidden] {
+  display: none;
+}
+
+.player-dialog-meta {
+  min-height: 15px;
+  margin: 5px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Wardrobe: section heads like the profile's, tiles like its metric cards */
+.player-skin-wardrobe h3,
+.player-cape-wardrobe h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.player-skin-wardrobe h3::before,
+.player-cape-wardrobe h3::before {
+  content: "";
+  width: 5px;
+  height: 14px;
+  background: var(--accent);
+  box-shadow: var(--shadow-inset);
+}
+
+.player-skin-wardrobe > header span,
+.player-cape-wardrobe > header span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.player-skin-choice,
+.player-cape-choice {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 55%),
+    var(--panel-soft);
+  box-shadow: var(--shadow-inset);
+  text-shadow: none;
+}
+
+.player-skin-choice::before,
+.player-cape-choice::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 8px;
+  width: 20px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
+.player-skin-choice:hover,
+.player-cape-choice:hover {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 55%),
+    var(--panel-soft);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-inset), 3px 3px 0 rgba(0, 0, 0, .16);
+}
+
+.player-skin-choice.is-selected,
+.player-cape-choice.is-selected {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%),
+    var(--panel-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent), 3px 3px 0 color-mix(in srgb, var(--accent) 26%, rgba(0, 0, 0, .2));
+}
+
+.player-skin-choice.is-selected::before,
+.player-cape-choice.is-selected::before {
+  left: 0;
+  width: 100%;
+  border-radius: 0;
+  background: var(--accent);
+}
+
+.player-skin-choice span,
+.player-cape-choice > span:last-child {
+  font-weight: 800;
+}
+
+.player-skin-stage-tools {
+  background: color-mix(in srgb, var(--panel-soft) 94%, transparent);
+}
+
+.player-skin-stage-tools strong {
+  color: var(--accent-strong);
+}
+
+/* Signs: the facts strip on top, cards grouped by day */
+.player-signs-content {
+  padding: 14px;
+  background: var(--panel);
+}
+
+.player-signs-content .player-signs-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 0 12px;
+}
+
+.player-signs-list > .player-signs-day {
+  margin: 4px 0 -2px;
+}
+
+.player-signs-list > .player-signs-day:first-child {
+  margin-top: 0;
+}
+
+.player-signs-list .area-explorer-find {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 4%, transparent), transparent 55%),
+    var(--panel-soft);
+}
+
+.player-signs-list .area-explorer-find:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-left-color: var(--find-color);
+}
+
+@media (max-width: 700px) {
+  .player-dialog-head {
+    min-height: 76px;
+    padding: 12px 56px 12px 14px;
+    column-gap: 12px;
+  }
+
+  .player-dialog-avatar {
+    width: 44px;
+    height: 44px;
+  }
+
+  .player-dialog-head h2 {
+    font-size: clamp(18px, 6vw, 24px);
+  }
+
+  .player-signs-content {
+    padding: 10px 8px;
+  }
+
+  .player-signs-content .player-signs-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0 0 10px;
+  }
+
+  .player-signs-content .player-signs-facts > div:last-child {
+    grid-column: auto;
+  }
+}

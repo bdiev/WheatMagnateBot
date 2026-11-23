@@ -4806,6 +4806,20 @@ function drawCapeThumbnail(canvas, textureUrl) {
   image.src = textureUrl;
 }
 
+// The skins and signs dialogs open from a profile: they wear that player's
+// head and accent colour so they read as part of the same card.
+function applyPlayerDialogIdentity(dialog, avatar, username) {
+  const profile = state.playerProfileLastPayload;
+  const sameProfile = profile && String(profile.username || '').toLowerCase() === String(username || '').toLowerCase();
+  setPlayerAccentProperties(dialog, sameProfile ? state.playerProfileAccentCache.get(playerProfileAccentKey(profile)) || null : null);
+  if (avatar) {
+    avatar.hidden = false;
+    avatar.style.visibility = '';
+    avatar.onerror = () => { avatar.style.visibility = 'hidden'; };
+    avatar.src = playerHeadUrl(username, 64, { uuid: sameProfile ? profile.uuid : null });
+  }
+}
+
 function loadPlayerSkinSelection() {
   const canvas = $('#playerSkinCanvas');
   const skin = state.playerSelectedSkin;
@@ -4845,6 +4859,7 @@ function renderPlayerSkins(payload) {
   const skins = Array.isArray(payload.skins) ? payload.skins : [];
   const capes = Array.isArray(payload.capes) ? payload.capes : [];
   if (!skins.length) {
+    $('#playerSkinsMeta').textContent = 'No skins saved';
     content.innerHTML = `<div class="player-skins-empty"><strong>No skin captured yet</strong><p>${payload.refreshFailed ? 'The Minecraft skin service is temporarily unavailable. Try again later.' : 'This player does not currently have an official skin available.'}</p></div>`;
     return;
   }
@@ -4853,6 +4868,7 @@ function renderPlayerSkins(payload) {
     profileAvatar.src = playerHeadUrl(payload.username,96,{ uuid:payload.uuid,skinHash:skins[0].hash });
     profileAvatar.style.visibility = '';
   }
+  $('#playerSkinsMeta').textContent = `${formatNumber(skins.length)} ${skins.length === 1 ? 'skin' : 'skins'} · ${formatNumber(capes.length)} ${capes.length === 1 ? 'cape' : 'capes'}${skins[0]?.firstSeen ? ` · current since ${formatDate(skins[0].firstSeen)}` : ''}`;
   content.innerHTML = `
     <section class="player-skin-stage">
       <canvas id="playerSkinCanvas" width="520" height="520" tabindex="0" aria-label="Rotatable animated 3D skin model. Click to pause or resume, drag to rotate, and scroll to zoom."></canvas>
@@ -4922,7 +4938,9 @@ async function openPlayerSkins(username) {
   if (!overlay || !content || !globalThis.MinecraftSkinViewer) return;
   const requestId = ++state.playerSkinsRequestId;
   preparePlayerSkinBackground(overlay);
-  $('#playerSkinsTitle').textContent = `${username}'s skins`;
+  applyPlayerDialogIdentity(overlay.querySelector('.player-skins-dialog'), $('#playerSkinsAvatar'), username);
+  $('#playerSkinsTitle').textContent = username;
+  $('#playerSkinsMeta').innerHTML = '<span class="player-signs-skeleton-count" aria-hidden="true"></span>';
   content.innerHTML = `
     <section class="player-skins-skeleton-stage" aria-hidden="true">
       <span class="player-skins-skeleton-model"></span>
@@ -4948,6 +4966,7 @@ async function openPlayerSkins(username) {
     renderPlayerSkins(payload);
   } catch (err) {
     if (requestId !== state.playerSkinsRequestId || overlay.hidden) return;
+    $('#playerSkinsMeta').textContent = '';
     content.innerHTML = `<div class="player-skins-empty"><strong>Could not load skins</strong><p>${escapeHtml(err.message)}</p></div>`;
   }
 }
@@ -5018,8 +5037,29 @@ function renderPlayerSigns(username, { signs, total }) {
   $('#playerSignsCount').textContent = total
     ? `${formatNumber(total)} sign${total === 1 ? '' : 's'}${total > signs.length ? `, newest ${formatNumber(signs.length)} shown` : ''}`
     : 'No signs';
+  // Newest first, like the profile's sessions: grouped under the day each was read
+  const chronological = signs.every((find, index) => !index || new Date(signs[index - 1].foundAt) >= new Date(find.foundAt));
+  let previousDay = '';
+  const items = signs.map(find => {
+    const dayKey = chronological ? playerProfileDayKey(find.foundAt) : '';
+    const heading = dayKey && dayKey !== previousDay
+      ? `<li class="player-profile-day player-signs-day">${escapeHtml(playerProfileDayLabel(find.foundAt))}</li>`
+      : '';
+    previousDay = dayKey || previousDay;
+    return heading + highlightPlayerSignName(renderAreaExplorerFind(find, { showScope: true, selected: Boolean(publicPlayerUsername) }), username);
+  }).join('');
+  const servers = new Set(signs.map(find => find.server).filter(Boolean)).size;
+  const times = signs.map(find => new Date(find.foundAt).getTime()).filter(Number.isFinite);
+  const facts = signs.length
+    ? `<dl class="player-profile-facts player-signs-facts">
+        <div><dt>Signs</dt><dd><strong>${formatNumber(total)}</strong></dd></div>
+        <div><dt>Servers</dt><dd><strong>${formatNumber(servers)}</strong></dd></div>
+        <div><dt>Newest</dt><dd><strong>${times.length ? escapeHtml(formatRecentDate(new Date(Math.max(...times)).toISOString())) : '-'}</strong></dd></div>
+        <div><dt>${total > signs.length ? 'Oldest shown' : 'Oldest'}</dt><dd><strong>${times.length ? escapeHtml(formatRecentDate(new Date(Math.min(...times)).toISOString())) : '-'}</strong></dd></div>
+      </dl>`
+    : '';
   content.innerHTML = signs.length
-    ? `<ol class="area-explorer-finds player-signs-list">${signs.map(find => highlightPlayerSignName(renderAreaExplorerFind(find, { showScope: true, selected: Boolean(publicPlayerUsername) }), username)).join('')}</ol>`
+    ? `${facts}<ol class="area-explorer-finds player-signs-list">${items}</ol>`
     : `<div class="player-signs-empty"><strong>No signs yet</strong><p>No sign the Area Explorer mod has read has ${escapeHtml(username)} written on it.</p></div>`;
 }
 
@@ -5044,7 +5084,8 @@ async function openPlayerSigns(username) {
   const content = $('#playerSignsContent');
   if (!overlay || !content) return;
   const requestId = state.playerSignsRequestId = (state.playerSignsRequestId || 0) + 1;
-  $('#playerSignsTitle').textContent = `Signs with ${username}`;
+  applyPlayerDialogIdentity(overlay.querySelector('.player-signs-dialog'), $('#playerSignsAvatar'), username);
+  $('#playerSignsTitle').textContent = username;
   $('#playerSignsCount').innerHTML = '<span class="player-signs-skeleton-count" aria-hidden="true"></span>';
   content.innerHTML = renderPlayerSignsSkeleton();
   overlay.hidden = false;
