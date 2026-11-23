@@ -6994,8 +6994,9 @@ function renderAreaExplorerHighlights(scope) {
   const tiles = [];
   if (regions) {
     const km2 = regions * XAERO_REGION_PX * XAERO_REGION_PX / 1e6;
-    tiles.push(`<div class="area-explorer-tile" title="${formatNumber(regions)} regions">
-      <img src="/items/Filled_Map.png" alt="" width="24" height="24"><strong>≈${formatNumber(Math.round(km2))}</strong><span>km² mapped</span>
+    tiles.push(`<div class="area-explorer-tile is-wide">
+      <span class="area-explorer-tile-slot" aria-hidden="true"><img src="/items/Filled_Map.png" alt="" width="24" height="24"></span>
+      <span class="area-explorer-tile-text"><strong>≈${formatNumber(Math.round(km2))} km²</strong><span>${formatNumber(regions)} regions mapped</span></span>
     </div>`);
   }
   for (const [kind, icon, label, count] of [
@@ -7006,7 +7007,9 @@ function renderAreaExplorerHighlights(scope) {
   ]) {
     if (!count) continue;
     tiles.push(`<button class="area-explorer-tile is-button kind-${kind.toLowerCase()}" type="button" data-area-filter-kind="${kind}" title="List the ${label.toLowerCase()}">
-      <img src="/items/${icon}.png" alt="" width="24" height="24"><strong>${formatNumber(count)}</strong><span>${label}</span>
+      <span class="area-explorer-tile-slot" aria-hidden="true"><img src="/items/${icon}.png" alt="" width="24" height="24"></span>
+      <span class="area-explorer-tile-text"><strong>${formatNumber(count)}</strong><span>${label}</span></span>
+      <span class="area-explorer-tile-arrow" aria-hidden="true">›</span>
     </button>`);
   }
   if (tiles.length) sections.push(`<div class="area-explorer-tiles">${tiles.join('')}</div>`);
@@ -7508,8 +7511,8 @@ function recordAreaExplorerTrail(live, now = Date.now()) {
   const last = samples.at(-1);
   if (last && (now - last.at > 2500 || Math.hypot(live.x - last.x, live.z - last.z) > 512)) samples.length = 0;
   if (!last || last.x !== live.x || last.z !== live.z || !samples.length) samples.push({ x: live.x, z: live.z, at: now });
-  // Five minutes of path, one point a report
-  ae.trail.samples = samples.filter(point => now - point.at < 300_000).slice(-300);
+  // Thirty seconds of path, one point a report
+  ae.trail.samples = samples.filter(point => now - point.at < 30_000).slice(-60);
 }
 
 function areaExplorerTrail(live, now = Date.now()) {
@@ -7517,7 +7520,7 @@ function areaExplorerTrail(live, now = Date.now()) {
   if (!live?.online || trail?.key !== `${live.tokenId}|${live.server}|${live.dimension}`) return [];
   // Reports stopped: no path hanging on the map
   if (!trail.samples.length || now - trail.samples.at(-1).at >= 3000) return [];
-  return trail.samples.filter(point => now - point.at < 300_000);
+  return trail.samples.filter(point => now - point.at < 30_000);
 }
 
 function applyAreaExplorerLiveStatus(live) {
@@ -8350,8 +8353,8 @@ function drawAreaExplorerMap() {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     for (let i = 1; i < trail.length; i++) {
-      // The older the path, the fainter: five minutes back it has faded to a trace
-      ctx.globalAlpha = 0.12 + 0.6 * Math.max(0, 1 - (now - trail[i - 1].at) / 300_000);
+      // The older the path, the fainter: thirty seconds back it has faded to a trace
+      ctx.globalAlpha = 0.12 + 0.6 * Math.max(0, 1 - (now - trail[i - 1].at) / 30_000);
       const [ax, az] = areaExplorerToScreen(view, canvas, trail[i - 1].x, trail[i - 1].z);
       const [bx, bz] = areaExplorerToScreen(view, canvas, trail[i].x, trail[i].z);
       ctx.beginPath(); ctx.moveTo(ax, az); ctx.lineTo(bx, bz); ctx.stroke();
