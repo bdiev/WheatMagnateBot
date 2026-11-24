@@ -1269,11 +1269,17 @@ const gameChatDiscordForwardQueue = new DiscordChatForwardQueue({
   minDuplicateSummaryCount: DISCORD_CHAT_FLOOD_MIN_DUPLICATE_SUMMARY,
   minSendIntervalMs: DISCORD_CHAT_MIN_SEND_INTERVAL_MS,
   send: deliverGameChatMessageToDiscord,
-  // Anti-flood only controls the public Discord/site feed. Keep every
-  // suppressed player message in the player's private profile history.
-  onSuppressed: ({ username, message }) => {
-    if (isMinecraftSystemUsername(username)) return;
-    recordGameChatMessage(username, message, { visible: false }).catch(error => {
+  // Only a repeated message is flood: it stays out of the public site feed
+  // and lives on, hidden, in the player's profile. Everything else the queue
+  // drops (full queue, waited too long) is a Discord delivery jam, not the
+  // player's doing: Discord skips it, the site shows it like any message.
+  onSuppressed: ({ username, message, reason, isSummary }) => {
+    // A late flood summary is requeued by the queue, not a chat line
+    if (isSummary) return;
+    const isFlood = reason === 'duplicate-message';
+    // Server lines were never archived as hidden duplicates
+    if (isFlood && isMinecraftSystemUsername(username)) return;
+    recordGameChatMessage(username, message, { visible: !isFlood }).catch(error => {
       console.error('[Discord Chat Queue] Failed to archive suppressed message:', error?.message || error);
     });
   },

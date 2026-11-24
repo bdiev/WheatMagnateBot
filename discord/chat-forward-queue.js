@@ -245,7 +245,8 @@ class DiscordChatForwardQueue {
             username: item.safeUsername,
             message: item.message,
             source: item.source,
-            reason: 'stale'
+            reason: 'stale',
+            isSummary: Boolean(item.isSummary)
           });
           if (item.isSummary) this._addSuppressed(item.safeUsername, item.summaryReasons);
           else if (!item.bypassFloodProtection) this._recordSuppressed(item.safeUsername, 'stale');

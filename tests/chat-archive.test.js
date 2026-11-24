@@ -112,8 +112,13 @@ assert.match(
 );
 assert.match(
   botSource,
-  /onSuppressed: \(\{ username, message \}\) => \{[\s\S]*isMinecraftSystemUsername\(username\)[\s\S]*recordGameChatMessage\(username, message, \{ visible: false \}\)/,
-  'every player message suppressed by anti-flood must remain readable in the player profile'
+  /onSuppressed: \(\{ username, message, reason, isSummary \}\) => \{[\s\S]*if \(isSummary\) return;[\s\S]*const isFlood = reason === 'duplicate-message';[\s\S]*recordGameChatMessage\(username, message, \{ visible: !isFlood \}\)/,
+  'every suppressed player message stays archived; only repeated messages are hidden as flood, a Discord delivery jam keeps them visible'
+);
+assert.match(
+  fs.readFileSync(path.join(__dirname, '..', 'discord', 'chat-forward-queue.js'), 'utf8'),
+  /reason: 'stale',\s*isSummary: Boolean\(item\.isSummary\)/,
+  'a late flood summary must be told apart from a late chat line'
 );
 assert.match(
   botSource,
