@@ -91,7 +91,6 @@ public class PearlLoad extends Module {
         if (sender.equalsIgnoreCase(loaderName.get().trim())) {
             if (!ready && READY_PROMPT.matcher(text).find()) {
                 ready = true;
-                info("%s is ready - press again to answer yes.", sender);
                 mc.world.playSoundFromEntity(mc.player, mc.player, SoundEvents.UI_TOAST_IN, SoundCategory.MASTER, 1f, 1f);
             } else if (lower.contains("not set") || lower.contains("leaving")) {
                 info("The loader ended the request.");
