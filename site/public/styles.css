@@ -13965,6 +13965,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   stroke-width: 0.06;
 }
 
+/* The grid kept between redraws of its card sits in a wrapper that adds no box of its own */
+.area-explorer-sectors-box { display: contents; }
 .area-explorer-sectors .area-explorer-sectors-bg { stroke: none; }
 .area-explorer-sectors .is-done { fill: color-mix(in srgb, var(--accent) 55%, var(--panel)); }
 .area-explorer-sectors .is-deferred { fill: #f0a030; }

@@ -7078,7 +7078,7 @@ async function loadAreaExplorerData(full) {
 // Run log: what happened to the mod's runs, newest first
 
 const AREA_EXPLORER_LOG_PAGE = 50;
-const AREA_EXPLORER_LOG_KEEP = 500;
+const AREA_EXPLORER_LOG_KEEP = 200;
 const AREA_EXPLORER_LOG_TYPES = Object.freeze({
   start: 'Start', stop: 'Stopped', pause: 'Paused', resume: 'Resumed', phase: 'Phase', progress: 'Progress',
   finish: 'Done', disconnect: 'Kicked', reconnect: 'Reconnect', rejoin: 'Back', totem: 'Totem', leave: 'Left',
@@ -7135,10 +7135,26 @@ function applyAreaExplorerEvents(events) {
   const known = new Set(ae.logEvents.map(event => event.id));
   const fresh = events.filter(event => !known.has(event.id) && areaExplorerLogMatches(event));
   if (!fresh.length) return;
-  ae.logEvents = [...fresh, ...ae.logEvents]
-    .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt) || Number(b.id) - Number(a.id))
-    .slice(0, AREA_EXPLORER_LOG_KEEP);
-  renderAreaExplorerLog();
+  const merged = [...fresh, ...ae.logEvents]
+    .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt) || Number(b.id) - Number(a.id));
+  // The oldest go past the limit, still a click on "more" away
+  if (merged.length > AREA_EXPLORER_LOG_KEEP) ae.logHasMore = true;
+  ae.logEvents = merged.slice(0, AREA_EXPLORER_LOG_KEEP);
+  queueAreaExplorerLogRender();
+}
+
+/**
+ * A run sends events every moment: the log is redrawn at most once a frame, not at all while the
+ * page is in the background, and not while another tab is open (opening this one loads it afresh).
+ */
+function queueAreaExplorerLogRender() {
+  const ae = areaExplorerState();
+  if (state.activeTab !== 'area-explorer' || ae.logRenderQueued) return;
+  ae.logRenderQueued = true;
+  requestAnimationFrame(() => {
+    ae.logRenderQueued = false;
+    renderAreaExplorerLog();
+  });
 }
 
 function areaExplorerLogDay(value) {
@@ -7332,6 +7348,18 @@ function renderAreaExplorerStatus() {
     container.innerHTML = '<p class="area-explorer-empty">No mod has reported in yet.</p>';
     return;
   }
+  // A Sectors run's grid (up to thousands of cells) only changes when a sector is done, while the
+  // card is redrawn with every position: the grid already on the page is kept and moved back in
+  const keptGrids = new Map();
+  container.querySelectorAll('[data-area-sectors-token]').forEach(node => keptGrids.set(node.dataset.areaSectorsToken, node));
+  const gridKeys = ae.sectorsGridKeys ||= new Map();
+  const sectorsGrid = status => {
+    const token = String(status.tokenId);
+    const key = JSON.stringify(status.area.sectors);
+    if (keptGrids.has(token) && gridKeys.get(token) === key) return `<div data-area-sectors-reuse="${escapeHtml(token)}"></div>`;
+    gridKeys.set(token, key);
+    return `<div class="area-explorer-sectors-box" data-area-sectors-token="${escapeHtml(token)}">${renderAreaExplorerSectors(status.area.sectors)}</div>`;
+  };
   container.innerHTML = statuses.map(status => {
     const percent = status.percent === null ? null : Math.round(status.percent * 10) / 10;
     const rescan = status.mode === 'Rescan';
@@ -7357,10 +7385,11 @@ function renderAreaExplorerStatus() {
         ${position ? `<div class="area-explorer-run-position"><dt>Position</dt><dd>${escapeHtml(position)}</dd></div>` : ''}
         <div><dt>Last report</dt><dd>${escapeHtml(formatDurationMs(Date.now() - new Date(status.updatedAt).getTime()))} ago</dd></div>
       </dl>
-      ${status.online && status.area?.sectors ? renderAreaExplorerSectors(status.area.sectors) : ''}
+      ${status.online && status.area?.sectors ? sectorsGrid(status) : ''}
       ${found ? `<p class="area-explorer-run-finds">${escapeHtml(found)}</p>` : ''}
     </article>`;
   }).join('');
+  container.querySelectorAll('[data-area-sectors-reuse]').forEach(slot => slot.replaceWith(keptGrids.get(slot.dataset.areaSectorsReuse)));
 }
 
 async function loadAreaExplorerFinds() {
@@ -8431,7 +8460,10 @@ function drawAreaExplorerMap() {
   ctx.strokeStyle = colors.axis;
   ctx.lineWidth = 1;
   ctx.strokeRect(Math.round(tx1) + 0.5, Math.round(tz1) + 0.5, Math.round(tx2 - tx1), Math.round(tz2 - tz1));
-  $('#areaExplorerGrid').textContent = `Grid ${step.toLocaleString('en-US')} blocks`;
+  // Drawn many times a second while the player moves: the page's text is touched only when it changes
+  const gridLabel = $('#areaExplorerGrid');
+  const gridText = `Grid ${step.toLocaleString('en-US')} blocks`;
+  if (gridLabel.textContent !== gridText) gridLabel.textContent = gridText;
   renderAreaExplorerExplored();
 }
 
@@ -8443,11 +8475,14 @@ function renderAreaExplorerExplored() {
   const radius = ae.extent / 2;
   const explored = ae.explored?.scope === ae.scope ? ae.explored : null;
   const chunks = explored?.chunks?.[radius], total = explored?.totals?.[radius];
-  label.hidden = !Number.isFinite(chunks) || !total;
-  if (label.hidden) return;
-  label.textContent = `Explored ${formatAreaExplorerPercent(chunks / total * 100)}`;
-  label.title = `${chunks.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} chunks drawn on the map`
+  const hidden = !Number.isFinite(chunks) || !total;
+  if (label.hidden !== hidden) label.hidden = hidden;
+  if (hidden) return;
+  const text = `Explored ${formatAreaExplorerPercent(chunks / total * 100)}`;
+  const title = `${chunks.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} chunks drawn on the map`
     + (explored.pending ? ` - ${explored.pending.toLocaleString('en-US')} older regions still being counted` : '');
+  if (label.textContent !== text) label.textContent = text;
+  if (label.title !== title) label.title = title;
 }
 
 /** A share of the map: one decimal, a sliver above none never shown as 0, nor short of all as 100. */
@@ -8490,7 +8525,10 @@ function queueAreaExplorerExploredRefresh() {
 // regions at a pixel a block, each level up covering twice as much a side at the same 512 px
 
 const XAERO_REGION_PX = 512;
-const XAERO_TILE_CACHE_LIMIT = 900;
+// Each tile is a 512 x 512 picture, a megabyte once decoded: the cache keeps a few screens' worth
+// (those in view and around them), never the hundreds a long session pans across
+const XAERO_TILE_CACHE_MIN = 160;
+const XAERO_TILE_CACHE_SCREENS = 3;
 const XAERO_FALLBACK_LEVELS = 5;
 
 /**
@@ -8522,7 +8560,8 @@ function cachedMapImage(key, url, { request = true } = {}) {
   image.onerror = () => { entry.status = 'missing'; };
   image.src = url;
   ae.tiles.set(key, entry);
-  while (ae.tiles.size > XAERO_TILE_CACHE_LIMIT) {
+  const limit = Math.max(XAERO_TILE_CACHE_MIN, (ae.tilesInView || 0) * XAERO_TILE_CACHE_SCREENS);
+  while (ae.tiles.size > limit) {
     const oldest = ae.tiles.keys().next().value;
     const stale = ae.tiles.get(oldest);
     if (stale.status === 'loading') stale.image.src = '';
@@ -8727,6 +8766,8 @@ function drawXaeroRegionMap(ctx, canvas, view, ratio) {
       tiles.push([x, z, dx, dy, Math.ceil(ex) - dx, Math.ceil(ez) - dy]);
     }
   }
+  // Day and night tiles both count towards what the cache keeps
+  ae.tilesInView = tiles.length * (dayMap && nightMap ? 2 : 1);
   // The day picture - all of it by day, under the night where that isn't fully in yet
   const nightDone = new Set();
   for (const [x, z, dx, dy, dw, dh] of tiles) {
