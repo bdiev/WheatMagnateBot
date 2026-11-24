@@ -23,6 +23,7 @@ import dev.onfocus.addon.modules.MapArtCopier;
 import dev.onfocus.addon.modules.MapArtSorter;
 import dev.onfocus.addon.modules.MapPainter;
 import dev.onfocus.addon.modules.MapPreview;
+import dev.onfocus.addon.modules.PearlLoad;
 import dev.onfocus.addon.modules.RandomPath;
 import dev.onfocus.addon.modules.SetShulker;
 import dev.onfocus.addon.modules.StayFocused;
@@ -52,6 +53,7 @@ public class OnFocusAddon extends MeteorAddon {
         Modules.get().add(new RandomPath());
         Modules.get().add(new TrailExplorer());
         Modules.get().add(new WhisperNotifier());
+        Modules.get().add(new PearlLoad());
         Modules.get().add(new AutoMend());
         Modules.get().add(new AutoEat());
         Modules.get().add(new JoinLeaveMessages());
