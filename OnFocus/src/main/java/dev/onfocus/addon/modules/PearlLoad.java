@@ -61,7 +61,6 @@ public class PearlLoad extends Module {
             return;
         }
         ChatUtils.sendPlayerMsg("/w " + botName.get().trim() + " load");
-        info("Load requested. Waiting for %s to be ready...", loaderName.get().trim());
     }
 
     @Override
@@ -71,9 +70,6 @@ public class PearlLoad extends Module {
             // Whispered by name rather than /r, so a whisper from someone else in between can't take the "yes"
             String reply = "/w " + loaderName.get().trim() + " yes";
             ChatUtils.sendPlayerMsg(reply);
-            info("Confirmed: %s", reply);
-        } else {
-            info("Stopped waiting for the loader.");
         }
         ready = false;
     }
@@ -93,13 +89,11 @@ public class PearlLoad extends Module {
                 ready = true;
                 mc.world.playSoundFromEntity(mc.player, mc.player, SoundEvents.UI_TOAST_IN, SoundCategory.MASTER, 1f, 1f);
             } else if (lower.contains("not set") || lower.contains("leaving")) {
-                info("The loader ended the request.");
                 finish();
             }
         } else if (sender.equalsIgnoreCase(botName.get().trim())) {
             if (lower.contains("not configured") || lower.contains("unavailable") || lower.contains("queue is full")
                 || lower.contains("expired") || lower.contains("not set")) {
-                info("The request ended.");
                 finish();
             }
         }
