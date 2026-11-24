@@ -1,7 +1,6 @@
 package dev.onfocus.addon.modules;
 
 import dev.onfocus.addon.OnFocusAddon;
-import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
@@ -25,7 +24,7 @@ import java.util.regex.Pattern;
  * or WheatMagnate reports that the request ended.
  */
 public class PearlLoad extends Module {
-    static final Pattern WHISPER_PATTERN = Pattern.compile("^([A-Za-z0-9_]{1,16}) whispers: (.+)$", Pattern.DOTALL);
+    private static final Pattern WHISPER_PATTERN = Pattern.compile("^([A-Za-z0-9_]{1,16}) whispers: (.+)$", Pattern.DOTALL);
     private static final Pattern READY_PROMPT = Pattern.compile("\"/r [a-z]+\"", Pattern.CASE_INSENSITIVE);
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -50,8 +49,6 @@ public class PearlLoad extends Module {
 
     public PearlLoad() {
         super(OnFocusAddon.CATEGORY, "pearl-load", "First press whispers \"load\" to WheatMagnate; once the loader is ready, the second press whispers \"yes\" to the loader.");
-        // A confirmed request disables the hotkey module before the loader brings the player back.
-        MeteorClient.EVENT_BUS.subscribe(new PearlReloadReminder(botName::get, loaderName::get));
     }
 
     @Override

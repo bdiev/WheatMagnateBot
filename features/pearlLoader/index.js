@@ -229,14 +229,6 @@ function createVariedPicker(messages) {
 const pickPearlReloadReminder = createVariedPicker(PEARL_RELOAD_REMINDERS);
 const pickReadyPrompt = createVariedPicker(READY_PROMPTS);
 
-function pearlReloadWhisper(bot, hatch) {
-  const reminder = pickPearlReloadReminder();
-  const world = bot.game?.dimension;
-  if (typeof world !== 'string' || !/^(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+$/.test(world)) return reminder;
-  const dimension = world.includes(':') ? world : `minecraft:${world}`;
-  return `${reminder} [Pearl hatch: ${dimension} ${hatch.x} ${hatch.y} ${hatch.z}]`;
-}
-
 // Lowercases, drops apostrophes, turns punctuation and emoji into spaces and
 // collapses stretched letters, so "Yesss!!", "let's go" and "OK :)" all match.
 function normalizeConfirmation(value) {
@@ -857,7 +849,7 @@ function createPearlLoaderFeature({
       job.visibilityTimer = null;
       job.stage = 'opening';
       note(job, 'info', 'Player entered view; opening the trapdoor.');
-      sendPrivateWhisper(bot, job.username, pearlReloadWhisper(bot, job.hatch));
+      sendPrivateWhisper(bot, job.username, pickPearlReloadReminder());
       setHatchOpen(bot, job.hatch, true)
         .then(() => finishJob(job))
         .catch(error => failJob(job, error));

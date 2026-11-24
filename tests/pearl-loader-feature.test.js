@@ -34,7 +34,6 @@ async function testCompleteCycle() {
   let hatchVisible = true;
   const bot = {
     username:'PearlBot',
-    game:{dimension:'the_nether'},
     entity:{ position:new Vec3(9,64,-20),eyeHeight:1.62 },
     entities:{
       pearl:{type:'projectile',name:'ender_pearl',displayName:'Thrown Ender Pearl',position:new Vec3(10.5,64.5,-19.5)}
@@ -155,9 +154,7 @@ async function testCompleteCycle() {
   assert.equal(interactionPackets[0].packet.sequence,1,'modern interaction packets use a fresh sequence number');
   assert.equal(chats.length,2,'the Loader sends the ready prompt and one reload reminder');
   assert.equal(withReadyPrompt(chats)[0],`/w bdiev_ ${READY_PROMPT}`);
-  assert.ok(PEARL_RELOAD_REMINDERS.some(message =>
-    chats[1] === `/w bdiev_ ${message} [Pearl hatch: minecraft:the_nether 10 64 -20]`
-  ),'the Loader privately sends the hatch coordinates and dimension with the reload reminder');
+  assert.ok(PEARL_RELOAD_REMINDERS.some(message => chats[1] === `/w bdiev_ ${message}`),'the Loader reminds the visible player to throw a replacement pearl');
   assert.ok(chats.every(message => message.startsWith('/w bdiev_ ')),'Pearl Loader must never write feature messages to public chat');
   await delay(50);
   assert.equal(open,true,'the trapdoor opens after the configured delay once the player is visible');
