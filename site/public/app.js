@@ -923,7 +923,9 @@ function playerHeadUrl(username, size = 32, { uuid = null, skinHash = null } = {
 
 function playerProfileAccentKey(profile) {
   const uuid = String(profile?.uuid || '').replaceAll('-', '').trim().toLowerCase();
-  return uuid || String(profile?.username || '').trim().toLowerCase();
+  const identity = uuid || String(profile?.username || '').trim().toLowerCase();
+  // A new skin is a new colour
+  return profile?.skin?.hash ? `${identity}:${profile.skin.hash}` : identity;
 }
 
 const PLAYER_ACCENT_PROPERTY_NAMES = [
@@ -1007,14 +1009,8 @@ function applyPlayerProfileAccent(profile) {
     setPlayerProfileLoading(false);
   }
 
-  const resolveAccent = () => {
-    if (playerProfileAccentKey(state.playerProfileLastPayload) !== key) return;
-    let accent;
-    try {
-      accent = accentApi.accentFromImage(image, key);
-    } catch {
-      accent = accentApi.pickPlayerAccent([], key);
-    }
+  const identity = playerProfileAccentKey({ uuid: profile.uuid, username: profile.username });
+  const finish = accent => {
     const theme = accentApi.createPlayerAccentTheme(accent);
     state.playerProfileAccentCache.set(key, theme);
     if (playerProfileAccentKey(state.playerProfileLastPayload) === key) {
@@ -1022,8 +1018,39 @@ function applyPlayerProfileAccent(profile) {
       setPlayerProfileLoading(false);
     }
   };
+  const resolveFromAvatar = () => {
+    if (playerProfileAccentKey(state.playerProfileLastPayload) !== key) return;
+    let accent;
+    try {
+      accent = accentApi.accentFromImage(image, identity);
+    } catch {
+      accent = accentApi.pickPlayerAccent([], identity);
+    }
+    finish(accent);
+  };
+  const resolveAccent = () => {
+    if (playerProfileAccentKey(state.playerProfileLastPayload) !== key) return;
+    // The whole skin says more than the head: clothes, not just a face
+    if (!profile.skin?.hash || !accentApi.accentFromSkinTexture) {
+      resolveFromAvatar();
+      return;
+    }
+    const texture = new Image();
+    texture.decoding = 'async';
+    texture.onload = () => {
+      if (playerProfileAccentKey(state.playerProfileLastPayload) !== key) return;
+      try {
+        finish(accentApi.accentFromSkinTexture(texture, identity, profile.skin.model));
+      } catch {
+        resolveFromAvatar();
+      }
+    };
+    texture.onerror = resolveFromAvatar;
+    texture.src = `/api/minecraft-skin/${encodeURIComponent(profile.skin.hash)}.png`;
+  };
 
-  if (image.complete && image.naturalWidth > 0) resolveAccent();
+  if (cachedTheme) return;
+  if (profile.skin?.hash || (image.complete && image.naturalWidth > 0)) resolveAccent();
   else {
     image.addEventListener('load', resolveAccent, { once: true });
     image.addEventListener('error', resolveAccent, { once: true });

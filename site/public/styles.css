@@ -16663,7 +16663,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 }
 
 /* ===== Player profile visual refresh =====
-   Status line and tags under the name, a pixel banner and full-body skin in
+   Status line and tags under the name, an accent banner and full-body skin in
    the head, three hero metrics plus a compact facts strip, session timeline
    bars with day groups, an activity preview, chat day separators and
    mentions, hover-only refresh buttons with an update flash, and a compact
@@ -16673,18 +16673,6 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   background:
     linear-gradient(120deg, color-mix(in srgb, var(--accent) 26%, transparent), color-mix(in srgb, var(--accent) 6%, transparent) 58%, transparent 82%),
     var(--panel-soft);
-}
-
-.player-profile-head::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    conic-gradient(color-mix(in srgb, var(--accent) 16%, transparent) 0 25%, transparent 0 50%, color-mix(in srgb, var(--accent) 16%, transparent) 0 75%, transparent 0) 0 0 / 16px 16px;
-  -webkit-mask-image: linear-gradient(105deg, #000 0, rgba(0, 0, 0, .55) 30%, transparent 62%);
-  mask-image: linear-gradient(105deg, #000 0, rgba(0, 0, 0, .55) 30%, transparent 62%);
-  opacity: .55;
 }
 
 .player-profile-actions {
@@ -17307,18 +17295,6 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
     var(--panel-soft);
 }
 
-.player-dialog-head::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    conic-gradient(color-mix(in srgb, var(--accent) 16%, transparent) 0 25%, transparent 0 50%, color-mix(in srgb, var(--accent) 16%, transparent) 0 75%, transparent 0) 0 0 / 16px 16px;
-  -webkit-mask-image: linear-gradient(105deg, #000 0, rgba(0, 0, 0, .55) 30%, transparent 62%);
-  mask-image: linear-gradient(105deg, #000 0, rgba(0, 0, 0, .55) 30%, transparent 62%);
-  opacity: .55;
-}
-
 .player-dialog-head > div {
   position: relative;
   min-width: 0;
@@ -17514,5 +17490,136 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 
   .player-signs-content .player-signs-facts > div:last-child {
     grid-column: auto;
+  }
+}
+
+/* ===== Player profile: clear sections and a light chat =====
+   Each section starts with a rule and a soft accent wash, so the eye finds
+   where Game sessions, Activity and Recent chat begin, on phones too. */
+
+.player-profile-sessions,
+.player-profile-activity,
+.player-profile-chat {
+  position: relative;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 96px);
+}
+
+.player-profile-admin-metadata {
+  margin-top: 2px;
+}
+
+.player-profile-chat h3 {
+  margin-top: 0;
+}
+
+/* Light theme: the player's messages as paper cards instead of black HUD
+   strips; the dark theme keeps the in-game chat look. */
+:root:not([data-theme="dark"]) .player-profile-message {
+  border: 1px solid var(--line);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 3px;
+  padding: 9px 11px;
+  color: var(--text);
+  background: var(--panel-soft);
+  box-shadow: var(--shadow-inset);
+}
+
+:root:not([data-theme="dark"]) .player-profile-message:hover,
+:root:not([data-theme="dark"]) .player-profile-message:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-soft));
+}
+
+:root:not([data-theme="dark"]) .player-profile-message .chat-message-name {
+  color: var(--accent-strong);
+}
+
+:root:not([data-theme="dark"]) .player-profile-message.player-profile-message-bot .chat-message-name {
+  color: #7a4fc4;
+}
+
+:root:not([data-theme="dark"]) .player-profile-message .chat-text {
+  color: var(--text);
+}
+
+:root:not([data-theme="dark"]) .player-profile-message .chat-time {
+  color: var(--muted);
+}
+
+:root:not([data-theme="dark"]) .player-profile-message .chat-link {
+  color: var(--accent-strong);
+}
+
+:root:not([data-theme="dark"]) .player-profile-message.is-hidden {
+  border-left-style: dashed;
+  border-left-color: var(--line);
+  opacity: .82;
+}
+
+:root:not([data-theme="dark"]) .player-profile-message.is-hidden:hover {
+  border-color: var(--line);
+  background: var(--panel-soft);
+}
+
+:root:not([data-theme="dark"]) .player-profile-message .chat-hidden-badge {
+  border-color: color-mix(in srgb, #b8621b 45%, transparent);
+  color: #9a4f12;
+  background: color-mix(in srgb, #b8621b 10%, transparent);
+}
+
+:root:not([data-theme="dark"]) .player-profile-message.is-mention {
+  border-left-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 12%, var(--panel-soft));
+}
+
+:root:not([data-theme="dark"]) .player-profile-message .chat-mention-badge {
+  color: var(--gold-text);
+}
+
+@media (max-width: 700px) {
+  .player-profile-sessions,
+  .player-profile-activity,
+  .player-profile-chat {
+    padding: 14px 10px 14px;
+  }
+
+  .player-profile-admin-metadata {
+    margin: 0 10px 14px;
+  }
+
+  /* Fewer heavy frames: thin borders, no inset bevels */
+  .player-profile-grid > .player-profile-stat,
+  .player-profile-facts,
+  .player-profile-session {
+    border-width: 1px;
+    box-shadow: none;
+  }
+
+  .player-profile-grid {
+    padding: 12px 10px 8px;
+  }
+
+  .player-profile-facts {
+    margin: 0 10px 14px;
+  }
+
+  /* Title and peak on one line, the hour preview under them */
+  .player-profile-activity > summary {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .player-profile-activity > summary h3 {
+    white-space: nowrap;
+  }
+
+  .player-profile-section-head > .player-activity-preview {
+    order: 3;
+    flex: 1 1 100%;
+    margin-left: 0;
+    height: 22px;
   }
 }

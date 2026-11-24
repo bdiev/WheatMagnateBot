@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createPlayerAccentTheme, pickPlayerAccent } = require('../public/player-accent');
+const { createPlayerAccentTheme, frontSkinPixels, pickPlayerAccent } = require('../public/player-accent');
 
 function solidPixels(red, green, blue, count = 64) {
   return Uint8ClampedArray.from(Array.from({ length: count }, () => [red, green, blue, 255]).flat());
@@ -46,6 +46,27 @@ const greyWithRed = pickPlayerAccent(mixedPixels([110, 110, 110], [210, 40, 40],
 assert.equal(greyWithRed.source, 'avatar');
 assert.ok(greyWithRed.hue < 20 || greyWithRed.hue > 340, 'a clear colour beside grey must be the accent');
 
+// Muted clothes stay muted instead of being pushed to a vivid accent
+const olive = pickPlayerAccent(mixedPixels([100, 110, 60], [214, 166, 124], 0.2), 'OlivePlayer');
+assert.equal(olive.source, 'avatar');
+assert.ok(olive.saturation < 45, 'a muted skin must give a muted accent');
+
+// The face counts for less than the clothes: navy coat beats a bigger face
+const navy = pickPlayerAccent(mixedPixels([25, 35, 90], [214, 166, 124], 0.45), 'NavyPlayer');
+assert.ok(navy.hue > 200 && navy.hue < 250, 'clothes must outweigh the skin tone of the face');
+
+// The front view of a 64x64 texture: outer layers over the base, 352 pixels
+const texture = new Uint8ClampedArray(64 * 64 * 4);
+const paint = (x, y, w, h, rgba) => {
+  for (let row = y; row < y + h; row += 1) for (let column = x; column < x + w; column += 1) texture.set(rgba, (row * 64 + column) * 4);
+};
+paint(8, 8, 8, 8, [214, 166, 124, 255]);
+paint(20, 20, 8, 12, [30, 140, 60, 255]);
+paint(20, 36, 8, 12, [200, 30, 30, 255]);
+const front = frontSkinPixels(texture, 64, 64, 'classic');
+assert.equal(front.length / 4, 64 + 96 + 48 * 4, 'head, body, both arms and both legs');
+assert.deepEqual([...front.slice(64 * 4, 64 * 4 + 4)], [200, 30, 30, 255], 'the jacket layer covers the body');
+
 // An unreadable image keeps a stable hue from the name
 assert.equal(pickPlayerAccent([], 'Nobody').source, 'fallback');
 
@@ -58,14 +79,14 @@ const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js')
 const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 const serviceWorkerSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
-assert.match(appSource, /function applyPlayerProfileAccent\(profile\)[\s\S]*accentFromImage\(image, key\)[\s\S]*setPlayerProfileAccent\(theme\)/);
+assert.match(appSource, /function applyPlayerProfileAccent\(profile\)[\s\S]*setPlayerProfileAccent\(theme\)[\s\S]*accentFromImage\(image, identity\)[\s\S]*accentFromSkinTexture\(texture, identity, profile\.skin\.model\)/);
 assert.match(stylesSource, /\.player-profile-card\.has-player-accent[\s\S]*--accent:\s*var\(--player-accent-light\)/);
 assert.match(stylesSource, /\.player-profile-actions > \.player-profile-message-action:first-child[\s\S]*background:\s*var\(--accent\)/);
 assert.ok(indexSource.search(/\/player-accent\.js\?v=\d+/) >= 0 && indexSource.search(/\/player-accent\.js\?v=\d+/) < indexSource.indexOf('/app.js?v='), 'accent extraction must load before the app');
 assert.match(serviceWorkerSource, /'\/player-accent\.js'/, 'accent extraction must be available in the offline app shell');
 assert.match(appSource, /setPlayerProfileLoading\(true\)[\s\S]*renderPlayerProfileSkeleton\(\)/, 'the profile card must enter its neutral loading theme before rendering the skeleton');
 assert.match(stylesSource, /\.player-profile-card\.profile-loading\s*\{[^}]*--accent:\s*#c9ccca;[^}]*border-color:\s*var\(--line\);/s, 'the loading theme must blend into the current surface with a low-contrast neutral accent');
-assert.match(appSource, /const resolveAccent = \(\) => \{[\s\S]*setPlayerProfileAccent\(theme\);[\s\S]*setPlayerProfileLoading\(false\);[\s\S]*\};/, 'the neutral loading theme must remain until the avatar accent is ready');
+assert.match(appSource, /const finish = accent => \{[\s\S]*?setPlayerProfileAccent\(theme\);[\s\S]*?setPlayerProfileLoading\(false\);[\s\S]*?\};/, 'the neutral loading theme must remain until the avatar accent is ready');
 assert.match(
   appSource,
   /function applyWhisperAccent\(username = state\.whisperTarget\)[\s\S]*accentFromImage\(image, key\)[\s\S]*setWhisperAccent\(theme\)/,
