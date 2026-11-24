@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  * Two-press Pearl Loader request. The first press (turning the module on) whispers
  * "load" to the WheatMagnate bot and waits. When the loader account whispers that it
  * is at the pearl (its ready prompts all ask for a "/r ..." answer), a sound plays and
- * the second press (turning the module off) answers "/r yes". Pressing again before the
+ * the second press (turning the module off) whispers "yes" to the loader. Pressing again before the
  * loader is ready only stops waiting. The module also turns itself off when the loader
  * or WheatMagnate reports that the request ended.
  */
@@ -48,7 +48,7 @@ public class PearlLoad extends Module {
     private boolean finished;
 
     public PearlLoad() {
-        super(OnFocusAddon.CATEGORY, "pearl-load", "First press whispers \"load\" to WheatMagnate; once the loader is ready, the second press answers \"/r yes\".");
+        super(OnFocusAddon.CATEGORY, "pearl-load", "First press whispers \"load\" to WheatMagnate; once the loader is ready, the second press whispers \"yes\" to the loader.");
     }
 
     @Override
@@ -68,8 +68,10 @@ public class PearlLoad extends Module {
     public void onDeactivate() {
         if (finished) return;
         if (ready && mc.player != null && mc.getNetworkHandler() != null) {
-            ChatUtils.sendPlayerMsg("/r yes");
-            info("Confirmed: /r yes");
+            // Whispered by name rather than /r, so a whisper from someone else in between can't take the "yes"
+            String reply = "/w " + loaderName.get().trim() + " yes";
+            ChatUtils.sendPlayerMsg(reply);
+            info("Confirmed: %s", reply);
         } else {
             info("Stopped waiting for the loader.");
         }
@@ -89,7 +91,7 @@ public class PearlLoad extends Module {
         if (sender.equalsIgnoreCase(loaderName.get().trim())) {
             if (!ready && READY_PROMPT.matcher(text).find()) {
                 ready = true;
-                info("%s is ready - press again to answer /r yes.", sender);
+                info("%s is ready - press again to answer yes.", sender);
                 mc.world.playSoundFromEntity(mc.player, mc.player, SoundEvents.UI_TOAST_IN, SoundCategory.MASTER, 1f, 1f);
             } else if (lower.contains("not set") || lower.contains("leaving")) {
                 info("The loader ended the request.");
