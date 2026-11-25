@@ -48,4 +48,7 @@ assert.match(app,/if \(tab === 'pearl-loader'\) loadPearlLoader\(\)/);
 assert.match(server,/url\.pathname === '\/api\/pearl-loader'/);
 const pageCode = app.slice(app.indexOf('// Pearl Loader page'), app.indexOf('function resetAdminPlayerPearlHatch'));
 assert.doesNotMatch(pageCode,/hatch\.x|hatch\.y|hatch\.z|\.hatch\b/,'the Pearl Loader page never shows coordinates');
+const chamberRender = app.slice(app.indexOf('function renderPearlChambers'), app.indexOf('function renderPearlLoader('));
+assert.match(chamberRender,/patchPearlList\($\('#pearlChambers'\)/,'chamber cards are updated in place, not rebuilt on every refresh');
+assert.doesNotMatch(chamberRender,/grid\.innerHTML\s*=/,'rebuilding the grid every refresh made the cards blink');
 console.log('Pearl Loader admin UI tests passed.');

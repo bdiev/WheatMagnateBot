@@ -11947,60 +11947,127 @@ function renderPearlLoaderStats(totals = {}) {
   $('#pearlLoaderAverage').textContent = totals.averageMs ? formatDurationMs(totals.averageMs) : '-';
 }
 
-function pearlPlayerChip(username, extra = '') {
-  return `<img class="pearl-head" src="${escapeHtml(playerHeadUrl(username, 32))}" alt="" width="28" height="28" loading="lazy">`
-    + `<span class="pearl-player-name">${escapeHtml(username)}</span>${extra}`;
+// The page refreshes every few seconds. Rows are kept and only their changing
+// parts are updated, so heads do not reload and cards do not pop in again.
+function patchPearlList(list, items, { key, create, update, empty }) {
+  const keyed = new Map();
+  for (const child of [...list.children]) {
+    if (child.dataset.pearlKey) keyed.set(child.dataset.pearlKey, child);
+    else child.remove();
+  }
+  if (!items.length) {
+    keyed.forEach(child => child.remove());
+    const row = document.createElement('li');
+    row.className = 'pearl-empty-row';
+    row.textContent = empty;
+    list.append(row);
+    return;
+  }
+  const wanted = new Set();
+  items.forEach((item, index) => {
+    const itemKey = String(key(item));
+    wanted.add(itemKey);
+    let row = keyed.get(itemKey);
+    if (!row) {
+      row = create(item);
+      row.dataset.pearlKey = itemKey;
+    }
+    update(row, item);
+    if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
+  });
+  keyed.forEach((child, childKey) => { if (!wanted.has(childKey)) child.remove(); });
+}
+
+function setPearlText(element, value) {
+  if (element && element.textContent !== value) element.textContent = value;
+}
+
+function setPearlAttribute(element, name, value) {
+  if (element && element.getAttribute(name) !== value) element.setAttribute(name, value);
+}
+
+function pearlPlayerRow(username, { position = false, outcome = false } = {}) {
+  const row = document.createElement('li');
+  row.innerHTML = (position ? '<span class="pearl-queue-position"></span>' : '')
+    + `<img class="pearl-head" src="${escapeHtml(playerHeadUrl(username, 32))}" alt="" width="28" height="28" loading="lazy">`
+    + `<span class="pearl-player-name">${escapeHtml(username)}</span><small></small>`
+    + (outcome ? '<span class="pearl-outcome"></span>' : '');
+  return row;
 }
 
 function renderPearlLoaderQueue(queue = []) {
-  const list = $('#pearlLoaderQueue');
-  $('#pearlLoaderQueueSummary').textContent = queue.length
+  setPearlText($('#pearlLoaderQueueSummary'), queue.length
     ? `${formatNumber(queue.length)} waiting, first come first served.`
-    : 'Nobody is waiting.';
-  list.innerHTML = queue.length
-    ? queue.map(entry => `<li><span class="pearl-queue-position">${formatNumber(entry.position)}</span>${pearlPlayerChip(entry.username,
-      `<small>asked ${escapeHtml(formatAgo(entry.requestedAt))}</small>`)}</li>`).join('')
-    : '<li class="pearl-empty-row">When the loader is busy, the next players wait here.</li>';
+    : 'Nobody is waiting.');
+  patchPearlList($('#pearlLoaderQueue'), queue, {
+    key: entry => String(entry.username).toLowerCase(),
+    create: entry => pearlPlayerRow(entry.username, { position: true }),
+    update: (row, entry) => {
+      setPearlText(row.querySelector('.pearl-queue-position'), formatNumber(entry.position));
+      setPearlText(row.querySelector('small'), `asked ${formatAgo(entry.requestedAt)}`);
+    },
+    empty: 'When the loader is busy, the next players wait here.'
+  });
 }
 
 function renderPearlLoaderRecent(recent = []) {
-  const list = $('#pearlLoaderRecent');
-  list.innerHTML = recent.length
-    ? recent.map(item => {
+  patchPearlList($('#pearlLoaderRecent'), recent, {
+    key: item => `${String(item.username).toLowerCase()}|${item.finishedAt}`,
+    create: item => pearlPlayerRow(item.username, { outcome: true }),
+    update: (row, item) => {
       const outcome = PEARL_OUTCOME_LABELS[item.outcome] ? item.outcome : 'failed';
       const duration = item.durationMs ? ` · ${formatDurationMs(item.durationMs)}` : '';
-      return `<li>${pearlPlayerChip(item.username, `<small>${escapeHtml(formatRecentDate(item.finishedAt))}${escapeHtml(duration)}</small>`)}`
-        + `<span class="pearl-outcome is-${outcome}">${escapeHtml(PEARL_OUTCOME_LABELS[outcome])}</span></li>`;
-    }).join('')
-    : '<li class="pearl-empty-row">No requests yet.</li>';
+      setPearlText(row.querySelector('small'), `${formatRecentDate(item.finishedAt)}${duration}`);
+      const badge = row.querySelector('.pearl-outcome');
+      setPearlAttribute(badge, 'class', `pearl-outcome is-${outcome}`);
+      setPearlText(badge, PEARL_OUTCOME_LABELS[outcome]);
+    },
+    empty: 'No requests yet.'
+  });
+}
+
+function pearlChamberStatus(chamber) {
+  return PEARL_CHAMBER_LABELS[chamber?.status] ? chamber.status : 'unknown';
 }
 
 function renderPearlChambers(chambers = []) {
   const counts = { all: chambers.length, set: 0, empty: 0, no_trapdoor: 0, unknown: 0 };
-  for (const chamber of chambers) counts[PEARL_CHAMBER_LABELS[chamber.status] ? chamber.status : 'unknown'] += 1;
-  for (const element of $$('[data-pearl-count]')) element.textContent = formatNumber(counts[element.dataset.pearlCount] || 0);
-  $('#pearlChambersSummary').textContent = chambers.length
+  for (const chamber of chambers) counts[pearlChamberStatus(chamber)] += 1;
+  for (const element of $$('[data-pearl-count]')) setPearlText(element, formatNumber(counts[element.dataset.pearlCount] || 0));
+  setPearlText($('#pearlChambersSummary'), chambers.length
     ? `${formatNumber(counts.set)} of ${formatNumber(chambers.length)} hold a pearl. Bots in game check the chambers near them every minute.`
-    : 'No player has pearl hatch coordinates yet. Add them in the player card.';
+    : 'No player has pearl hatch coordinates yet. Add them in the player card.');
   const filter = state.pearlChamberFilter || 'all';
   for (const button of $$('[data-pearl-filter]')) {
     const active = button.dataset.pearlFilter === filter;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   }
-  const shown = chambers.filter(chamber => filter === 'all' || (PEARL_CHAMBER_LABELS[chamber.status] ? chamber.status : 'unknown') === filter);
-  const grid = $('#pearlChambers');
-  grid.innerHTML = shown.length
-    ? shown.map(chamber => {
-      const status = PEARL_CHAMBER_LABELS[chamber.status] ? chamber.status : 'unknown';
-      return `<li class="pearl-chamber-card is-${status}">`
-        + `<div class="pearl-chamber-top"><span class="pearl-chamber-head${chamber.isOnline ? ' is-online' : ''}">`
+  const shown = chambers.filter(chamber => filter === 'all' || pearlChamberStatus(chamber) === filter);
+  patchPearlList($('#pearlChambers'), shown, {
+    key: chamber => chamber.uuid || String(chamber.username).toLowerCase(),
+    create: chamber => {
+      const card = document.createElement('li');
+      card.innerHTML = '<div class="pearl-chamber-top"><span class="pearl-chamber-head">'
         + `<img src="${escapeHtml(playerHeadUrl(chamber.username, 48, { uuid: chamber.uuid }))}" alt="" width="40" height="40" loading="lazy"></span>`
-        + `<div><strong>${escapeHtml(chamber.username)}</strong><small>${chamber.isOnline ? 'online' : 'offline'}</small></div>`
-        + `<span class="pearl-chamber-pearl" aria-hidden="true"><img src="/items/${status === 'no_trapdoor' ? 'Oak_Trapdoor' : 'Ender_Pearl'}.png" alt=""></span></div>`
-        + `${pearlChamberBadge(chamber)}<p>${escapeHtml(pearlChamberDetail(chamber))}</p></li>`;
-    }).join('')
-    : `<li class="pearl-empty-row">${chambers.length ? 'No chamber matches this filter.' : 'No chambers yet.'}</li>`;
+        + `<div><strong>${escapeHtml(chamber.username)}</strong><small></small></div>`
+        + '<span class="pearl-chamber-pearl" aria-hidden="true"><img src="" alt=""></span></div>'
+        + '<span class="pearl-chamber-badge"></span><p></p>';
+      return card;
+    },
+    update: (card, chamber) => {
+      const status = pearlChamberStatus(chamber);
+      setPearlAttribute(card, 'class', `pearl-chamber-card is-${status}`);
+      card.querySelector('.pearl-chamber-head').classList.toggle('is-online', Boolean(chamber.isOnline));
+      setPearlText(card.querySelector('.pearl-chamber-top small'), chamber.isOnline ? 'online' : 'offline');
+      setPearlAttribute(card.querySelector('.pearl-chamber-pearl img'), 'src', `/items/${status === 'no_trapdoor' ? 'Oak_Trapdoor' : 'Ender_Pearl'}.png`);
+      const badge = card.querySelector('.pearl-chamber-badge');
+      setPearlAttribute(badge, 'class', `pearl-chamber-badge is-${status}`);
+      setPearlText(badge, PEARL_CHAMBER_LABELS[status]);
+      setPearlText(card.querySelector('p'), pearlChamberDetail(chamber));
+    },
+    empty: chambers.length ? 'No chamber matches this filter.' : 'No chambers yet.'
+  });
 }
 
 function renderPearlLoader(data = {}) {
