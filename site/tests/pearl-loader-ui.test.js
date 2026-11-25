@@ -29,4 +29,16 @@ assert.match(html,/class="admin-hero-stats"[\s\S]*Pearl loads[\s\S]*id="adminPea
   'Control center shows the Pearl Loader counter card');
 assert.match(server,/FROM pearl_loader_requests[\s\S]*pearlLoads:/,'admin control state reports Pearl Loader counts');
 assert.match(app,/setRollingNumber\('#adminPearlLoads', payload\.pearlLoads\?\.completed\)/);
+for (const file of ['093_pearl_chamber_scans.sql','094_pearl_chamber_scan_details.sql']) {
+  assert.equal(fs.readFileSync(path.join(root,'database','migrations',file),'utf8'),
+    fs.readFileSync(path.join(root,'site','migrations',file),'utf8'),`the bot and site must install the same ${file}`);
+}
+assert.match(html,/id="adminPlayerPearlHatchZ"[\s\S]*id="adminPlayerPearlChamber"/,'the player card shows the chamber state under the hatch coordinates');
+assert.match(html,/Pearl chambers[\s\S]*id="adminPearlChambers"/,'Control center lists every chamber');
+assert.match(server,/pearlChambers: pearlChamberPlayers/,'admin control state lists the chambers');
+assert.match(server,/pearlHatch: profileHatch\(profile\),\s*pearlChamber/,'the admin player profile carries the chamber state');
+assert.match(app,/renderAdminPearlChambers\(payload\.pearlChambers\)/);
+assert.match(app,/no_trapdoor: 'No trapdoor'/);
+assert.match(bot,/pearlLoaderFeature\?\.scanWithBots\(/,'bots in game keep the chamber scan fresh');
+assert.match(bot,/pearlLoaderFeature\?\.remindEmptyChamber\(/,'joining players hear about an empty chamber');
 console.log('Pearl Loader admin UI tests passed.');

@@ -12335,6 +12335,18 @@ body.kill-aura-modal-open {
 .pearl-hatch-reset:hover { color:var(--text); border-color:var(--muted); background:var(--panel-soft); }
 .pearl-hatch-reset:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 .pearl-hatch-reset svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.pearl-chamber-status { display:flex; align-items:center; gap:8px; margin:10px 0 0; color:var(--muted); font-size:12px; line-height:1.5; }
+.pearl-chamber-badge { display:inline-flex; align-items:center; flex:0 0 auto; padding:1px 7px; border:2px solid currentColor; border-radius:4px; font-size:11px; font-weight:700; letter-spacing:.02em; text-transform:uppercase; white-space:nowrap; }
+.pearl-chamber-badge.is-set { color:var(--accent-strong); }
+.pearl-chamber-badge.is-empty { color:var(--warn); }
+.pearl-chamber-badge.is-no_trapdoor { color:var(--danger); }
+.pearl-chamber-badge.is-unknown { color:var(--muted); }
+.pearl-chamber-list { display:grid; gap:6px; max-height:320px; margin:0; padding:0; overflow:auto; list-style:none; }
+.pearl-chamber-list li { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:4px 10px; padding:8px 10px; border:2px solid var(--line-soft); border-radius:4px; background:var(--panel-soft); }
+.pearl-chamber-list li.is-no_trapdoor { border-color:var(--danger); }
+.pearl-chamber-list strong { min-width:0; overflow:hidden; color:var(--text); font-size:14px; text-overflow:ellipsis; white-space:nowrap; }
+.pearl-chamber-list small { grid-column:1 / -1; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+.pearl-chamber-list .is-empty-list { display:block; color:var(--muted); background:transparent; border-style:dashed; font-size:13px; }
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:2px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
 @media (max-width:700px) {
   .realtime-status { display:none!important; }

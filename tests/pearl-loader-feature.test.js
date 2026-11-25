@@ -703,6 +703,7 @@ async function testQueue() {
   runtime.stop = async reason => { stops.push(reason); runtime.bot = null; };
   const logs = [];
   const recorded = [];
+  let recreates = 0;
   const feature = createPearlLoaderFeature({
     log:(level,message,details) => logs.push({level,message,details}),
     pool:{query:async (sql,params) => {
@@ -710,7 +711,7 @@ async function testQueue() {
       return {rows:[{username:params[0],pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]};
     }},
     getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
-    getManager:() => ({get:() => runtime,recreate:async () => { runtime.bot = bot; }}),
+    getManager:() => ({get:() => runtime,recreate:async () => { recreates += 1; runtime.bot = bot; }}),
     sendPrimaryWhisper:async (username,message) => replies.push({username,message}),
     movementsFactory:() => ({}),
     navigationSettleMs:1,
@@ -741,14 +742,18 @@ async function testQueue() {
   await delay(5);
   assert.equal(feature.getStatus().username,'Carol');
   assert.ok(replies.some(r => r.username === 'Carol' && /Your turn/.test(r.message)));
+  assert.deepEqual(stops,[],'with a player waiting the loader stays in game');
+  assert.equal(recreates,1,'the next player is served without reconnecting');
+  assert.ok(logs.at(-1).details.timeline.some(entry => entry.message === 'Staying in game for the next player in the queue.'));
 
   // Carol calls her own request off while the loader walks; Erin's place expires meanwhile
   await feature.handlePrimaryWhisper('Erin','load');
   assert.equal(await feature.handlePrimaryWhisper('Carol','cancel'),true);
   assert.equal(replies.at(-1).message,'Your Pearl Loader request is cancelled.');
-  assert.equal(stops.at(-1),'Pearl Loader request cancelled');
+  assert.deepEqual(stops,[],'Erin is waiting, so the loader stays in game after the cancel');
   await delay(5);
   assert.equal(feature.getStatus().username,'Erin','the next one is served after a cancel');
+  assert.equal(recreates,1);
   assert.ok(recorded.includes('cancelled'));
 
   await feature.handlePrimaryWhisper('Frank','load');
@@ -856,8 +861,26 @@ function scanPool(players) {
     scans,
     async query(sql, params = []) {
       if (/INSERT INTO pearl_chamber_scans/.test(sql)) {
-        const [xs, ys, zs, present, checkedAt] = params;
-        xs.forEach((x, index) => scans.set(`${x} ${ys[index]} ${zs[index]}`, { pearl_present:present[index], checked_at:checkedAt }));
+        const [xs, ys, zs, present, found, blocks, checkedAt] = params;
+        xs.forEach((x, index) => {
+          const key = `${x} ${ys[index]} ${zs[index]}`;
+          const old = scans.get(key);
+          scans.set(key, {
+            pearl_present:present[index], hatch_found:found[index], block_name:blocks[index], checked_at:checkedAt,
+            empty_reminded_at:present[index] || !found[index] ? null : old?.empty_reminded_at ?? null
+          });
+        });
+        return { rows:[] };
+      }
+      if (/UPDATE pearl_chamber_scans SET empty_reminded_at=NOW/.test(sql)) {
+        const row = scans.get(params.join(' '));
+        if (!row || row.pearl_present || !row.hatch_found || row.empty_reminded_at) return { rows:[] };
+        row.empty_reminded_at = new Date().toISOString();
+        return { rows:[{ checked_at:row.checked_at }] };
+      }
+      if (/UPDATE pearl_chamber_scans SET empty_reminded_at=NULL/.test(sql)) {
+        const row = scans.get(params.join(' '));
+        if (row) row.empty_reminded_at = null;
         return { rows:[] };
       }
       if (/FROM pearl_chamber_scans/.test(sql)) {
@@ -941,6 +964,103 @@ async function testChamberScanAnswersPearl() {
   feature.dispose();
 }
 
+// Any bot in game keeps the chambers checked: a wrong hatch is flagged, and a
+// player whose chamber is empty hears about it once when joining.
+async function testBackgroundScanAndEmptyReminder() {
+  const players = [
+    { username:'Alice', pearl_hatch_x:10, pearl_hatch_y:64, pearl_hatch_z:-20 },
+    { username:'Bob', pearl_hatch_x:14, pearl_hatch_y:64, pearl_hatch_z:-20 },
+    { username:'Wrong', pearl_hatch_x:12, pearl_hatch_y:70, pearl_hatch_z:-20 },
+    { username:'Unloaded', pearl_hatch_x:900, pearl_hatch_y:64, pearl_hatch_z:0 }
+  ];
+  const pool = scanPool(players);
+  const entities = { alice:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)} };
+  const blockAt = position => position.x === 900 ? null
+    : position.y === 70 ? {name:'stone',position}
+    : {name:'spruce_trapdoor',position,getProperties:() => ({open:true})};
+  const primary = { entity:{position:new Vec3(12,64,-20)}, entities, blockAt };
+  const farBot = { entity:{position:new Vec3(300,64,0)}, entities:{}, blockAt };
+  const whispers = [];
+  let whisperFails = false;
+  const logs = [];
+  const feature = createPearlLoaderFeature({
+    pool,
+    log:(level,message,details) => logs.push({level,message,details}),
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => null}),
+    sendPrimaryWhisper:async (username,message) => {
+      if (whisperFails) throw new Error('WheatMagnate is not connected.');
+      whispers.push({username,message});
+    }
+  });
+
+  await feature.scanWithBots([primary,farBot,null]);
+  const status = key => { const row = pool.scans.get(key); return row && [row.pearl_present,row.hatch_found,row.block_name]; };
+  assert.deepEqual(status('10 64 -20'),[true,true,'spruce_trapdoor']);
+  assert.deepEqual(status('14 64 -20'),[false,true,'spruce_trapdoor']);
+  assert.deepEqual(status('12 70 -20'),[false,false,'stone'],'a loaded block that is not a trapdoor flags the coordinates');
+  assert.equal(pool.scans.has('900 64 0'),false,'a chamber no bot has loaded is left unknown');
+
+  await feature.handlePrimaryWhisper('Wrong','pearl');
+  assert.match(whispers.at(-1).message,/no trapdoor at your saved pearl hatch coordinates/);
+
+  assert.equal(await feature.remindEmptyChamber('Alice'),false,'a set chamber needs no reminder');
+  assert.equal(await feature.remindEmptyChamber('Wrong'),false,'a wrong hatch is not reported as empty');
+  whisperFails = true;
+  await assert.rejects(feature.remindEmptyChamber('Bob'));
+  whisperFails = false;
+  assert.equal(await feature.remindEmptyChamber('Bob'),true,'a reminder that could not be sent is tried again');
+  assert.match(whispers.at(-1).message,/^Your pearl chamber is empty \(checked less than a minute ago\)\./);
+  assert.equal(await feature.remindEmptyChamber('Bob'),false,'the reminder is sent only once');
+  await feature.scanWithBots([primary]);
+  assert.equal(await feature.remindEmptyChamber('Bob'),false,'still empty on the next scan: no second reminder');
+  entities.bob = {name:'ender_pearl',position:new Vec3(14.5,64.5,-19.5)};
+  await feature.scanWithBots([primary]);
+  delete entities.bob;
+  await feature.scanWithBots([primary]);
+  assert.equal(await feature.remindEmptyChamber('Bob'),true,'once a pearl was seen, a new empty chamber is reminded again');
+  feature.dispose();
+}
+
+// A loader kept in game for the queue leaves if nobody takes it in time
+async function testWarmLoaderTimeout() {
+  const bot = {
+    entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+    entities:{},
+    world:{raycast:() => ({position:new Vec3(10,64,-20)})},
+    pathfinder:{setMovements() {},async goto() {}},
+    async waitForChunksToLoad() {},
+    blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open:true})}),
+    canSeeBlock:() => true,
+    chat() {}
+  };
+  const runtime = new EventEmitter();
+  runtime.assignTask = () => {};
+  const stops = [];
+  runtime.stop = async reason => { stops.push(reason); runtime.bot = null; };
+  const players = [{ username:'Alice', pearl_hatch_x:10, pearl_hatch_y:64, pearl_hatch_z:-20 }];
+  const feature = createPearlLoaderFeature({
+    pool:scanPool(players),
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => { runtime.bot = bot; }}),
+    sendPrimaryWhisper:async () => {},
+    movementsFactory:() => ({}),
+    pearlRecheckAttempts:1,
+    whisperFlushMs:1,
+    queueTimeoutMs:1_000,
+    warmLoaderTimeoutMs:30
+  });
+  const first = feature.handlePrimaryWhisper('Alice','check');
+  await feature.handlePrimaryWhisper('Ghost','load');
+  await first;
+  // Ghost has no hatch, so nobody uses the loader that stayed in game
+  await delay(10);
+  assert.deepEqual(stops,[],'the loader first stays for the queued player');
+  await delay(50);
+  assert.deepEqual(stops,['Pearl Loader queue is empty'],'unclaimed, it leaves after the timeout');
+  feature.dispose();
+}
+
 (async () => {
   testTrapdoorInteractionFaces();
   testNavigationUsesRealTrapdoorShape();
@@ -964,5 +1084,7 @@ async function testChamberScanAnswersPearl() {
   testPearlReloadReminders();
   await testLoaderRuntimeWhispers();
   await testChamberScanAnswersPearl();
+  await testBackgroundScanAndEmptyReminder();
+  await testWarmLoaderTimeout();
   console.log('Pearl Loader feature tests passed.');
 })().catch(error => { console.error(error); process.exitCode=1; });

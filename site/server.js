@@ -4764,6 +4764,9 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
 
   const profile = profileResult.rows[0] || { username };
   const chat = chatResult.rows[0] || {};
+  const pearlChamber = includeAdminFields
+    ? (await loadPearlChamberScans([profileHatch(profile)]))[0] || null
+    : null;
   const nearby = profile.nearby_last_seen == null
     ? null
     : { distance: profile.nearby_distance, last_seen: profile.nearby_last_seen };
@@ -4869,14 +4872,45 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
       identityKey: profile.player_uuid || (profile.id == null ? null : String(profile.id)),
       adminNotes: profile.admin_notes || '',
       adminTags: Array.isArray(profile.admin_tags) ? profile.admin_tags : [],
-      pearlHatch: [profile.pearl_hatch_x, profile.pearl_hatch_y, profile.pearl_hatch_z].every(value => value != null)
-        ? { x:Number(profile.pearl_hatch_x),y:Number(profile.pearl_hatch_y),z:Number(profile.pearl_hatch_z) }
-        : null
+      pearlHatch: profileHatch(profile),
+      pearlChamber
     } : {})
   };
 }
 
 const ADMIN_PLAYER_EDITABLE_FIELDS = Object.freeze(['notes', 'tags', 'pearlHatch']);
+
+function profileHatch(row) {
+  return [row?.pearl_hatch_x, row?.pearl_hatch_y, row?.pearl_hatch_z].every(value => value != null)
+    ? { x:Number(row.pearl_hatch_x),y:Number(row.pearl_hatch_y),z:Number(row.pearl_hatch_z) }
+    : null;
+}
+
+// What the bots last saw at a stasis chamber: set, empty, no trapdoor at the
+// saved coordinates, or unknown while no bot has had it loaded
+function publicPearlChamber(hatch, row) {
+  if (!hatch) return null;
+  if (!row) return { status:'unknown', checkedAt:null, blockName:null };
+  return {
+    status: row.hatch_found === false ? 'no_trapdoor' : row.pearl_present ? 'set' : 'empty',
+    checkedAt: row.checked_at || null,
+    blockName: row.block_name || null
+  };
+}
+
+// One result per hatch, in order; the table arrives with a migration, so a
+// missing table reads as nothing seen yet
+async function loadPearlChamberScans(hatches, database = pool) {
+  const known = hatches.filter(Boolean);
+  if (!known.length) return hatches.map(() => null);
+  const result = await database.query(`
+    SELECT scan.*
+    FROM UNNEST($1::int[],$2::int[],$3::int[]) AS wanted(x,y,z)
+    JOIN pearl_chamber_scans scan ON scan.hatch_x=wanted.x AND scan.hatch_y=wanted.y AND scan.hatch_z=wanted.z
+  `, [known.map(h => h.x), known.map(h => h.y), known.map(h => h.z)]).catch(() => ({ rows:[] }));
+  const byKey = new Map(result.rows.map(row => [`${row.hatch_x} ${row.hatch_y} ${row.hatch_z}`, row]));
+  return hatches.map(hatch => publicPearlChamber(hatch, hatch ? byKey.get(`${hatch.x} ${hatch.y} ${hatch.z}`) : null));
+}
 const ADMIN_PLAYER_SORT_FIELDS = new Set(['playtime', 'nickname', 'uuid', 'joindate', 'seen', 'messages']);
 const MINECRAFT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -5286,8 +5320,11 @@ async function getAdminPlayers(currentUser, url, database = pool) {
     ? await (database === pool ? getCachedPlayerInfoCollectionProgress() : getPlayerInfoCollectionProgress(database))
     : null;
   const hasMore = result.rows.length > limit;
+  const players = result.rows.slice(0, limit).map(publicAdminPlayer);
+  const chambers = await loadPearlChamberScans(players.map(player => player.pearlHatch), database);
+  players.forEach((player, index) => { player.pearlChamber = chambers[index]; });
   return {
-    players: result.rows.slice(0, limit).map(publicAdminPlayer),
+    players,
     query: search,
     sort,
     direction,
@@ -6179,7 +6216,8 @@ async function getAdminControlState(currentUser, url) {
     onlineResult,
     playerTotalsResult,
     farmStateResult,
-    pearlLoadsResult
+    pearlLoadsResult,
+    pearlHatchesResult
   ] = await Promise.all([
     pool.query('SELECT key, value FROM admin_settings'),
     scoped
@@ -6214,8 +6252,22 @@ async function getAdminControlState(currentUser, url) {
              COUNT(*) FILTER (WHERE outcome = 'completed' AND finished_at >= date_trunc('day', NOW()))::int AS today,
              COUNT(*)::int AS total
       FROM pearl_loader_requests
+    `).catch(() => ({ rows:[] })),
+    pool.query(`
+      SELECT DISTINCT ON (COALESCE(player_uuid::text, LOWER(username)))
+             username, is_online, pearl_hatch_x, pearl_hatch_y, pearl_hatch_z
+      FROM player_activity
+      WHERE pearl_hatch_x IS NOT NULL AND pearl_hatch_y IS NOT NULL AND pearl_hatch_z IS NOT NULL
+      ORDER BY COALESCE(player_uuid::text, LOWER(username)), is_online DESC,
+               COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
     `).catch(() => ({ rows:[] }))
   ]);
+  const pearlChamberPlayers = (pearlHatchesResult.rows || []).map(row => ({
+    username: row.username,
+    isOnline: Boolean(row.is_online),
+    hatch: profileHatch(row)
+  }));
+  const pearlChamberStates = await loadPearlChamberScans(pearlChamberPlayers.map(player => player.hatch));
 
   const settings = {};
   for (const row of settingsResult.rows) settings[row.key] = row.value;
@@ -6260,6 +6312,9 @@ async function getAdminControlState(currentUser, url) {
       today: toInt(pearlLoadsResult.rows[0].today),
       total: toInt(pearlLoadsResult.rows[0].total)
     } : null,
+    pearlChambers: pearlChamberPlayers
+      .map((player, index) => ({ ...player, ...pearlChamberStates[index] }))
+      .sort((a, b) => a.username.localeCompare(b.username, 'en', { sensitivity:'base' })),
     whitelistAddCandidates: onlinePlayers.filter(username =>
       !whitelist.some(entry => entry.toLowerCase() === username.toLowerCase())
     ),

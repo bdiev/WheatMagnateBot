@@ -11789,13 +11789,17 @@ async function openAdminPlayerEdit(identityKey) {
   $('#adminPlayerPearlHatchX').value = listPlayer.pearlHatch?.x ?? '';
   $('#adminPlayerPearlHatchY').value = listPlayer.pearlHatch?.y ?? '';
   $('#adminPlayerPearlHatchZ').value = listPlayer.pearlHatch?.z ?? '';
+  renderAdminPlayerPearlChamber();
   error.hidden = true;
   modal.hidden = false;
   document.body.classList.add('modal-open');
   try {
     const profile = await fetchJson(`/api/player?username=${encodeURIComponent(listPlayer.username)}&messageLimit=20`);
     if (String(state.adminPlayerEditTarget?.identityKey) !== String(identityKey)) return;
-    state.adminPlayerEditTarget = { ...listPlayer, notes: profile.adminNotes || '', tags: profile.adminTags || [], pearlHatch:profile.pearlHatch || null };
+    state.adminPlayerEditTarget = {
+      ...listPlayer, notes: profile.adminNotes || '', tags: profile.adminTags || [],
+      pearlHatch:profile.pearlHatch || null, pearlChamber:profile.pearlChamber || null
+    };
     $('#adminPlayerNotes').value = state.adminPlayerEditTarget.notes;
     $('#adminPlayerTags').value = state.adminPlayerEditTarget.tags.join(', ');
     if (!$('#adminPlayerEditForm').dataset.hatchEdited) {
@@ -11803,16 +11807,76 @@ async function openAdminPlayerEdit(identityKey) {
       $('#adminPlayerPearlHatchY').value = state.adminPlayerEditTarget.pearlHatch?.y ?? '';
       $('#adminPlayerPearlHatchZ').value = state.adminPlayerEditTarget.pearlHatch?.z ?? '';
     }
+    renderAdminPlayerPearlChamber();
   } catch (err) {
     error.textContent = `Could not refresh player details: ${err.message}`;
     error.hidden = false;
   }
 }
 
+const PEARL_CHAMBER_LABELS = Object.freeze({
+  set: 'Pearl set',
+  empty: 'Empty',
+  no_trapdoor: 'No trapdoor',
+  unknown: 'Not checked'
+});
+
+function pearlChamberBadge(chamber) {
+  const status = PEARL_CHAMBER_LABELS[chamber?.status] ? chamber.status : 'unknown';
+  return `<span class="pearl-chamber-badge is-${status}">${escapeHtml(PEARL_CHAMBER_LABELS[status])}</span>`;
+}
+
+function pearlChamberDetail(chamber) {
+  if (!chamber || chamber.status === 'unknown') return 'No bot has had this hatch loaded yet.';
+  const checked = `checked ${formatAgo(chamber.checkedAt)}`;
+  if (chamber.status === 'no_trapdoor') {
+    return `The block at these coordinates is ${chamber.blockName ? chamber.blockName.replace(/_/g, ' ') : 'not a trapdoor'}, not a trapdoor; ${checked}.`;
+  }
+  return chamber.status === 'set' ? `Ender pearl in the chamber; ${checked}.` : `No ender pearl in the chamber; ${checked}.`;
+}
+
+// The status is for the saved coordinates; it is hidden while they are edited
+function renderAdminPlayerPearlChamber() {
+  const element = $('#adminPlayerPearlChamber');
+  if (!element) return;
+  const target = state.adminPlayerEditTarget;
+  const chamber = target?.pearlChamber;
+  if (!target?.pearlHatch || !chamber || $('#adminPlayerEditForm')?.dataset.hatchEdited) {
+    element.hidden = true;
+    element.innerHTML = '';
+    return;
+  }
+  element.innerHTML = `${pearlChamberBadge(chamber)}<span>${escapeHtml(pearlChamberDetail(chamber))}</span>`;
+  element.hidden = false;
+}
+
+function renderAdminPearlChambers(chambers) {
+  const list = $('#adminPearlChambers');
+  if (!list) return;
+  const items = Array.isArray(chambers) ? chambers : [];
+  const summary = $('#adminPearlChambersSummary');
+  if (summary) {
+    const count = status => items.filter(item => item.status === status).length;
+    summary.textContent = items.length
+      ? `${formatNumber(count('set'))} set · ${formatNumber(count('empty'))} empty · ${formatNumber(count('no_trapdoor'))} wrong · ${formatNumber(count('unknown'))} not checked`
+      : 'What the bots last saw at every saved pearl hatch.';
+  }
+  if (!items.length) {
+    list.innerHTML = '<li class="is-empty-list">No player has pearl hatch coordinates yet.</li>';
+    return;
+  }
+  list.innerHTML = items.map(item => {
+    const status = PEARL_CHAMBER_LABELS[item.status] ? item.status : 'unknown';
+    const where = item.hatch ? `${item.hatch.x} ${item.hatch.y} ${item.hatch.z}` : '';
+    return `<li class="is-${status}"><strong>${escapeHtml(item.username)}</strong>${pearlChamberBadge(item)}<small>${escapeHtml(where)} · ${escapeHtml(pearlChamberDetail(item))}</small></li>`;
+  }).join('');
+}
+
 function resetAdminPlayerPearlHatch() {
   for (const axis of ['X', 'Y', 'Z']) $('#adminPlayerPearlHatch' + axis).value = '';
   $('#adminPlayerEditForm').dataset.hatchEdited = 'true';
   $('#adminPlayerEditError').hidden = true;
+  renderAdminPlayerPearlChamber();
 }
 
 function closeAdminPlayerEdit() {
@@ -13410,6 +13474,7 @@ function renderAdminControlState(payload = {}) {
     pearlLoadsDetail.textContent = loads ? `${formatNumber(loads.today)} today · ${formatNumber(loads.total)} requests` : 'all time';
     pearlLoadsDetail.title = loads ? `${formatNumber(loads.total - loads.completed)} requests ended without a load` : '';
   }
+  renderAdminPearlChambers(payload.pearlChambers);
 
   const obsidianButton = $('#obsidianToggleButton');
   if (obsidianButton) {
@@ -15267,6 +15332,7 @@ $('#adminPlayerPearlHatchReset')?.addEventListener('click', resetAdminPlayerPear
 for (const axis of ['X', 'Y', 'Z']) {
   $('#adminPlayerPearlHatch' + axis)?.addEventListener('input', () => {
     $('#adminPlayerEditForm').dataset.hatchEdited = 'true';
+    renderAdminPlayerPearlChamber();
   });
 }
 $('#areaExplorerWaypointForm')?.addEventListener('submit', sendAreaExplorerWaypoint);

@@ -199,6 +199,10 @@ const BOT_START_JITTER_MS = Number.isFinite(configuredBotStartJitterMs) && confi
 let multiAccountRegistry = null;
 let multiBotManager = null;
 let pearlLoaderFeature = null;
+let pearlChamberScanInterval = null;
+const PEARL_CHAMBER_SCAN_INTERVAL_MS = 60_000;
+// A player who just joined is still loading in; the empty-chamber reminder waits
+const PEARL_EMPTY_REMINDER_DELAY_MS = 10_000;
 let discordActiveAccountId = DEFAULT_ACCOUNT_ID;
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
@@ -7689,6 +7693,15 @@ async function initializeMultiAccountManager() {
     },
     log: (level, message, details) => recordSystemLog({ level,category:'pearl_loader',message,details }).catch(() => {})
   });
+  // Every bot in game near the stasis chambers looks at them once a minute:
+  // which hold a pearl, and which saved coordinates have no trapdoor
+  if (!pearlChamberScanInterval) {
+    pearlChamberScanInterval = setInterval(() => {
+      const bots = multiBotManager?.getAllContexts?.().map(context => context?.bot) || [];
+      void pearlLoaderFeature?.scanWithBots([bot, ...bots]);
+    }, PEARL_CHAMBER_SCAN_INTERVAL_MS);
+    pearlChamberScanInterval.unref?.();
+  }
   multiBotManager.registerContext(primaryBotContext);
   for (const account of accounts.filter(item => item.enabled && !item.isDefault)
     .filter(item => item.role !== PEARL_LOADER_ROLE)) {
@@ -11137,6 +11150,14 @@ function attachObserverListeners(target) {
       });
       if (activityResult?.created) playerInfoFirstJoinCheck?.enqueue(player.username);
       playerInfoFirstJoinCheck?.playerJoined(player.username);
+      // A real join (not the startup player list) seen by the observer
+      if (playerActivityJoinEventsReady && observerBot === target) {
+        const joinedUsername = player.username;
+        setTimeout(() => {
+          pearlLoaderFeature?.remindEmptyChamber(joinedUsername)
+            .catch(error => console.error(`[PearlLoader] Empty-chamber reminder for ${joinedUsername} failed:`, error.message));
+        }, PEARL_EMPTY_REMINDER_DELAY_MS).unref?.();
+      }
       schedulePlayerSkinHistoryRefresh(player);
       await scheduleQueuedSiteWhispersForPlayer(player.username);
     }

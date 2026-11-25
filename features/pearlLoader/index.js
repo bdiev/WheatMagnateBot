@@ -298,6 +298,8 @@ function createPearlLoaderFeature({
   // long one has to stay by the hatch to count as thrown into the chamber
   newPearlTimeoutMs = NEW_PEARL_TIMEOUT_MS,
   newPearlSettleMs = 1_500,
+  // How long the loader stays in game for the next queued player to start
+  warmLoaderTimeoutMs = 30_000,
   navigationRange = 2.5,
   interactionReach = 4.5,
   // While waiting for the new pearl the loader stands a few blocks off, out
@@ -413,24 +415,33 @@ function createPearlLoaderFeature({
     };
   }
 
-  // Chamber scans: what the loader saw at each configured trapdoor. Writes go
-  // one after another so that a later observation is never overwritten.
+  // Chamber scans: what a bot saw at each configured trapdoor. Writes go one
+  // after another so that a later observation is never overwritten.
   let scanWrites = Promise.resolve();
 
+  // observations: { x, y, z, present, hatchFound = true, blockName = null }
   function recordScans(observations) {
     if (!observations.length) return scanWrites;
     const checkedAt = new Date().toISOString();
     scanWrites = scanWrites.then(() => pool.query(`
-      INSERT INTO pearl_chamber_scans (hatch_x,hatch_y,hatch_z,pearl_present,checked_at)
-      SELECT x,y,z,present,$5::timestamptz
-      FROM UNNEST($1::int[],$2::int[],$3::int[],$4::boolean[]) AS scan(x,y,z,present)
+      INSERT INTO pearl_chamber_scans (hatch_x,hatch_y,hatch_z,pearl_present,hatch_found,block_name,checked_at)
+      SELECT x,y,z,present,found,block,$7::timestamptz
+      FROM UNNEST($1::int[],$2::int[],$3::int[],$4::boolean[],$5::boolean[],$6::text[]) AS scan(x,y,z,present,found,block)
       ON CONFLICT (hatch_x,hatch_y,hatch_z) DO UPDATE
-        SET pearl_present=EXCLUDED.pearl_present,checked_at=EXCLUDED.checked_at
+        SET pearl_present=EXCLUDED.pearl_present,
+            hatch_found=EXCLUDED.hatch_found,
+            block_name=EXCLUDED.block_name,
+            checked_at=EXCLUDED.checked_at,
+            -- An empty chamber is reminded about once; a pearl seen in it starts over
+            empty_reminded_at=CASE WHEN EXCLUDED.pearl_present OR NOT EXCLUDED.hatch_found
+              THEN NULL ELSE pearl_chamber_scans.empty_reminded_at END
     `, [
       observations.map(item => item.x),
       observations.map(item => item.y),
       observations.map(item => item.z),
       observations.map(item => Boolean(item.present)),
+      observations.map(item => item.hatchFound !== false),
+      observations.map(item => item.blockName ? String(item.blockName).slice(0, 64) : null),
       checkedAt
     ])).catch(error => console.error('[PearlLoader] Could not save the chamber scan:', error.message));
     return scanWrites;
@@ -453,23 +464,50 @@ function createPearlLoaderFeature({
       });
   }
 
+  // What one bot can tell about each chamber. A chunk it has not loaded tells
+  // nothing; a loaded block that is not a trapdoor means the coordinates are
+  // wrong (or the hatch is gone); a trapdoor close enough shows its pearl.
+  async function observeChambers(bot, hatches) {
+    const observations = [];
+    if (!bot?.entity?.position) return observations;
+    for (const hatch of hatches) {
+      const block = await blockAtHatch(bot, hatch);
+      if (!block) continue;
+      if (!isTrapdoor(block)) {
+        observations.push({ ...hatch, present:false, hatchFound:false, blockName:block.name || null });
+        continue;
+      }
+      const center = new Vec3(hatch.x + 0.5, hatch.y + 0.5, hatch.z + 0.5);
+      if (bot.entity.position.distanceTo(center) > chamberScanRadius) continue;
+      observations.push({ ...hatch, present:hasEnderPearlNear(bot, hatch), hatchFound:true, blockName:block.name });
+    }
+    return observations;
+  }
+
+  // Several bots may see one chamber: a pearl any of them sees counts, and a
+  // trapdoor any of them sees outweighs another bot's view of the block
+  function mergeObservations(lists) {
+    const merged = new Map();
+    for (const item of lists.flat()) {
+      const key = `${item.x} ${item.y} ${item.z}`;
+      const known = merged.get(key);
+      if (!known || (item.hatchFound && !known.hatchFound) || (item.present && !known.present)) merged.set(key, item);
+    }
+    return [...merged.values()];
+  }
+
   // Looks at every configured chamber close enough to be seen from where the
-  // loader stands; a chamber whose chunk is not loaded is skipped.
+  // loader stands
   async function scanChambers(job, bot) {
     if (!bot?.entity?.position) return null;
     try {
       const hatches = await loadAllHatches();
-      const observations = [];
-      for (const hatch of hatches) {
-        const center = new Vec3(hatch.x + 0.5, hatch.y + 0.5, hatch.z + 0.5);
-        if (bot.entity.position.distanceTo(center) > chamberScanRadius) continue;
-        if (!isTrapdoor(await blockAtHatch(bot, hatch))) continue;
-        observations.push({ ...hatch, present:hasEnderPearlNear(bot, hatch) });
-      }
+      const observations = await observeChambers(bot, hatches);
       note(job, 'info', 'Scanned the pearl chambers in view.', {
         chambers:hatches.length,
         scanned:observations.length,
-        missing:observations.filter(item => !item.present).map(item => `${item.x} ${item.y} ${item.z}`)
+        missing:observations.filter(item => item.hatchFound && !item.present).map(item => `${item.x} ${item.y} ${item.z}`),
+        noTrapdoor:observations.filter(item => !item.hatchFound).map(item => `${item.x} ${item.y} ${item.z}`)
       });
       await recordScans(observations);
       return observations;
@@ -479,19 +517,44 @@ function createPearlLoaderFeature({
     }
   }
 
-  // The last scan of this chamber, or null when there is no recent one
-  async function loadRecentScan(hatch) {
+  // Any of our bots in game near the chambers keeps the scan fresh, so a new
+  // hatch with wrong coordinates shows up on the site within a minute
+  let backgroundScan = null;
+  function scanWithBots(bots) {
+    if (backgroundScan) return backgroundScan;
+    const inGame = [...new Set(bots || [])].filter(bot => bot?.entity?.position);
+    if (!inGame.length) return Promise.resolve([]);
+    backgroundScan = (async () => {
+      const hatches = await loadAllHatches();
+      if (!hatches.length) return [];
+      const observations = mergeObservations(await Promise.all(inGame.map(bot => observeChambers(bot, hatches))));
+      await recordScans(observations);
+      return observations;
+    })().catch(error => {
+      console.error('[PearlLoader] Background chamber scan failed:', error.message);
+      return [];
+    }).finally(() => { backgroundScan = null; });
+    return backgroundScan;
+  }
+
+  async function loadScanRow(hatch) {
     await scanWrites;
     const result = await pool.query(`
-      SELECT pearl_present,checked_at FROM pearl_chamber_scans
+      SELECT pearl_present,hatch_found,checked_at FROM pearl_chamber_scans
       WHERE hatch_x=$1 AND hatch_y=$2 AND hatch_z=$3
     `, [hatch.x, hatch.y, hatch.z]);
     const row = result?.rows?.[0];
     if (!row || typeof row.pearl_present !== 'boolean' || !row.checked_at) return null;
     const checkedAt = new Date(row.checked_at);
     const age = Date.now() - checkedAt.getTime();
-    if (!Number.isFinite(age) || age > chamberScanMaxAgeMs) return null;
-    return { present:row.pearl_present, checkedAt, age:Math.max(0, age) };
+    if (!Number.isFinite(age)) return null;
+    return { present:row.pearl_present, hatchFound:row.hatch_found !== false, checkedAt, age:Math.max(0, age) };
+  }
+
+  // The last scan of this chamber, or null when there is no recent one
+  async function loadRecentScan(hatch) {
+    const scan = await loadScanRow(hatch);
+    return scan && scan.age <= chamberScanMaxAgeMs ? scan : null;
   }
 
   function agoText(ms) {
@@ -499,7 +562,8 @@ function createPearlLoaderFeature({
     if (minutes < 1) return 'less than a minute ago';
     if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
     const hours = Math.floor(minutes / 60);
-    return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+    if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+    return `${Math.floor(hours / 24)} days ago`;
   }
 
   // "pearl": the primary answers from the last scan and the loader stays
@@ -509,24 +573,90 @@ function createPearlLoaderFeature({
     if (!hatch) return false;
     const scan = await loadRecentScan(hatch);
     if (!scan) return false;
-    await tellPrimary(username, scan.present
-      ? `Your ender pearl is set (checked ${agoText(scan.age)}). Whisper "load" when you need it.`
-      : `Your ender pearl is not set (checked ${agoText(scan.age)}). Whisper "check" to have it looked at now.`);
-    log('info', `Pearl Loader answered the pearl of ${hatch.username} from its last scan: ${scan.present ? 'set' : 'not set'}.`, {
+    const status = !scan.hatchFound ? 'no trapdoor' : scan.present ? 'set' : 'not set';
+    await tellPrimary(username, !scan.hatchFound
+      ? 'There is no trapdoor at your saved pearl hatch coordinates. Ask an administrator to check them.'
+      : scan.present
+        ? `Your ender pearl is set (checked ${agoText(scan.age)}). Whisper "load" when you need it.`
+        : `Your ender pearl is not set (checked ${agoText(scan.age)}). Whisper "check" to have it looked at now.`);
+    log('info', `Pearl Loader answered the pearl of ${hatch.username} from its last scan: ${status}.`, {
       username:hatch.username,
       hatch:{ x:hatch.x, y:hatch.y, z:hatch.z },
       pearlSet:scan.present,
+      hatchFound:scan.hatchFound,
       checkedAt:scan.checkedAt.toISOString(),
       fromScan:true
     });
     return true;
   }
 
+  // A player who joins while their chamber was last seen empty hears it once
+  // from the primary; the reminder is due again only after a pearl was seen
+  async function remindEmptyChamber(username) {
+    if (activeJob?.usernameKey === String(username || '').toLowerCase()) return false;
+    const hatch = await loadPlayerHatch(username);
+    if (!hatch) return false;
+    await scanWrites;
+    const where = [hatch.x, hatch.y, hatch.z];
+    const claimed = await pool.query(`
+      UPDATE pearl_chamber_scans SET empty_reminded_at=NOW()
+      WHERE hatch_x=$1 AND hatch_y=$2 AND hatch_z=$3
+        AND pearl_present=FALSE AND hatch_found=TRUE AND empty_reminded_at IS NULL
+      RETURNING checked_at
+    `, where);
+    const row = claimed?.rows?.[0];
+    if (!row?.checked_at) return false;
+    const age = Math.max(0, Date.now() - new Date(row.checked_at).getTime());
+    try {
+      if (typeof sendPrimaryWhisper !== 'function') throw new Error('The primary bot cannot whisper.');
+      await sendPrimaryWhisper(username,
+        `Your pearl chamber is empty (checked ${agoText(age)}). Throw a new ender pearl in so Pearl Loader can bring you back.`);
+    } catch (error) {
+      // Not sent: the next join tries again
+      await pool.query(`
+        UPDATE pearl_chamber_scans SET empty_reminded_at=NULL
+        WHERE hatch_x=$1 AND hatch_y=$2 AND hatch_z=$3
+      `, where).catch(() => {});
+      throw error;
+    }
+    log('info', `Reminded ${hatch.username} that the pearl chamber is empty.`, {
+      username:hatch.username,
+      hatch:{ x:hatch.x, y:hatch.y, z:hatch.z },
+      checkedAt:new Date(row.checked_at).toISOString()
+    });
+    return true;
+  }
+
+  // A loader kept in game for the next player in the queue; if nobody claims
+  // it in time it leaves after all
+  let warmLoader = null;
+
+  function dropWarmLoader({ stop = true } = {}) {
+    const warm = warmLoader;
+    if (!warm) return null;
+    warmLoader = null;
+    clearTimer(warm.timer);
+    if (stop) void Promise.resolve().then(() => warm.runtime?.stop?.('Pearl Loader queue is empty')).catch(() => {});
+    return warm;
+  }
+
   // Before the loader leaves it looks at the chambers once more: the freshest
-  // view, after the entities around it have had time to arrive
+  // view, after the entities around it have had time to arrive. With players
+  // waiting in the queue it stays in game and goes on to the next one.
   async function leave(job, reason) {
     const bot = job.runtime?.bot;
     const observations = bot?.entity ? await scanChambers(job, bot) : null;
+    if (queue.length && bot?.entity && job.runtime && job.accountId && job.runtime.bot === bot) {
+      dropWarmLoader();
+      note(job, 'info', 'Staying in game for the next player in the queue.', { waiting:queue.length });
+      const warm = { runtime:job.runtime, accountId:job.accountId, bot, timer:null };
+      warm.timer = setTimer(() => {
+        if (warmLoader === warm) dropWarmLoader();
+      }, warmLoaderTimeoutMs);
+      warm.timer?.unref?.();
+      warmLoader = warm;
+      return observations;
+    }
     await job.runtime?.stop?.(reason).catch(() => {});
     return observations;
   }
@@ -1151,8 +1281,16 @@ function createPearlLoaderFeature({
       });
       reportingJob = job;
       note(job, 'info', mode === 'check' ? 'Pearl check requested; connecting the loader.' : 'Load requested; connecting the loader.');
-      if (manager.get(account.id)) await manager.recreate(account.id);
-      else await manager.start(account.id);
+      // Still in game after the previous player in the queue: no reconnect
+      const warm = dropWarmLoader({ stop:false });
+      const reuse = warm && warm.accountId === account.id && warm.runtime === manager.get(account.id) &&
+        warm.runtime?.bot?.entity && warm.runtime.bot === warm.bot;
+      if (reuse) note(job, 'info', 'Loader is already in game; going straight to the hatch.');
+      else {
+        if (warm) await Promise.resolve(warm.runtime?.stop?.('Pearl Loader reconnecting')).catch(() => {});
+        if (manager.get(account.id)) await manager.recreate(account.id);
+        else await manager.start(account.id);
+      }
       const runtime = manager.get(account.id);
       if (!runtime) throw new Error('Pearl Loader runtime could not be started.');
       job.runtime = runtime;
@@ -1325,9 +1463,10 @@ function createPearlLoaderFeature({
     advanceTimer = null;
     for (const entry of queue.splice(0)) clearTimer(entry.timer);
     replyRoutes.clear();
+    dropWarmLoader({ stop:false });
   }
 
-  return { handlePrimaryWhisper, handleLoaderWhisper, recordRuntimeEvent, isExpectedPlayer, getStatus, dispose, __test:{ isTrapdoor, trapdoorIsOpen, trapdoorInteraction, loadPlayerHatch } };
+  return { handlePrimaryWhisper, handleLoaderWhisper, recordRuntimeEvent, isExpectedPlayer, getStatus, dispose, scanWithBots, remindEmptyChamber, __test:{ isTrapdoor, trapdoorIsOpen, trapdoorInteraction, loadPlayerHatch } };
 }
 
 module.exports = {
