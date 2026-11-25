@@ -10342,6 +10342,7 @@ function getBotStatusSnapshot() {
     killAura: killAura.getStatus(),
     stoneMiner: stoneMiner.getStatus(),
     trader: trader.getStatus(),
+    pearlLoader: pearlLoaderFeature?.getStatus() || null,
     child: {
       enabled: growingChild?.getStatus().enabled ?? false,
       geminiEnabled: runtimeSettings.geminiEnabled,

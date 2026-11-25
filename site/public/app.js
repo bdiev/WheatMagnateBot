@@ -260,6 +260,7 @@ const NAV_SECTION_INFO = Object.freeze({
   obsidian: ['Obsidian Farm', 'Farm controls and analytics'],
   'stone-miner': ['Stone Miner', 'Generator mining and statistics'],
   trader: ['Trader', 'Villager trading from chests'],
+  'pearl-loader': ['Pearl Loader', 'Stasis chambers, requests and the queue'],
   server: ['Server Stats', 'TPS and server activity'],
   players: ['Player Stats', 'Profiles and activity'],
   'area-explorer': ['Area Explorer', 'Bases, loot and signs the explorer mod found'],
@@ -268,7 +269,7 @@ const NAV_SECTION_INFO = Object.freeze({
   'child-ai': ['Child AI', 'Learning and memory administration'],
   admin: ['Admin', 'Administrative controls']
 });
-const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'trader', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
+const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'trader', 'pearl-loader', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
 let dashboardBrandLastScrollY = Math.max(0, window.scrollY);
 let dashboardBrandScrollFrame = null;
 
@@ -1517,7 +1518,7 @@ function randomUniqueAccountColor() {
 
 function applyAccountTabScope(account) {
   const restricted = Boolean(account && !account.isDefault);
-  const allowed = new Set(['chat','bot','kill-aura','obsidian','stone-miner','trader','area-explorer','admin']);
+  const allowed = new Set(['chat','bot','kill-aura','obsidian','stone-miner','trader','pearl-loader','area-explorer','admin']);
   $$('.tab-button[data-tab]').forEach(button => button.classList.toggle('account-tab-restricted',restricted && !allowed.has(button.dataset.tab)));
   // Role and the user's Navigation choices decide which tabs are shown.
   applyNavigationVisibility();
@@ -1994,7 +1995,7 @@ function applyCurrentUser(user) {
   applyNavigationVisibility();
   const logoutButton = $('#logoutButton');
   if (logoutButton) logoutButton.hidden = !state.currentUser;
-  if (!isAdmin && ['admin', 'notifications', 'child-ai', 'trader'].includes(state.activeTab)) setActiveTab('chat');
+  if (!isAdmin && ['admin', 'notifications', 'child-ai', 'trader', 'pearl-loader'].includes(state.activeTab)) setActiveTab('chat');
   if (state.currentUser) startRealtimeUpdates();
   else stopRealtimeUpdates();
 }
@@ -2049,7 +2050,7 @@ function loadNavigationVisibility() {
 }
 
 // A tab added later goes next to its neighbour in a saved order
-const NAV_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian', trader: 'stone-miner' });
+const NAV_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian', trader: 'stone-miner', 'pearl-loader': 'trader' });
 
 function completeNavigationOrder(order) {
   const complete = [...order];
@@ -2261,7 +2262,7 @@ function getStoredTab() {
 
 function restoreActiveTab() {
   const tab = getStoredTab();
-  setActiveTab(['admin', 'notifications', 'child-ai', 'trader'].includes(tab) && state.currentUser?.role !== 'admin' ? 'chat' : tab);
+  setActiveTab(['admin', 'notifications', 'child-ai', 'trader', 'pearl-loader'].includes(tab) && state.currentUser?.role !== 'admin' ? 'chat' : tab);
 }
 
 async function handleLogout() {
@@ -2365,7 +2366,7 @@ function setActiveTab(tab) {
   if (tab !== 'kill-aura' && $('#killAuraTargetModal')?.classList.contains('is-open')) {
     setKillAuraTargetModalOpen(false, { restoreSelection: true, restoreFocus: false });
   }
-  if (['admin', 'notifications', 'child-ai', 'trader'].includes(tab) && state.currentUser?.role !== 'admin') return;
+  if (['admin', 'notifications', 'child-ai', 'trader', 'pearl-loader'].includes(tab) && state.currentUser?.role !== 'admin') return;
   const requestedButton = $(`.tab-button[data-tab="${tab}"]`);
   if (!requestedButton || requestedButton.hidden || requestedButton.classList.contains('account-tab-restricted')) {
     const fallback = $$('.tab-button[data-tab]').find(button =>
@@ -2404,6 +2405,7 @@ function setActiveTab(tab) {
   if (tab === 'kill-aura') loadKillAura();
   if (tab === 'stone-miner') loadStoneMiner().catch(error => setBanner(`Could not load Stone Miner: ${error.message}`));
   if (tab === 'trader') loadTrader().catch(error => setBanner(`Could not load Trader: ${error.message}`));
+  if (tab === 'pearl-loader') loadPearlLoader().catch(error => setBanner(`Could not load Pearl Loader: ${error.message}`));
   if (tab === 'area-explorer') loadAreaExplorer().catch(error => setBanner(`Could not load Area Explorer: ${error.message}`));
   if (tab === 'chat') ensureInitialChatScroll();
   if (tab === 'players') {
@@ -11850,27 +11852,183 @@ function renderAdminPlayerPearlChamber() {
   element.hidden = false;
 }
 
-function renderAdminPearlChambers(chambers) {
-  const list = $('#adminPearlChambers');
-  if (!list) return;
-  const items = Array.isArray(chambers) ? chambers : [];
-  const summary = $('#adminPearlChambersSummary');
-  if (summary) {
-    const count = status => items.filter(item => item.status === status).length;
-    summary.textContent = items.length
-      ? `${formatNumber(count('set'))} set · ${formatNumber(count('empty'))} empty · ${formatNumber(count('no_trapdoor'))} wrong · ${formatNumber(count('unknown'))} not checked`
-      : 'What the bots last saw at every saved pearl hatch.';
-  }
-  if (!items.length) {
-    list.innerHTML = '<li class="is-empty-list">No player has pearl hatch coordinates yet.</li>';
-    return;
-  }
-  list.innerHTML = items.map(item => {
-    const status = PEARL_CHAMBER_LABELS[item.status] ? item.status : 'unknown';
-    // Coordinates are not shown here; they stay in the player card only
-    return `<li class="is-${status}"><strong>${escapeHtml(item.username)}</strong>${pearlChamberBadge(item)}<small>${escapeHtml(pearlChamberDetail(item))}</small></li>`;
-  }).join('');
+// Pearl Loader page: what the loader does right now, the queue, totals, recent
+// requests and every stasis chamber. Coordinates are never shown here.
+const PEARL_STEP_ORDER = Object.freeze(['connect', 'walk', 'check', 'confirm', 'teleport', 'reload']);
+const PEARL_STAGE_STEP = Object.freeze({
+  lookup: 'connect', connecting: 'connect', navigating: 'walk', checking_pearl: 'check',
+  aiming: 'confirm', awaiting_yes: 'confirm', closing: 'teleport', waiting_visibility: 'teleport',
+  opening: 'teleport', awaiting_new_pearl: 'reload'
+});
+const PEARL_STAGE_TEXT = Object.freeze({
+  lookup: 'Looking up the hatch',
+  connecting: 'Joining the server',
+  navigating: 'Walking to the chamber',
+  checking_pearl: 'Looking for the pearl',
+  aiming: 'At the chamber, asking if the player is ready',
+  awaiting_yes: 'Waiting for the player to say yes',
+  closing: 'Closing the trapdoor',
+  waiting_visibility: 'Waiting for the player to arrive',
+  opening: 'Opening the trapdoor',
+  awaiting_new_pearl: 'Waiting for the player to throw a new pearl'
+});
+const PEARL_OUTCOME_LABELS = Object.freeze({
+  completed: 'Loaded', no_pearl: 'No pearl', failed: 'Failed', cancelled: 'Cancelled'
+});
+
+function pearlLoaderViewState(data) {
+  const live = data?.live || {};
+  if (!data?.loader) return 'unassigned';
+  if (live.active) return 'active';
+  if (live.warm) return 'warm';
+  return ['connected', 'connecting'].includes(data.loader.runtimeStatus) ? 'warm' : 'offline';
 }
+
+function renderPearlLoaderHero(data) {
+  const live = data.live || {};
+  const view = pearlLoaderViewState(data);
+  const tab = $('#tab-pearl-loader');
+  tab.dataset.pearlState = view;
+  const check = live.mode === 'check';
+  $('#pearlLoaderState').textContent = {
+    unassigned: 'Not set up',
+    offline: 'Offline',
+    warm: 'In game',
+    active: check ? 'Checking a pearl' : 'Loading a pearl'
+  }[view];
+  const elapsed = live.startedAt ? ` · ${formatDurationMs(Date.now() - new Date(live.startedAt).getTime())}` : '';
+  $('#pearlLoaderStatus').textContent = {
+    unassigned: 'Give one bot the Pearl Loader role in its account settings.',
+    offline: 'Waits offline until a player whispers "load", "check" or "pearl". "pearl" is answered from the last chamber scan.',
+    warm: live.queue?.length ? 'Staying in game for the next player in the queue.' : 'In game, about to leave.',
+    active: `${PEARL_STAGE_TEXT[live.stage] || 'Working'}${elapsed}.`
+  }[view];
+
+  const player = $('#pearlLoaderPlayer');
+  player.hidden = !live.active || !live.username;
+  if (live.active && live.username) {
+    $('#pearlLoaderPlayerName').textContent = live.username;
+    $('#pearlLoaderPlayerMode').textContent = check ? 'Check for' : 'Load for';
+    const head = $('#pearlLoaderPlayerHead');
+    const url = playerHeadUrl(live.username, 40);
+    if (head.getAttribute('src') !== url) head.src = url;
+  }
+
+  const steps = $('#pearlLoaderSteps');
+  const current = live.active ? PEARL_STAGE_STEP[live.stage] : null;
+  const currentIndex = current ? PEARL_STEP_ORDER.indexOf(current) : -1;
+  steps.classList.toggle('is-idle', !current);
+  steps.classList.toggle('is-check', check);
+  for (const item of steps.querySelectorAll('[data-pearl-step]')) {
+    const index = PEARL_STEP_ORDER.indexOf(item.dataset.pearlStep);
+    // A check stops after looking: the later steps do not happen
+    const skipped = check && index > PEARL_STEP_ORDER.indexOf('check');
+    item.dataset.state = skipped ? 'skipped' : index < currentIndex ? 'done' : index === currentIndex ? 'active' : 'idle';
+    if (index === currentIndex) item.setAttribute('aria-current', 'step');
+    else item.removeAttribute('aria-current');
+  }
+
+  const loader = data.loader;
+  $('#pearlLoaderAccount').textContent = loader
+    ? `${loader.displayName || loader.username} · ${loader.lastConnectedAt ? `last in game ${formatRecentDate(loader.lastConnectedAt)}` : 'never connected yet'}`
+    : 'No bot has the Pearl Loader role.';
+  $('#pearlLoaderUpdated').textContent = `last update: ${live.observedAt ? formatAgo(live.observedAt) : '-'}`;
+}
+
+function renderPearlLoaderStats(totals = {}) {
+  setRollingNumber('#pearlLoaderLoads', totals.completed);
+  $('#pearlLoaderLoadsDetail').textContent = `${formatNumber(totals.total)} requests in all`;
+  setRollingNumber('#pearlLoaderToday', totals.today);
+  const recentLoads = totals.recentTotal || 0;
+  $('#pearlLoaderSuccess').textContent = recentLoads ? `${Math.round((totals.recentCompleted / recentLoads) * 100)}%` : '-';
+  $('#pearlLoaderSuccessDetail').textContent = recentLoads
+    ? `${formatNumber(totals.recentFailed)} failed of ${formatNumber(recentLoads)} · 30 days`
+    : 'no requests in 30 days';
+  $('#pearlLoaderAverage').textContent = totals.averageMs ? formatDurationMs(totals.averageMs) : '-';
+}
+
+function pearlPlayerChip(username, extra = '') {
+  return `<img class="pearl-head" src="${escapeHtml(playerHeadUrl(username, 32))}" alt="" width="28" height="28" loading="lazy">`
+    + `<span class="pearl-player-name">${escapeHtml(username)}</span>${extra}`;
+}
+
+function renderPearlLoaderQueue(queue = []) {
+  const list = $('#pearlLoaderQueue');
+  $('#pearlLoaderQueueSummary').textContent = queue.length
+    ? `${formatNumber(queue.length)} waiting, first come first served.`
+    : 'Nobody is waiting.';
+  list.innerHTML = queue.length
+    ? queue.map(entry => `<li><span class="pearl-queue-position">${formatNumber(entry.position)}</span>${pearlPlayerChip(entry.username,
+      `<small>asked ${escapeHtml(formatAgo(entry.requestedAt))}</small>`)}</li>`).join('')
+    : '<li class="pearl-empty-row">When the loader is busy, the next players wait here.</li>';
+}
+
+function renderPearlLoaderRecent(recent = []) {
+  const list = $('#pearlLoaderRecent');
+  list.innerHTML = recent.length
+    ? recent.map(item => {
+      const outcome = PEARL_OUTCOME_LABELS[item.outcome] ? item.outcome : 'failed';
+      const duration = item.durationMs ? ` · ${formatDurationMs(item.durationMs)}` : '';
+      return `<li>${pearlPlayerChip(item.username, `<small>${escapeHtml(formatRecentDate(item.finishedAt))}${escapeHtml(duration)}</small>`)}`
+        + `<span class="pearl-outcome is-${outcome}">${escapeHtml(PEARL_OUTCOME_LABELS[outcome])}</span></li>`;
+    }).join('')
+    : '<li class="pearl-empty-row">No requests yet.</li>';
+}
+
+function renderPearlChambers(chambers = []) {
+  const counts = { all: chambers.length, set: 0, empty: 0, no_trapdoor: 0, unknown: 0 };
+  for (const chamber of chambers) counts[PEARL_CHAMBER_LABELS[chamber.status] ? chamber.status : 'unknown'] += 1;
+  for (const element of $$('[data-pearl-count]')) element.textContent = formatNumber(counts[element.dataset.pearlCount] || 0);
+  $('#pearlChambersSummary').textContent = chambers.length
+    ? `${formatNumber(counts.set)} of ${formatNumber(chambers.length)} hold a pearl. Bots in game check the chambers near them every minute.`
+    : 'No player has pearl hatch coordinates yet. Add them in the player card.';
+  const filter = state.pearlChamberFilter || 'all';
+  for (const button of $$('[data-pearl-filter]')) {
+    const active = button.dataset.pearlFilter === filter;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+  const shown = chambers.filter(chamber => filter === 'all' || (PEARL_CHAMBER_LABELS[chamber.status] ? chamber.status : 'unknown') === filter);
+  const grid = $('#pearlChambers');
+  grid.innerHTML = shown.length
+    ? shown.map(chamber => {
+      const status = PEARL_CHAMBER_LABELS[chamber.status] ? chamber.status : 'unknown';
+      return `<li class="pearl-chamber-card is-${status}">`
+        + `<div class="pearl-chamber-top"><span class="pearl-chamber-head${chamber.isOnline ? ' is-online' : ''}">`
+        + `<img src="${escapeHtml(playerHeadUrl(chamber.username, 48, { uuid: chamber.uuid }))}" alt="" width="40" height="40" loading="lazy"></span>`
+        + `<div><strong>${escapeHtml(chamber.username)}</strong><small>${chamber.isOnline ? 'online' : 'offline'}</small></div>`
+        + `<span class="pearl-chamber-pearl" aria-hidden="true"><img src="/items/${status === 'no_trapdoor' ? 'Oak_Trapdoor' : 'Ender_Pearl'}.png" alt=""></span></div>`
+        + `${pearlChamberBadge(chamber)}<p>${escapeHtml(pearlChamberDetail(chamber))}</p></li>`;
+    }).join('')
+    : `<li class="pearl-empty-row">${chambers.length ? 'No chamber matches this filter.' : 'No chambers yet.'}</li>`;
+}
+
+function renderPearlLoader(data = {}) {
+  state.pearlLoaderData = data;
+  if (!$('#tab-pearl-loader')) return;
+  renderPearlLoaderHero(data);
+  renderPearlLoaderStats(data.totals);
+  renderPearlLoaderQueue(data.live?.queue || []);
+  renderPearlLoaderRecent(data.recent || []);
+  renderPearlChambers(data.chambers || []);
+}
+
+async function loadPearlLoader() {
+  if (state.currentUser?.role !== 'admin' || state.pearlLoaderLoading) return;
+  state.pearlLoaderLoading = true;
+  try {
+    renderPearlLoader(await fetchJson('/api/pearl-loader'));
+  } finally {
+    state.pearlLoaderLoading = false;
+  }
+}
+
+$('#pearlChamberFilters')?.addEventListener('click', event => {
+  const button = event.target.closest('[data-pearl-filter]');
+  if (!button) return;
+  state.pearlChamberFilter = button.dataset.pearlFilter;
+  renderPearlChambers(state.pearlLoaderData?.chambers || []);
+});
 
 function resetAdminPlayerPearlHatch() {
   for (const axis of ['X', 'Y', 'Z']) $('#adminPlayerPearlHatch' + axis).value = '';
@@ -13474,7 +13632,6 @@ function renderAdminControlState(payload = {}) {
     pearlLoadsDetail.textContent = loads ? `${formatNumber(loads.today)} today · ${formatNumber(loads.total)} requests` : 'all time';
     pearlLoadsDetail.title = loads ? `${formatNumber(loads.total - loads.completed)} requests ended without a load` : '';
   }
-  renderAdminPearlChambers(payload.pearlChambers);
 
   const obsidianButton = $('#obsidianToggleButton');
   if (obsidianButton) {
@@ -14883,6 +15040,7 @@ async function refreshLiveDashboard() {
     if (liveObsidian) renderLiveObsidian(liveObsidian);
     if (state.activeTab === 'stone-miner') loadStoneMiner().catch(() => {});
     if (state.activeTab === 'trader') loadTrader().catch(() => {});
+    if (state.activeTab === 'pearl-loader') loadPearlLoader().catch(() => {});
   } catch {
     // SSE and the periodic full dashboard refresh remain as fallbacks.
   } finally {

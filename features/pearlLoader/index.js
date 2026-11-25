@@ -1445,13 +1445,15 @@ function createPearlLoaderFeature({
     const waiting = queue.length
       ? { queue:queue.map((entry, index) => ({ username:entry.username, position:index + 1, requestedAt:entry.requestedAt, expiresAt:entry.expiresAt })) }
       : {};
-    if (!activeJob) return { active:false, ...waiting };
+    // Shown on the site, so chamber coordinates stay out of it
+    if (!activeJob) return { active:false, ...(warmLoader ? { warm:true } : {}), ...waiting };
     return {
       active:true,
       accountId:activeJob.accountId,
       username:activeJob.username,
+      mode:activeJob.mode,
       stage:activeJob.stage,
-      hatch:{ ...activeJob.hatch },
+      startedAt:activeJob.startedAt,
       ...waiting
     };
   }

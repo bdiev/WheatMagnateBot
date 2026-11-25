@@ -34,15 +34,18 @@ for (const file of ['093_pearl_chamber_scans.sql','094_pearl_chamber_scan_detail
     fs.readFileSync(path.join(root,'site','migrations',file),'utf8'),`the bot and site must install the same ${file}`);
 }
 assert.match(html,/id="adminPlayerPearlHatchZ"[\s\S]*id="adminPlayerPearlChamber"/,'the player card shows the chamber state under the hatch coordinates');
-assert.match(html,/Pearl chambers[\s\S]*id="adminPearlChambers"/,'Control center lists every chamber');
-assert.match(server,/pearlChambers: pearlChamberPlayers/,'admin control state lists the chambers');
 assert.match(server,/pearlHatch: profileHatch\(profile\),\s*pearlChamber/,'the admin player profile carries the chamber state');
-assert.match(app,/renderAdminPearlChambers\(payload\.pearlChambers\)/);
 assert.match(app,/no_trapdoor: 'No trapdoor'/);
 assert.match(bot,/pearlLoaderFeature\?\.scanWithBots\(/,'bots in game keep the chamber scan fresh');
 assert.match(bot,/pearlLoaderFeature\?\.remindEmptyChamber\(/,'joining players hear about an empty chamber');
-const chamberList = app.slice(app.indexOf('function renderAdminPearlChambers'), app.indexOf('function resetAdminPlayerPearlHatch'));
-assert.doesNotMatch(chamberList,/hatch\.x|hatch\.y|hatch\.z/,'the Control center chamber list never shows coordinates');
-const controlChambers = server.slice(server.indexOf('const pearlChamberPlayers'), server.indexOf('const pearlChamberStates'));
-assert.doesNotMatch(controlChambers,/hatch/,'the Control center payload carries no coordinates');
+// The Pearl Loader page
+assert.match(html,/data-tab="pearl-loader"[^>]*>Pearl Loader</,'the Pearl Loader has its own page in the menu');
+assert.match(html,/id="tab-pearl-loader"[\s\S]*id="pearlLoaderSteps"[\s\S]*id="pearlLoaderQueue"[\s\S]*id="pearlLoaderRecent"[\s\S]*id="pearlChambers"/);
+assert.doesNotMatch(html,/adminPearlChambers/,'the chamber list moved out of Control center');
+assert.match(app,/NAV_DEFAULT_ORDER = Object\.freeze\(\[[^\]]*'trader', 'pearl-loader'/);
+assert.match(server,/NAVIGATION_SECTION_ORDER = Object\.freeze\(\[[^\]]*'trader', 'pearl-loader'/);
+assert.match(app,/if \(tab === 'pearl-loader'\) loadPearlLoader\(\)/);
+assert.match(server,/url\.pathname === '\/api\/pearl-loader'/);
+const pageCode = app.slice(app.indexOf('// Pearl Loader page'), app.indexOf('function resetAdminPlayerPearlHatch'));
+assert.doesNotMatch(pageCode,/hatch\.x|hatch\.y|hatch\.z|\.hatch\b/,'the Pearl Loader page never shows coordinates');
 console.log('Pearl Loader admin UI tests passed.');

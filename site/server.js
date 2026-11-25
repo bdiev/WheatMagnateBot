@@ -4911,6 +4911,128 @@ async function loadPearlChamberScans(hatches, database = pool) {
   const byKey = new Map(result.rows.map(row => [`${row.hatch_x} ${row.hatch_y} ${row.hatch_z}`, row]));
   return hatches.map(hatch => publicPearlChamber(hatch, hatch ? byKey.get(`${hatch.x} ${hatch.y} ${hatch.z}`) : null));
 }
+// Every player with a saved hatch and what the bots last saw there. Chamber
+// coordinates never leave the server in this list.
+async function loadPearlChamberList(database = pool) {
+  const result = await database.query(`
+    SELECT DISTINCT ON (COALESCE(player_uuid::text, LOWER(username)))
+           username, player_uuid, is_online, pearl_hatch_x, pearl_hatch_y, pearl_hatch_z
+    FROM player_activity
+    WHERE pearl_hatch_x IS NOT NULL AND pearl_hatch_y IS NOT NULL AND pearl_hatch_z IS NOT NULL
+    ORDER BY COALESCE(player_uuid::text, LOWER(username)), is_online DESC,
+             COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+  `).catch(() => ({ rows:[] }));
+  const rows = result.rows || [];
+  const states = await loadPearlChamberScans(rows.map(profileHatch), database);
+  return rows
+    .map((row, index) => ({
+      username: row.username,
+      uuid: row.player_uuid || null,
+      isOnline: Boolean(row.is_online),
+      ...states[index]
+    }))
+    .sort((a, b) => a.username.localeCompare(b.username, 'en', { sensitivity:'base' }));
+}
+
+const PEARL_LOADER_STAGES = new Set([
+  'lookup','connecting','navigating','checking_pearl','aiming','awaiting_yes',
+  'closing','waiting_visibility','opening','awaiting_new_pearl'
+]);
+
+// The Pearl Loader page: the loader account, what it is doing right now (from
+// the primary bot's status snapshot), the queue, totals, recent requests and
+// every chamber
+async function getPearlLoaderState(currentUser, database = pool) {
+  assertAdminUser(currentUser);
+  const [snapshotResult, accountResult, totalsResult, recentResult, dailyResult, chambers] = await Promise.all([
+    database.query(`SELECT status->'pearlLoader' AS pearl_loader, observed_at FROM bot_status_snapshots WHERE id = 1`)
+      .catch(() => ({ rows:[] })),
+    database.query(`
+      SELECT account.id, account.username, account.display_name,
+             runtime.status AS runtime_status, runtime.updated_at AS runtime_updated_at,
+             account.last_connected_at
+      FROM bot_accounts account
+      LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id = account.id
+      WHERE account.role = 'pearl_loader' AND account.deleted_at IS NULL
+      LIMIT 1
+    `).catch(() => ({ rows:[] })),
+    database.query(`
+      SELECT COUNT(*) FILTER (WHERE outcome = 'completed')::int AS completed,
+             COUNT(*) FILTER (WHERE outcome = 'completed' AND finished_at >= date_trunc('day', NOW()))::int AS today,
+             COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE finished_at >= NOW() - INTERVAL '30 days')::int AS recent_total,
+             COUNT(*) FILTER (WHERE outcome = 'completed' AND finished_at >= NOW() - INTERVAL '30 days')::int AS recent_completed,
+             COUNT(*) FILTER (WHERE outcome = 'failed' AND finished_at >= NOW() - INTERVAL '30 days')::int AS recent_failed,
+             ROUND(AVG(duration_ms) FILTER (WHERE outcome = 'completed' AND finished_at >= NOW() - INTERVAL '30 days'))::int AS average_ms
+      FROM pearl_loader_requests
+    `).catch(() => ({ rows:[] })),
+    database.query(`
+      SELECT username, outcome, finished_at, duration_ms
+      FROM pearl_loader_requests
+      ORDER BY finished_at DESC, id DESC
+      LIMIT 12
+    `).catch(() => ({ rows:[] })),
+    database.query(`
+      SELECT TO_CHAR(day, 'YYYY-MM-DD') AS day,
+             COUNT(request.id) FILTER (WHERE request.outcome = 'completed')::int AS completed,
+             COUNT(request.id)::int AS total
+      FROM generate_series(date_trunc('day', NOW()) - INTERVAL '13 days', date_trunc('day', NOW()), INTERVAL '1 day') AS day
+      LEFT JOIN pearl_loader_requests request
+        ON request.finished_at >= day AND request.finished_at < day + INTERVAL '1 day'
+      GROUP BY day
+      ORDER BY day
+    `).catch(() => ({ rows:[] })),
+    loadPearlChamberList(database)
+  ]);
+
+  const snapshot = snapshotResult.rows[0] || {};
+  const live = snapshot.pearl_loader && typeof snapshot.pearl_loader === 'object' ? snapshot.pearl_loader : null;
+  const account = accountResult.rows[0] || null;
+  const totals = totalsResult.rows[0] || {};
+  const queue = Array.isArray(live?.queue) ? live.queue.slice(0, 20).map(entry => ({
+    username: String(entry?.username || '?'),
+    position: toInt(entry?.position),
+    requestedAt: entry?.requestedAt || null,
+    expiresAt: entry?.expiresAt || null
+  })) : [];
+  return {
+    loader: account ? {
+      username: account.username,
+      displayName: account.display_name,
+      runtimeStatus: account.runtime_status || 'stopped',
+      runtimeUpdatedAt: account.runtime_updated_at || null,
+      lastConnectedAt: account.last_connected_at || null
+    } : null,
+    live: {
+      observedAt: snapshot.observed_at || null,
+      active: Boolean(live?.active),
+      warm: Boolean(live?.warm),
+      username: live?.active ? String(live.username || '') : null,
+      mode: live?.active ? (live.mode === 'check' ? 'check' : 'load') : null,
+      stage: live?.active && PEARL_LOADER_STAGES.has(live.stage) ? live.stage : null,
+      startedAt: live?.active ? live.startedAt || null : null,
+      queue
+    },
+    totals: {
+      completed: toInt(totals.completed),
+      today: toInt(totals.today),
+      total: toInt(totals.total),
+      recentTotal: toInt(totals.recent_total),
+      recentCompleted: toInt(totals.recent_completed),
+      recentFailed: toInt(totals.recent_failed),
+      averageMs: totals.average_ms == null ? null : toInt(totals.average_ms)
+    },
+    daily: dailyResult.rows.map(row => ({ day: row.day, completed: toInt(row.completed), total: toInt(row.total) })),
+    recent: recentResult.rows.map(row => ({
+      username: row.username,
+      outcome: row.outcome,
+      finishedAt: row.finished_at,
+      durationMs: row.duration_ms == null ? null : toInt(row.duration_ms)
+    })),
+    chambers
+  };
+}
+
 const ADMIN_PLAYER_SORT_FIELDS = new Set(['playtime', 'nickname', 'uuid', 'joindate', 'seen', 'messages']);
 const MINECRAFT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -6216,8 +6338,7 @@ async function getAdminControlState(currentUser, url) {
     onlineResult,
     playerTotalsResult,
     farmStateResult,
-    pearlLoadsResult,
-    pearlHatchesResult
+    pearlLoadsResult
   ] = await Promise.all([
     pool.query('SELECT key, value FROM admin_settings'),
     scoped
@@ -6252,21 +6373,8 @@ async function getAdminControlState(currentUser, url) {
              COUNT(*) FILTER (WHERE outcome = 'completed' AND finished_at >= date_trunc('day', NOW()))::int AS today,
              COUNT(*)::int AS total
       FROM pearl_loader_requests
-    `).catch(() => ({ rows:[] })),
-    pool.query(`
-      SELECT DISTINCT ON (COALESCE(player_uuid::text, LOWER(username)))
-             username, is_online, pearl_hatch_x, pearl_hatch_y, pearl_hatch_z
-      FROM player_activity
-      WHERE pearl_hatch_x IS NOT NULL AND pearl_hatch_y IS NOT NULL AND pearl_hatch_z IS NOT NULL
-      ORDER BY COALESCE(player_uuid::text, LOWER(username)), is_online DESC,
-               COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
     `).catch(() => ({ rows:[] }))
   ]);
-  const pearlChamberPlayers = (pearlHatchesResult.rows || []).map(row => ({
-    username: row.username,
-    isOnline: Boolean(row.is_online)
-  }));
-  const pearlChamberStates = await loadPearlChamberScans((pearlHatchesResult.rows || []).map(profileHatch));
 
   const settings = {};
   for (const row of settingsResult.rows) settings[row.key] = row.value;
@@ -6311,9 +6419,6 @@ async function getAdminControlState(currentUser, url) {
       today: toInt(pearlLoadsResult.rows[0].today),
       total: toInt(pearlLoadsResult.rows[0].total)
     } : null,
-    pearlChambers: pearlChamberPlayers
-      .map((player, index) => ({ ...player, ...pearlChamberStates[index] }))
-      .sort((a, b) => a.username.localeCompare(b.username, 'en', { sensitivity:'base' })),
     whitelistAddCandidates: onlinePlayers.filter(username =>
       !whitelist.some(entry => entry.toLowerCase() === username.toLowerCase())
     ),
@@ -6395,9 +6500,9 @@ async function getPushSettings(currentUser) {
   };
 }
 
-const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'trader', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
+const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'stone-miner', 'trader', 'pearl-loader', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
 
-const NAVIGATION_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian', trader: 'stone-miner' });
+const NAVIGATION_INSERT_AFTER = Object.freeze({ 'stone-miner': 'obsidian', trader: 'stone-miner', 'pearl-loader': 'trader' });
 
 function normalizeNavigationPreferences(input = {}) {
   const rawVisibility = input.visibility && typeof input.visibility === 'object' && !Array.isArray(input.visibility) ? input.visibility : {};
@@ -6694,6 +6799,10 @@ async function handleApi(req, res, url) {
     if (url.pathname === '/api/accounts' || url.pathname.startsWith('/api/accounts/')) {
       const response = await handleAccountsApi(req, currentUser, url);
       sendJson(res, response.statusCode, response.payload);
+      return;
+    }
+    if (url.pathname === '/api/pearl-loader' && req.method === 'GET') {
+      sendJson(res, 200, await getPearlLoaderState(currentUser));
       return;
     }
     if (url.pathname === '/api/admin/control-state' && req.method === 'GET') {
@@ -7517,4 +7626,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, adminReadRateLimitSubject, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, expireStalePlayerPresence, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, getPlayerInfoCollectionProgress, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, shouldRecordStaticSecurityEvent, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, getPearlLoaderState, adminPlayerIdentity, adminReadRateLimitSubject, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, expireStalePlayerPresence, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, getPlayerInfoCollectionProgress, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, shouldRecordStaticSecurityEvent, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
