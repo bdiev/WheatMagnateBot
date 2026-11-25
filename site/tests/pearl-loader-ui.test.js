@@ -8,6 +8,7 @@ const root = path.resolve(__dirname,'..','..');
 const html = fs.readFileSync(path.join(root,'site','public','index.html'),'utf8');
 const app = fs.readFileSync(path.join(root,'site','public','app.js'),'utf8');
 const server = fs.readFileSync(path.join(root,'site','server.js'),'utf8');
+const css = () => fs.readFileSync(path.join(root,'site','public','styles.css'),'utf8');
 const bot = fs.readFileSync(path.join(root,'bot.js'),'utf8');
 const botMigration = fs.readFileSync(path.join(root,'database','migrations','040_pearl_loader.sql'),'utf8');
 const siteMigration = fs.readFileSync(path.join(root,'site','migrations','040_pearl_loader.sql'),'utf8');
@@ -40,7 +41,9 @@ assert.match(bot,/pearlLoaderFeature\?\.scanWithBots\(/,'bots in game keep the c
 assert.match(bot,/pearlLoaderFeature\?\.remindEmptyChamber\(/,'joining players hear about an empty chamber');
 // The Pearl Loader page
 assert.match(html,/data-tab="pearl-loader"[^>]*>Pearl Loader</,'the Pearl Loader has its own page in the menu');
-assert.match(html,/id="tab-pearl-loader"[\s\S]*id="pearlLoaderSteps"[\s\S]*id="pearlLoaderQueue"[\s\S]*id="pearlLoaderRecent"[\s\S]*id="pearlChambers"/);
+assert.match(html,/id="tab-pearl-loader"[\s\S]*id="pearlLoaderSteps"[\s\S]*id="pearlLoaderQueueNote"[\s\S]*id="pearlChambers"[\s\S]*id="pearlLoaderRecent"/);
+assert.doesNotMatch(html,/id="pearlLoaderQueue"/,'queues are rare, so there is no separate queue panel');
+assert.doesNotMatch(css(),/pearl-hero-sky|pearl-orb|pearl-twinkle/,'the page uses the site look, without the End-sky decoration');
 assert.doesNotMatch(html,/adminPearlChambers/,'the chamber list moved out of Control center');
 assert.match(app,/NAV_DEFAULT_ORDER = Object\.freeze\(\[[^\]]*'trader', 'pearl-loader'/);
 assert.match(server,/NAVIGATION_SECTION_ORDER = Object\.freeze\(\[[^\]]*'trader', 'pearl-loader'/);

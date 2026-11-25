@@ -11910,7 +11910,7 @@ function renderPearlLoaderHero(data) {
     $('#pearlLoaderPlayerName').textContent = live.username;
     $('#pearlLoaderPlayerMode').textContent = check ? 'Check for' : 'Load for';
     const head = $('#pearlLoaderPlayerHead');
-    const url = playerHeadUrl(live.username, 64);
+    const url = playerHeadUrl(live.username, 48);
     if (head.getAttribute('src') !== url) head.src = url;
     $('#pearlLoaderPlayerElapsed').textContent = Number.isFinite(elapsedMs) ? `for ${formatDurationMs(elapsedMs)}` : '';
   }
@@ -11947,7 +11947,8 @@ function renderPearlLoaderStats(totals = {}) {
   const recentLoads = totals.recentTotal || 0;
   const successPercent = recentLoads ? Math.round((totals.recentCompleted / recentLoads) * 100) : 0;
   $('#pearlLoaderSuccess').textContent = recentLoads ? `${successPercent}%` : '-';
-  $('#pearlLoaderSuccessRing')?.style.setProperty('--value', String(successPercent));
+  const successBar = $('#pearlLoaderSuccessBar');
+  if (successBar) successBar.style.width = `${successPercent}%`;
   $('#pearlLoaderSuccessDetail').textContent = recentLoads
     ? `${formatNumber(totals.recentFailed)} failed of ${formatNumber(recentLoads)} · 30 days`
     : 'no requests in 30 days';
@@ -11993,28 +11994,22 @@ function setPearlAttribute(element, name, value) {
   if (element && element.getAttribute(name) !== value) element.setAttribute(name, value);
 }
 
-function pearlPlayerRow(username, { position = false, outcome = false } = {}) {
+function pearlPlayerRow(username, { outcome = false } = {}) {
   const row = document.createElement('li');
-  row.innerHTML = (position ? '<span class="pearl-queue-position"></span>' : '')
-    + `<img class="pearl-head" src="${escapeHtml(playerHeadUrl(username, 32))}" alt="" width="28" height="28" loading="lazy">`
+  row.innerHTML = `<img class="pearl-head" src="${escapeHtml(playerHeadUrl(username, 32))}" alt="" width="28" height="28" loading="lazy">`
     + `<span class="pearl-player-name">${escapeHtml(username)}</span><small></small>`
     + (outcome ? '<span class="pearl-outcome"></span>' : '');
   return row;
 }
 
+// Queues are rare: whoever waits is named in one line under the status
 function renderPearlLoaderQueue(queue = []) {
-  setPearlText($('#pearlLoaderQueueSummary'), queue.length
-    ? `${formatNumber(queue.length)} waiting, first come first served.`
-    : 'Nobody is waiting.');
-  patchPearlList($('#pearlLoaderQueue'), queue, {
-    key: entry => String(entry.username).toLowerCase(),
-    create: entry => pearlPlayerRow(entry.username, { position: true }),
-    update: (row, entry) => {
-      setPearlText(row.querySelector('.pearl-queue-position'), formatNumber(entry.position));
-      setPearlText(row.querySelector('small'), `asked ${formatAgo(entry.requestedAt)}`);
-    },
-    empty: 'When the loader is busy, the next players wait here.'
-  });
+  const note = $('#pearlLoaderQueueNote');
+  if (!note) return;
+  note.hidden = !queue.length;
+  setPearlText(note, queue.length
+    ? `Waiting: ${queue.map(entry => entry.username).join(', ')}`
+    : '');
 }
 
 function renderPearlLoaderRecent(recent = []) {
