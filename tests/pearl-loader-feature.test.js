@@ -943,7 +943,7 @@ async function testChamberScanAnswersPearl() {
     ['10 64 -20',true],['14 64 -20',true],['18 64 -20',false]
   ],'every chamber in view is remembered, an unloaded one far away is left out');
   assert.ok(logs[0].details.timeline.some(entry => entry.message === 'Scanned the pearl chambers in view.' &&
-    entry.missing.includes('18 64 -20')));
+    entry.missing === 1));
 
   await feature.handlePrimaryWhisper('Bob','pearl');
   await feature.handlePrimaryWhisper('alice','PEARL');

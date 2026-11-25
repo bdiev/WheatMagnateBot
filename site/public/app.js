@@ -11867,8 +11867,8 @@ function renderAdminPearlChambers(chambers) {
   }
   list.innerHTML = items.map(item => {
     const status = PEARL_CHAMBER_LABELS[item.status] ? item.status : 'unknown';
-    const where = item.hatch ? `${item.hatch.x} ${item.hatch.y} ${item.hatch.z}` : '';
-    return `<li class="is-${status}"><strong>${escapeHtml(item.username)}</strong>${pearlChamberBadge(item)}<small>${escapeHtml(where)} · ${escapeHtml(pearlChamberDetail(item))}</small></li>`;
+    // Coordinates are not shown here; they stay in the player card only
+    return `<li class="is-${status}"><strong>${escapeHtml(item.username)}</strong>${pearlChamberBadge(item)}<small>${escapeHtml(pearlChamberDetail(item))}</small></li>`;
   }).join('');
 }
 

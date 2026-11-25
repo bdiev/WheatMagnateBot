@@ -506,8 +506,9 @@ function createPearlLoaderFeature({
       note(job, 'info', 'Scanned the pearl chambers in view.', {
         chambers:hatches.length,
         scanned:observations.length,
-        missing:observations.filter(item => item.hatchFound && !item.present).map(item => `${item.x} ${item.y} ${item.z}`),
-        noTrapdoor:observations.filter(item => !item.hatchFound).map(item => `${item.x} ${item.y} ${item.z}`)
+        // Counts only: chamber coordinates are never written out
+        missing:observations.filter(item => item.hatchFound && !item.present).length,
+        noTrapdoor:observations.filter(item => !item.hatchFound).length
       });
       await recordScans(observations);
       return observations;

@@ -41,4 +41,8 @@ assert.match(app,/renderAdminPearlChambers\(payload\.pearlChambers\)/);
 assert.match(app,/no_trapdoor: 'No trapdoor'/);
 assert.match(bot,/pearlLoaderFeature\?\.scanWithBots\(/,'bots in game keep the chamber scan fresh');
 assert.match(bot,/pearlLoaderFeature\?\.remindEmptyChamber\(/,'joining players hear about an empty chamber');
+const chamberList = app.slice(app.indexOf('function renderAdminPearlChambers'), app.indexOf('function resetAdminPlayerPearlHatch'));
+assert.doesNotMatch(chamberList,/hatch\.x|hatch\.y|hatch\.z/,'the Control center chamber list never shows coordinates');
+const controlChambers = server.slice(server.indexOf('const pearlChamberPlayers'), server.indexOf('const pearlChamberStates'));
+assert.doesNotMatch(controlChambers,/hatch/,'the Control center payload carries no coordinates');
 console.log('Pearl Loader admin UI tests passed.');

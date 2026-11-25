@@ -6264,10 +6264,9 @@ async function getAdminControlState(currentUser, url) {
   ]);
   const pearlChamberPlayers = (pearlHatchesResult.rows || []).map(row => ({
     username: row.username,
-    isOnline: Boolean(row.is_online),
-    hatch: profileHatch(row)
+    isOnline: Boolean(row.is_online)
   }));
-  const pearlChamberStates = await loadPearlChamberScans(pearlChamberPlayers.map(player => player.hatch));
+  const pearlChamberStates = await loadPearlChamberScans((pearlHatchesResult.rows || []).map(profileHatch));
 
   const settings = {};
   for (const row of settingsResult.rows) settings[row.key] = row.value;
