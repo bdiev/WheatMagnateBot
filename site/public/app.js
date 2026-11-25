@@ -12050,23 +12050,49 @@ function renderPearlChambers(chambers = []) {
   });
 }
 
+// Requests stack per player and result: "bdiev_ · Loaded ×5", newest first
+function stackPearlRequests(recent) {
+  const stacks = new Map();
+  for (const item of recent) {
+    const outcome = PEARL_OUTCOME_LABELS[item.outcome] ? item.outcome : 'failed';
+    const key = `${String(item.username).toLowerCase()}|${outcome}`;
+    let stack = stacks.get(key);
+    if (!stack) {
+      stack = { key, username: item.username, outcome, count: 0, lastAt: item.finishedAt, durations: [] };
+      stacks.set(key, stack);
+    }
+    stack.count += 1;
+    if (new Date(item.finishedAt) > new Date(stack.lastAt)) stack.lastAt = item.finishedAt;
+    if (item.durationMs) stack.durations.push(item.durationMs);
+  }
+  return [...stacks.values()].sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
+}
+
 function renderPearlLoaderRecent(recent = []) {
-  setPearlText($('#pearlLoaderRecentCount'), recent.length ? `How the last ${formatNumber(recent.length)} requests ended.` : 'How the last requests ended.');
-  patchPearlRows($('#pearlLoaderRecent'), recent, {
+  setPearlText($('#pearlLoaderRecentCount'), recent.length
+    ? `The last ${formatNumber(recent.length)} requests, by player and result.`
+    : 'How the last requests ended.');
+  patchPearlRows($('#pearlLoaderRecent'), stackPearlRequests(recent), {
     columns: 3,
-    key: item => `${String(item.username).toLowerCase()}|${item.finishedAt}`,
-    create: item => {
+    key: stack => stack.key,
+    create: stack => {
       const row = document.createElement('tr');
-      row.innerHTML = `<td>${pearlPlayerCell(item.username)}</td><td><span class="pearl-status"></span></td><td class="pearl-muted"></td>`;
+      row.innerHTML = `<td>${pearlPlayerCell(stack.username)}</td>`
+        + '<td><span class="pearl-status"></span><span class="pearl-stack-count"></span></td><td class="pearl-muted"></td>';
       return row;
     },
-    update: (row, item) => {
-      const outcome = PEARL_OUTCOME_LABELS[item.outcome] ? item.outcome : 'failed';
+    update: (row, stack) => {
       const badge = row.querySelector('.pearl-status');
-      setPearlAttribute(badge, 'class', `pearl-status is-${outcome}`);
-      setPearlText(badge, PEARL_OUTCOME_LABELS[outcome]);
-      const duration = item.durationMs ? ` · ${formatDurationMs(item.durationMs)}` : '';
-      setPearlText(row.children[2], `${formatRecentDate(item.finishedAt)}${duration}`);
+      setPearlAttribute(badge, 'class', `pearl-status is-${stack.outcome}`);
+      setPearlText(badge, PEARL_OUTCOME_LABELS[stack.outcome]);
+      const count = row.querySelector('.pearl-stack-count');
+      setPearlText(count, stack.count > 1 ? `×${formatNumber(stack.count)}` : '');
+      count.hidden = stack.count < 2;
+      const average = stack.durations.length
+        ? stack.durations.reduce((sum, value) => sum + value, 0) / stack.durations.length
+        : 0;
+      const duration = average ? ` · ${stack.count > 1 ? 'avg ' : ''}${formatDurationMs(average)}` : '';
+      setPearlText(row.children[2], `${stack.count > 1 ? 'last ' : ''}${formatRecentDate(stack.lastAt)}${duration}`);
     },
     empty: 'No requests yet.'
   });

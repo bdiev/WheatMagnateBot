@@ -17827,6 +17827,18 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 #tab-pearl-loader .pearl-status:is(.is-no_trapdoor, .is-failed) { color: var(--danger); }
 #tab-pearl-loader .pearl-status:is(.is-unknown, .is-cancelled) { color: var(--muted); }
 
+#tab-pearl-loader .pearl-stack-count {
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 2px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
 #tab-pearl-loader .pearl-online { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--line-soft); }
 #tab-pearl-loader .pearl-online.is-online { background: var(--annotation-connected); }
 

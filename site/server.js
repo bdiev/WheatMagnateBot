@@ -4970,7 +4970,7 @@ async function getPearlLoaderState(currentUser, database = pool) {
       SELECT username, outcome, finished_at, duration_ms
       FROM pearl_loader_requests
       ORDER BY finished_at DESC, id DESC
-      LIMIT 12
+      LIMIT 50
     `).catch(() => ({ rows:[] })),
     database.query(`
       SELECT TO_CHAR(day, 'YYYY-MM-DD') AS day,

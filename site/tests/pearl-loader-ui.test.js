@@ -66,4 +66,18 @@ assert.match(html,/<tbody id="pearlChambers">(<tr class="pearl-skeleton-row"[\s\
 assert.match(html,/<tbody id="pearlLoaderRecent">(<tr class="pearl-skeleton-row"[\s\S]*?<\/tr>){4}<\/tbody>/,'skeleton rows stand in for the requests');
 assert.match(app,/if \(child\.dataset\.pearlKey\) keyed\.set\(child\.dataset\.pearlKey, child\);\s*else child\.remove\(\);/,'the first rows replace the skeleton rows');
 assert.match(app,/delete tab\.dataset\.pearlLoading;/,'the skeleton goes once the first data is shown');
+{
+  // Requests stack per player and result
+  const PEARL_OUTCOME_LABELS = { completed:'Loaded', no_pearl:'No pearl', failed:'Failed', cancelled:'Cancelled' };
+  const stackPearlRequests = new Function('PEARL_OUTCOME_LABELS', app.slice(app.indexOf('function stackPearlRequests'), app.indexOf('function renderPearlLoaderRecent')) + 'return stackPearlRequests;')(PEARL_OUTCOME_LABELS);
+  const at = minutes => new Date(Date.UTC(2026, 10, 25, 12) - minutes * 60_000).toISOString();
+  const stacks = stackPearlRequests([
+    { username:'bdiev_', outcome:'completed', finishedAt:at(27), durationMs:14_000 },
+    { username:'bdiev_', outcome:'cancelled', finishedAt:at(43), durationMs:16_000 },
+    { username:'BDIEV_', outcome:'completed', finishedAt:at(56), durationMs:16_000 },
+    { username:'Alice', outcome:'completed', finishedAt:at(60), durationMs:30_000 }
+  ]);
+  assert.deepEqual(stacks.map(stack => [stack.username, stack.outcome, stack.count]),
+    [['bdiev_','completed',2], ['bdiev_','cancelled',1], ['Alice','completed',1]], 'one row per player and result, newest first');
+}
 console.log('Pearl Loader admin UI tests passed.');
