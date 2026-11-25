@@ -17893,10 +17893,40 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   #tab-pearl-loader .pearl-num:nth-child(-n + 2) { border-bottom: 2px solid var(--line-soft); }
 }
 
-@media (max-width: 560px) {
+/* Phones: everything fits the screen width, nothing scrolls sideways */
+@media (max-width: 640px) {
+  #tab-pearl-loader .pearl-filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  #tab-pearl-loader .pearl-filters .chart-range-button { padding: 0 4px; font-size: 11px; gap: 4px; }
+
+  #tab-pearl-loader .pearl-table-wrap { overflow-x: hidden; }
+  #tab-pearl-loader .pearl-table { table-layout: fixed; }
   #tab-pearl-loader .pearl-table th,
-  #tab-pearl-loader .pearl-table td { padding: 6px 8px; }
-  #tab-pearl-loader .pearl-player { max-width: 140px; }
+  #tab-pearl-loader .pearl-table td { padding: 7px 8px; white-space: normal; overflow-wrap: anywhere; vertical-align: middle; }
+  #tab-pearl-loader .pearl-table td.pearl-muted { font-size: 12px; line-height: 1.3; }
+
+  #tab-pearl-loader .pearl-player { display: flex; max-width: 100%; min-width: 0; }
+  #tab-pearl-loader .pearl-player span { min-width: 0; white-space: nowrap; }
+
+  /* Chambers: player, status, checked, online dot */
+  #pearlChambers td:nth-child(1),
+  #tab-pearl-loader .pearl-table:has(#pearlChambers) th:nth-child(1) { width: 40%; }
+  #tab-pearl-loader .pearl-table:has(#pearlChambers) th:nth-child(2) { width: 30%; }
+  #tab-pearl-loader .pearl-table:has(#pearlChambers) th:nth-child(3) { width: 30%; }
+  #tab-pearl-loader .pearl-table:has(#pearlChambers) th:nth-child(4) { width: 22px; padding-inline: 0 8px; }
+  #pearlChambers td:nth-child(4) { padding-inline: 0 8px; }
+
+  /* Requests: player, result, when */
+  #tab-pearl-loader .pearl-table:has(#pearlLoaderRecent) th:nth-child(1) { width: 38%; }
+  #tab-pearl-loader .pearl-table:has(#pearlLoaderRecent) th:nth-child(2) { width: 32%; }
+  #tab-pearl-loader .pearl-table:has(#pearlLoaderRecent) th:nth-child(3) { width: 30%; }
+  #tab-pearl-loader .pearl-stack-count { margin-left: 4px; }
+
+  #tab-pearl-loader .pearl-skel.is-name { width: 60px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

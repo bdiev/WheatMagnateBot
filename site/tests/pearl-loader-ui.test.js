@@ -80,4 +80,10 @@ assert.match(app,/delete tab\.dataset\.pearlLoading;/,'the skeleton goes once th
   assert.deepEqual(stacks.map(stack => [stack.username, stack.outcome, stack.count]),
     [['bdiev_','completed',2], ['bdiev_','cancelled',1], ['Alice','completed',1]], 'one row per player and result, newest first');
 }
+{
+  const phone = css().slice(css().indexOf('/* Phones: everything fits the screen width'));
+  assert.match(phone,/\.pearl-table-wrap \{ overflow-x: hidden; \}/,'on phones the tables do not scroll sideways');
+  assert.match(phone,/\.pearl-table \{ table-layout: fixed; \}/,'on phones the table columns share the screen width');
+  assert.match(phone,/\.pearl-filters \{\s*display: grid;[\s\S]*?overflow: visible;/,'on phones the chamber filters wrap instead of scrolling');
+}
 console.log('Pearl Loader admin UI tests passed.');
