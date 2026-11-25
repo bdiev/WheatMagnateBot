@@ -4950,7 +4950,7 @@ async function getPearlLoaderState(currentUser, database = pool) {
     database.query(`
       SELECT account.id, account.username, account.display_name,
              runtime.status AS runtime_status, runtime.updated_at AS runtime_updated_at,
-             account.last_connected_at
+             GREATEST(account.last_connected_at, runtime.started_at) AS last_connected_at
       FROM bot_accounts account
       LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id = account.id
       WHERE account.role = 'pearl_loader' AND account.deleted_at IS NULL

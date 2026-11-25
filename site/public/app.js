@@ -11945,20 +11945,22 @@ function renderPearlLoaderBar(data) {
   if (note.innerHTML !== noteHtml) note.innerHTML = noteHtml;
 
   const loader = data.loader;
+  const inGame = view === 'active' || view === 'warm';
   setPearlText($('#pearlLoaderAccount'), loader
-    ? `${loader.displayName || loader.username} · ${loader.lastConnectedAt ? `in game ${formatRecentDate(loader.lastConnectedAt)}` : 'never connected'}`
+    ? `${loader.displayName || loader.username} · ${inGame ? 'in game now'
+      : loader.lastConnectedAt ? `last in game ${formatRecentDate(loader.lastConnectedAt)}` : 'not in game yet'}`
     : 'No bot has the Pearl Loader role.');
 }
 
 function renderPearlLoaderStats(totals = {}) {
   setRollingNumber('#pearlLoaderLoads', totals.completed);
-  setPearlText($('#pearlLoaderLoadsDetail'), `loads · ${formatNumber(totals.total)} requests`);
+  setPearlText($('#pearlLoaderLoadsDetail'), `of ${formatNumber(totals.total)} requests`);
   setRollingNumber('#pearlLoaderToday', totals.today);
   const recentTotal = totals.recentTotal || 0;
   setPearlText($('#pearlLoaderSuccess'), recentTotal ? `${Math.round((totals.recentCompleted / recentTotal) * 100)}%` : '-');
   setPearlText($('#pearlLoaderSuccessDetail'), recentTotal
-    ? `success · ${formatNumber(totals.recentFailed)} failed in 30 days`
-    : 'success · no requests in 30 days');
+    ? `${formatNumber(totals.recentFailed)} failed · last 30 days`
+    : 'no requests in 30 days');
   setPearlText($('#pearlLoaderAverage'), totals.averageMs ? formatDurationMs(totals.averageMs) : '-');
 }
 
@@ -12015,6 +12017,9 @@ function renderPearlChambers(chambers = []) {
   const counts = { all: chambers.length, set: 0, empty: 0, no_trapdoor: 0, unknown: 0 };
   for (const chamber of chambers) counts[pearlChamberStatus(chamber)] += 1;
   for (const element of $$('[data-pearl-count]')) setPearlText(element, formatNumber(counts[element.dataset.pearlCount] || 0));
+  setPearlText($('#pearlChambersSummary'), chambers.length
+    ? `${formatNumber(counts.set)} of ${formatNumber(chambers.length)} hold a pearl. Bots in game check the chambers near them every minute.`
+    : 'What the bots last saw at every saved hatch.');
   const filter = state.pearlChamberFilter || 'all';
   for (const button of $$('[data-pearl-filter]')) {
     const active = button.dataset.pearlFilter === filter;
@@ -12046,7 +12051,7 @@ function renderPearlChambers(chambers = []) {
 }
 
 function renderPearlLoaderRecent(recent = []) {
-  setPearlText($('#pearlLoaderRecentCount'), recent.length ? `last ${formatNumber(recent.length)}` : '');
+  setPearlText($('#pearlLoaderRecentCount'), recent.length ? `How the last ${formatNumber(recent.length)} requests ended.` : 'How the last requests ended.');
   patchPearlRows($('#pearlLoaderRecent'), recent, {
     columns: 3,
     key: item => `${String(item.username).toLowerCase()}|${item.finishedAt}`,

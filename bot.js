@@ -7595,8 +7595,16 @@ async function initializeMultiAccountManager() {
         pearlLoaderFeature?.recordRuntimeEvent(account.id, 'info',
           `${account.displayName}: waited ${(waitedMs / 1000).toFixed(1)} s for a connection slot.`, { waitedMs });
       });
+      let wasConnected = false;
       runtime.on('status', status => {
         refreshObserver();
+        // Shown on the site as "last in game"
+        const connected = status.status === 'connected';
+        if (connected && !wasConnected) {
+          multiAccountRegistry?.repository?.markConnected?.(account.id)
+            .catch(error => console.error(`[Accounts] Could not record the connection of ${account.id}:`, error.message));
+        }
+        wasConnected = connected;
         persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message));
         enqueueManagedFarmWrite('Farm state persistence', () => syncManagedFarmState(
           pool,

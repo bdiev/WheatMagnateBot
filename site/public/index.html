@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=343">
+  <link rel="stylesheet" href="/styles.css?v=344">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -1011,8 +1011,8 @@
       </section>
 
       <section id="tab-pearl-loader" class="tab-panel admin-only" data-panel="pearl-loader" data-pearl-state="offline" hidden>
-        <section class="pearl-box pearl-bar" aria-label="Pearl Loader status">
-          <img class="pearl-bar-icon" src="/items/Ender_Pearl.png" alt="" width="22" height="22">
+        <section class="panel pearl-bar" aria-label="Pearl Loader status">
+          <span class="pearl-bar-icon" aria-hidden="true"><img src="/items/Ender_Pearl.png" alt="" width="24" height="24"></span>
           <span class="pearl-bar-state"><i aria-hidden="true"></i><strong id="pearlLoaderState">-</strong></span>
           <span id="pearlLoaderPlayer" class="pearl-chip" hidden><img id="pearlLoaderPlayerHead" src="" alt="" width="20" height="20"><span id="pearlLoaderPlayerName">-</span></span>
           <ol id="pearlLoaderSteps" class="pearl-dots" aria-label="Request progress">
@@ -1029,17 +1029,17 @@
           <span id="pearlLoaderAccount" class="pearl-bar-meta">No bot has the Pearl Loader role.</span>
         </section>
 
-        <section class="pearl-box pearl-nums" aria-label="Pearl Loader totals">
-          <div class="pearl-num"><strong id="pearlLoaderLoads">-</strong><span id="pearlLoaderLoadsDetail">loads</span></div>
-          <div class="pearl-num"><strong id="pearlLoaderToday">-</strong><span>loads today</span></div>
-          <div class="pearl-num"><strong id="pearlLoaderSuccess">-</strong><span id="pearlLoaderSuccessDetail">success · 30 days</span></div>
-          <div class="pearl-num"><strong id="pearlLoaderAverage">-</strong><span>average load</span></div>
+        <section class="panel pearl-nums" aria-label="Pearl Loader totals">
+          <div class="pearl-num"><span class="stat-label">Loads</span><strong id="pearlLoaderLoads">-</strong><small id="pearlLoaderLoadsDetail">all time</small></div>
+          <div class="pearl-num"><span class="stat-label">Today</span><strong id="pearlLoaderToday">-</strong><small>completed loads</small></div>
+          <div class="pearl-num"><span class="stat-label">Success</span><strong id="pearlLoaderSuccess">-</strong><small id="pearlLoaderSuccessDetail">last 30 days</small></div>
+          <div class="pearl-num"><span class="stat-label">Average load</span><strong id="pearlLoaderAverage">-</strong><small>from request to done</small></div>
         </section>
 
         <div class="pearl-columns">
-          <section class="pearl-box">
-            <div class="pearl-section-title">
-              <h2>Stasis chambers</h2>
+          <section class="panel">
+            <div class="panel-head pearl-head">
+              <div><h2>Stasis Chambers</h2><p id="pearlChambersSummary">What the bots last saw at every saved hatch.</p></div>
               <div id="pearlChamberFilters" class="pearl-tabs" role="group" aria-label="Show chambers">
                 <button type="button" class="active" data-pearl-filter="all" aria-pressed="true">All <span data-pearl-count="all">0</span></button>
                 <button type="button" data-pearl-filter="set" aria-pressed="false">Set <span data-pearl-count="set">0</span></button>
@@ -1055,8 +1055,8 @@
               </table>
             </div>
           </section>
-          <section class="pearl-box">
-            <div class="pearl-section-title"><h2>Recent requests</h2><span id="pearlLoaderRecentCount" class="pearl-muted"></span></div>
+          <section class="panel">
+            <div class="panel-head pearl-head"><div><h2>Recent Requests</h2><p id="pearlLoaderRecentCount">How the last requests ended.</p></div></div>
             <div class="pearl-table-wrap">
               <table class="pearl-table">
                 <thead><tr><th>Player</th><th>Result</th><th>When</th></tr></thead>
@@ -2091,6 +2091,6 @@
     <script src="/player-accent.js?v=3" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=404" defer></script>
+    <script src="/app.js?v=405" defer></script>
   </body>
 </html>

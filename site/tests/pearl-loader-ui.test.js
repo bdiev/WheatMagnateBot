@@ -53,8 +53,10 @@ const pageCode = app.slice(app.indexOf('// Pearl Loader page'), app.indexOf('fun
 assert.doesNotMatch(pageCode,/hatch\.x|hatch\.y|hatch\.z|\.hatch\b/,'the Pearl Loader page never shows coordinates');
 const chamberRender = app.slice(app.indexOf('function renderPearlChambers'), app.indexOf('function renderPearlLoader('));
 assert.match(chamberRender,/patchPearlRows\(\$\('#pearlChambers'\)/,'chamber rows are updated in place, not rebuilt on every refresh');
-assert.match(html,/class="pearl-box pearl-bar"[\s\S]*id="pearlLoaderSteps" class="pearl-dots"[\s\S]*class="pearl-box pearl-nums"/,
+assert.match(html,/class="panel pearl-bar"[\s\S]*id="pearlLoaderSteps" class="pearl-dots"[\s\S]*class="panel pearl-nums"/,
   'the compact layout: one status line, then the numbers in a row');
 assert.match(html,/<tbody id="pearlChambers"><\/tbody>[\s\S]*<tbody id="pearlLoaderRecent"><\/tbody>/,'chambers and requests are tables');
 assert.doesNotMatch(chamberRender,/grid\.innerHTML\s*=/,'rebuilding the grid every refresh made the cards blink');
+assert.match(bot,/connected && !wasConnected[\s\S]*markConnected\?\.\(account\.id\)/,'a managed account records when it gets into the game');
+assert.match(server,/GREATEST\(account\.last_connected_at, runtime\.started_at\) AS last_connected_at/,'the page falls back to the runtime start time');
 console.log('Pearl Loader admin UI tests passed.');
