@@ -16,6 +16,8 @@ const PEARL_COMMAND = /^pearl$/i;
 const CHAMBER_SCAN_RADIUS = 32;
 // A scan older than this no longer answers "pearl"; the loader goes to look
 const CHAMBER_SCAN_MAX_AGE_MS = 24 * 60 * 60_000;
+// After the teleport the loader waits this long for the player's new pearl
+const NEW_PEARL_TIMEOUT_MS = 3 * 60_000;
 const CANCEL_COMMAND = /^cancel$/i;
 // Players waiting while the loader serves someone else: how many, and how long a place is held
 const MAX_QUEUE_LENGTH = 20;
@@ -292,6 +294,10 @@ function createPearlLoaderFeature({
   chamberScanDelayMs = 5_000,
   chamberScanRadius = CHAMBER_SCAN_RADIUS,
   chamberScanMaxAgeMs = CHAMBER_SCAN_MAX_AGE_MS,
+  // After the teleport: how long the loader waits for a new pearl, and how
+  // long one has to stay by the hatch to count as thrown into the chamber
+  newPearlTimeoutMs = NEW_PEARL_TIMEOUT_MS,
+  newPearlSettleMs = 1_500,
   navigationRange = 2.5,
   interactionReach = 4.5,
   goalFactory = (x, y, z, range, bot, reach, block) => new GoalCompositeAll([
@@ -512,8 +518,9 @@ function createPearlLoaderFeature({
   // view, after the entities around it have had time to arrive
   async function leave(job, reason) {
     const bot = job.runtime?.bot;
-    if (bot?.entity) await scanChambers(job, bot);
+    const observations = bot?.entity ? await scanChambers(job, bot) : null;
     await job.runtime?.stop?.(reason).catch(() => {});
+    return observations;
   }
 
   async function waitForLoader(runtime) {
@@ -805,7 +812,11 @@ function createPearlLoaderFeature({
     clearTimer(job.visibilityTimer);
     clearTimer(job.visibilityDeadlineTimer);
     clearTimer(job.scanTimer);
+    clearInterval(job.pearlWaitTimer);
+    clearTimer(job.pearlWaitDeadlineTimer);
     job.scanTimer = null;
+    job.pearlWaitTimer = null;
+    job.pearlWaitDeadlineTimer = null;
     job.readyTimer = null;
     job.visibilityTimer = null;
     job.visibilityDeadlineTimer = null;
@@ -842,15 +853,20 @@ function createPearlLoaderFeature({
     advanceQueue();
   }
 
-  async function finishJob(job) {
+  async function finishJob(job, { newPearl = false } = {}) {
     if (!job || activeJob !== job) return;
     clearJobTimers(job);
     job.runtime?.assignTask?.('idle');
     activeJob = null;
-    note(job, 'info', 'Trapdoor opened; hatch cycle complete.');
-    await leave(job, 'Pearl Loader request complete');
-    // The pearl was used up: its chamber stays empty until a new one is thrown
-    recordScans([{ ...job.hatch, present:false }]);
+    note(job, 'info', newPearl
+      ? 'New ender pearl is in the chamber; hatch cycle complete.'
+      : 'No new ender pearl was thrown; hatch cycle complete.');
+    const observations = await leave(job, 'Pearl Loader request complete');
+    // The old pearl was used up: the chamber holds a pearl only when a new one
+    // was seen settled in it (or seen by the last scan just before leaving)
+    const seenOnLeave = observations?.some(item =>
+      item.present && item.x === job.hatch.x && item.y === job.hatch.y && item.z === job.hatch.z);
+    recordScans([{ ...job.hatch, present:Boolean(newPearl || seenOnLeave) }]);
     writeJobLog(job, 'info', `Pearl Loader completed the hatch cycle for ${job.username}.`, { outcome:'completed' });
     advanceQueue();
   }
@@ -983,7 +999,7 @@ function createPearlLoaderFeature({
       note(job, 'info', 'Player entered view; opening the trapdoor.');
       sendPrivateWhisper(bot, job.username, pickPearlReloadReminder());
       setHatchOpen(bot, job.hatch, true)
-        .then(() => finishJob(job))
+        .then(() => waitForNewPearl(job))
         .catch(error => failJob(job, error));
     };
     job.visibilityTimer = setInterval(check, visibilityPollMs);
@@ -995,6 +1011,49 @@ function createPearlLoaderFeature({
         .finally(() => failJob(job, timeoutError('The player did not enter Pearl Loader view in time.'), { notify:false }));
     }, visibilityTimeoutMs);
     job.visibilityDeadlineTimer?.unref?.();
+    check();
+  }
+
+  function pearlIdsNear(bot, hatch) {
+    const center = new Vec3(hatch.x + 0.5, hatch.y + 0.5, hatch.z + 0.5);
+    return Object.entries(bot?.entities || {})
+      .filter(([, entity]) => isEnderPearlEntity(entity) && entity?.position && center.distanceTo(entity.position) <= PEARL_SEARCH_RADIUS)
+      .map(([key, entity]) => String(entity.id ?? key));
+  }
+
+  // After the teleport the loader stays until the player throws a new pearl
+  // into the chamber, so the chamber scan knows it is set again. A pearl
+  // counts once it has stayed by the hatch for a moment (not one flying past).
+  function waitForNewPearl(job) {
+    if (activeJob !== job) return;
+    clearTimer(job.visibilityDeadlineTimer);
+    job.visibilityDeadlineTimer = null;
+    job.stage = 'awaiting_new_pearl';
+    note(job, 'info', 'Trapdoor opened; waiting for the player to throw a new pearl.');
+    const known = new Set(pearlIdsNear(job.runtime?.bot, job.hatch));
+    const firstSeen = new Map();
+    const check = () => {
+      if (activeJob !== job || job.stage !== 'awaiting_new_pearl') return;
+      const bot = job.runtime?.bot;
+      if (!bot?.entity) return;
+      const now = Date.now();
+      const near = new Set(pearlIdsNear(bot, job.hatch).filter(id => !known.has(id)));
+      for (const id of firstSeen.keys()) if (!near.has(id)) firstSeen.delete(id);
+      for (const id of near) {
+        if (!firstSeen.has(id)) firstSeen.set(id, now);
+        if (now - firstSeen.get(id) >= newPearlSettleMs) {
+          void finishJob(job, { newPearl:true });
+          return;
+        }
+      }
+    };
+    job.pearlWaitTimer = setInterval(check, visibilityPollMs);
+    job.pearlWaitTimer?.unref?.();
+    job.pearlWaitDeadlineTimer = setTimer(() => {
+      job.pearlWaitDeadlineTimer = null;
+      void finishJob(job, { newPearl:false });
+    }, newPearlTimeoutMs);
+    job.pearlWaitDeadlineTimer?.unref?.();
     check();
   }
 
@@ -1022,6 +1081,8 @@ function createPearlLoaderFeature({
       visibilityDeadlineTimer: null,
       aimPromise: null,
       scanTimer: null,
+      pearlWaitTimer: null,
+      pearlWaitDeadlineTimer: null,
       cancelRequested: false
     };
     activeJob = job;
@@ -1153,6 +1214,12 @@ function createPearlLoaderFeature({
 
   async function handleLoaderWhisper(accountId, username, message) {
     const job = activeJob;
+    // Waiting for the new pearl: "cancel" lets the loader go without it
+    if (job?.stage === 'awaiting_new_pearl' && job.accountId === accountId &&
+        String(username || '').toLowerCase() === job.usernameKey && CANCEL_COMMAND.test(cleanWhisperText(message))) {
+      await finishJob(job, { newPearl:false });
+      return true;
+    }
     if (!job || job.accountId !== accountId || !['aiming','awaiting_yes'].includes(job.stage)) return false;
     if (String(username || '').toLowerCase() !== job.usernameKey) return false;
     if (CANCEL_COMMAND.test(cleanWhisperText(message))) {

@@ -97,10 +97,12 @@ async function testCompleteCycle() {
   let registryLoads = 0;
   const primaryReplies = [];
   const recordedRequests = [];
+  const recordedScans = [];
   feature = createPearlLoaderFeature({
     log:(level,message,details) => logs.push({ level,message,details }),
     pool:{ query:async (sql,params) => {
       if (/INSERT INTO pearl_loader_requests/.test(sql)) recordedRequests.push(params);
+      if (/INSERT INTO pearl_chamber_scans/.test(sql)) recordedScans.push(params);
       return {rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]};
     } },
     getRegistry:() => ({load:async () => { registryLoads += 1; },list:() => [loaderAccount]}),
@@ -111,7 +113,8 @@ async function testCompleteCycle() {
     navigationSettleMs:1,
     interactionSettleMs:1,
     readyTimeoutMs:1_000,
-    visibilityTimeoutMs:1_000
+    visibilityTimeoutMs:1_000,
+    newPearlSettleMs:25
   });
 
   assert.equal(await feature.handlePrimaryWhisper('bdiev_','  LOAD  '),true);
@@ -158,7 +161,20 @@ async function testCompleteCycle() {
   assert.ok(chats.every(message => message.startsWith('/w bdiev_ ')),'Pearl Loader must never write feature messages to public chat');
   await delay(50);
   assert.equal(open,true,'the trapdoor opens after the configured delay once the player is visible');
+  assert.equal(feature.getStatus().stage,'awaiting_new_pearl','after the teleport the loader stays for the new pearl');
+  assert.equal(stopped,0);
+  // A pearl flying past and gone again does not count
+  bot.entities.passing={name:'ender_pearl',position:new Vec3(11,65,-20)};
+  await delay(10);
+  delete bot.entities.passing;
+  await delay(30);
+  assert.equal(stopped,0,'a pearl that did not stay in the chamber is not the new pearl');
+  bot.entities.fresh={name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)};
+  await delay(60);
   assert.deepEqual(feature.getStatus(),{active:false});
+  await delay(0);
+  const savedScans = recordedScans.map(params => params[3]).at(-1);
+  assert.deepEqual(savedScans,[true],'the chamber is remembered as set again once the new pearl settled');
   assert.deepEqual(taskStates,['pearl_loader','idle']);
   assert.equal(stopped,1,'the Loader must disconnect after completing the request');
   assert.equal(runtime.stopReason,'Pearl Loader request complete');
