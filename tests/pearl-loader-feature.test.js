@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, isReadyConfirmation, PEARL_RELOAD_REMINDERS, pickPearlReloadReminder, pickReadyPrompt, READY_PROMPTS, READY_TIMEOUT_MS, trapdoorInteraction } = require('../features/pearlLoader');
+const { CHAMBER_SCAN_MAX_AGE_MS, createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, isReadyConfirmation, PEARL_RELOAD_REMINDERS, pickPearlReloadReminder, pickReadyPrompt, READY_PROMPTS, READY_TIMEOUT_MS, trapdoorInteraction } = require('../features/pearlLoader');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
 
@@ -566,7 +566,7 @@ async function testPearlCheckRecheckAndWhisperEcho() {
   });
 
   await feature.handlePrimaryWhisper('bdiev_','pearl');
-  assert.equal(looks,3,'the loader looks again before saying the pearl is not set');
+  assert.equal(looks,4,'the loader looks again before saying the pearl is not set, and scans the chambers before leaving');
   assert.deepEqual(chats,Array(2).fill('/w bdiev_ Your ender pearl is set. Whisper "load" when you need it.'),
     'a whisper the server did not echo is sent once more');
   assert.equal(order.at(-1),'stop','the loader leaves only after the whisper went out');
@@ -827,6 +827,98 @@ async function testLoaderRuntimeWhispers() {
   await runtime.destroy();
 }
 
+// A small in-memory stand-in for the tables the chamber scan uses
+function scanPool(players) {
+  const scans = new Map();
+  return {
+    scans,
+    async query(sql, params = []) {
+      if (/INSERT INTO pearl_chamber_scans/.test(sql)) {
+        const [xs, ys, zs, present, checkedAt] = params;
+        xs.forEach((x, index) => scans.set(`${x} ${ys[index]} ${zs[index]}`, { pearl_present:present[index], checked_at:checkedAt }));
+        return { rows:[] };
+      }
+      if (/FROM pearl_chamber_scans/.test(sql)) {
+        const row = scans.get(params.join(' '));
+        return { rows:row ? [row] : [] };
+      }
+      if (/SELECT DISTINCT pearl_hatch_x/.test(sql)) return { rows:players };
+      if (/FROM player_activity pa/.test(sql)) {
+        return { rows:players.filter(player => player.username.toLowerCase() === String(params[0]).toLowerCase()) };
+      }
+      return { rows:[] };
+    }
+  };
+}
+
+// The loader looks at every chamber it can see while in game, and "pearl" is
+// then answered by the primary without sending the loader out again.
+async function testChamberScanAnswersPearl() {
+  const players = [
+    { username:'bdiev_', pearl_hatch_x:10, pearl_hatch_y:64, pearl_hatch_z:-20 },
+    { username:'Alice', pearl_hatch_x:14, pearl_hatch_y:64, pearl_hatch_z:-20 },
+    { username:'Bob', pearl_hatch_x:18, pearl_hatch_y:64, pearl_hatch_z:-20 },
+    { username:'FarAway', pearl_hatch_x:500, pearl_hatch_y:64, pearl_hatch_z:-20 }
+  ];
+  const pool = scanPool(players);
+  const bot = {
+    entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+    entities:{
+      own:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)},
+      alice:{name:'ender_pearl',position:new Vec3(14.5,64.5,-19.5)}
+    },
+    world:{raycast:() => ({position:new Vec3(10,64,-20)})},
+    pathfinder:{setMovements() {},async goto() {}},
+    async waitForChunksToLoad() {},
+    blockAt:position => position.x === 500 ? null
+      : ({name:'oak_trapdoor',position,getProperties:() => ({open:true})}),
+    canSeeBlock:() => true,
+    chat() {}
+  };
+  const runtime = new EventEmitter();
+  runtime.bot = bot;
+  runtime.assignTask = () => {};
+  let starts = 0;
+  runtime.stop = async () => { runtime.bot = null; };
+  const replies = [];
+  const logs = [];
+  const feature = createPearlLoaderFeature({
+    pool,
+    log:(level,message,details) => logs.push({level,message,details}),
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => { starts += 1; runtime.bot = bot; }}),
+    sendPrimaryWhisper:async (username,message) => replies.push({username,message}),
+    movementsFactory:() => ({}),
+    whisperFlushMs:1
+  });
+
+  await feature.handlePrimaryWhisper('bdiev_','check');
+  assert.equal(starts,1);
+  assert.deepEqual([...pool.scans.entries()].map(([key,row]) => [key,row.pearl_present]).sort(),[
+    ['10 64 -20',true],['14 64 -20',true],['18 64 -20',false]
+  ],'every chamber in view is remembered, an unloaded one far away is left out');
+  assert.ok(logs[0].details.timeline.some(entry => entry.message === 'Scanned the pearl chambers in view.' &&
+    entry.missing.includes('18 64 -20')));
+
+  await feature.handlePrimaryWhisper('Bob','pearl');
+  await feature.handlePrimaryWhisper('alice','PEARL');
+  assert.equal(starts,1,'"pearl" is answered from the scan; the loader does not connect');
+  assert.deepEqual(replies,[
+    {username:'Bob',message:'Your ender pearl is not set (checked less than a minute ago). Whisper "check" to have it looked at now.'},
+    {username:'alice',message:'Your ender pearl is set (checked less than a minute ago). Whisper "load" when you need it.'}
+  ]);
+  assert.equal(logs.at(-1).details.fromScan,true);
+
+  await feature.handlePrimaryWhisper('FarAway','pearl');
+  assert.equal(starts,2,'a chamber never scanned is looked at by the loader');
+
+  // An old scan no longer answers
+  pool.scans.set('18 64 -20',{pearl_present:false,checked_at:new Date(Date.now() - CHAMBER_SCAN_MAX_AGE_MS - 1000).toISOString()});
+  await feature.handlePrimaryWhisper('Bob','pearl');
+  assert.equal(starts,3,'a stale scan sends the loader out again');
+  feature.dispose();
+}
+
 (async () => {
   testTrapdoorInteractionFaces();
   testNavigationUsesRealTrapdoorShape();
@@ -849,5 +941,6 @@ async function testLoaderRuntimeWhispers() {
   testReadyPrompts();
   testPearlReloadReminders();
   await testLoaderRuntimeWhispers();
+  await testChamberScanAnswersPearl();
   console.log('Pearl Loader feature tests passed.');
 })().catch(error => { console.error(error); process.exitCode=1; });

@@ -8,7 +8,14 @@ const { nextInteractionSequence } = require('../obsidianFarm/interaction-sequenc
 const PEARL_LOADER_ROLE = 'pearl_loader';
 const LOAD_COMMAND = /^load$/i;
 // Only looks whether the pearl is in its stasis chamber; the trapdoor is not touched
-const CHECK_COMMAND = /^(?:check|pearl)$/i;
+const CHECK_COMMAND = /^check$/i;
+// Answered from the last chamber scan when there is a recent one, else as "check"
+const PEARL_COMMAND = /^pearl$/i;
+// Chambers this close to the loader are looked at while it is in game; pearl
+// entities farther away may not be sent by the server, so they are left alone
+const CHAMBER_SCAN_RADIUS = 32;
+// A scan older than this no longer answers "pearl"; the loader goes to look
+const CHAMBER_SCAN_MAX_AGE_MS = 24 * 60 * 60_000;
 const CANCEL_COMMAND = /^cancel$/i;
 // Players waiting while the loader serves someone else: how many, and how long a place is held
 const MAX_QUEUE_LENGTH = 20;
@@ -281,6 +288,10 @@ function createPearlLoaderFeature({
   whisperEchoTimeoutMs = 3_000,
   whisperFlushMs = 500,
   maxQueueLength = MAX_QUEUE_LENGTH,
+  // Entities arrive a few seconds after joining; the chambers are looked at then
+  chamberScanDelayMs = 5_000,
+  chamberScanRadius = CHAMBER_SCAN_RADIUS,
+  chamberScanMaxAgeMs = CHAMBER_SCAN_MAX_AGE_MS,
   navigationRange = 2.5,
   interactionReach = 4.5,
   goalFactory = (x, y, z, range, bot, reach, block) => new GoalCompositeAll([
@@ -386,6 +397,123 @@ function createPearlLoaderFeature({
       y: Number(player.pearl_hatch_y),
       z: Number(player.pearl_hatch_z)
     };
+  }
+
+  // Chamber scans: what the loader saw at each configured trapdoor. Writes go
+  // one after another so that a later observation is never overwritten.
+  let scanWrites = Promise.resolve();
+
+  function recordScans(observations) {
+    if (!observations.length) return scanWrites;
+    const checkedAt = new Date().toISOString();
+    scanWrites = scanWrites.then(() => pool.query(`
+      INSERT INTO pearl_chamber_scans (hatch_x,hatch_y,hatch_z,pearl_present,checked_at)
+      SELECT x,y,z,present,$5::timestamptz
+      FROM UNNEST($1::int[],$2::int[],$3::int[],$4::boolean[]) AS scan(x,y,z,present)
+      ON CONFLICT (hatch_x,hatch_y,hatch_z) DO UPDATE
+        SET pearl_present=EXCLUDED.pearl_present,checked_at=EXCLUDED.checked_at
+    `, [
+      observations.map(item => item.x),
+      observations.map(item => item.y),
+      observations.map(item => item.z),
+      observations.map(item => Boolean(item.present)),
+      checkedAt
+    ])).catch(error => console.error('[PearlLoader] Could not save the chamber scan:', error.message));
+    return scanWrites;
+  }
+
+  async function loadAllHatches() {
+    const result = await pool.query(`
+      SELECT DISTINCT pearl_hatch_x,pearl_hatch_y,pearl_hatch_z
+      FROM player_activity
+      WHERE pearl_hatch_x IS NOT NULL AND pearl_hatch_y IS NOT NULL AND pearl_hatch_z IS NOT NULL
+    `);
+    const seen = new Set();
+    return (result?.rows || [])
+      .map(row => ({ x:Number(row.pearl_hatch_x), y:Number(row.pearl_hatch_y), z:Number(row.pearl_hatch_z) }))
+      .filter(hatch => {
+        const key = `${hatch.x} ${hatch.y} ${hatch.z}`;
+        if (![hatch.x, hatch.y, hatch.z].every(Number.isInteger) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  // Looks at every configured chamber close enough to be seen from where the
+  // loader stands; a chamber whose chunk is not loaded is skipped.
+  async function scanChambers(job, bot) {
+    if (!bot?.entity?.position) return null;
+    try {
+      const hatches = await loadAllHatches();
+      const observations = [];
+      for (const hatch of hatches) {
+        const center = new Vec3(hatch.x + 0.5, hatch.y + 0.5, hatch.z + 0.5);
+        if (bot.entity.position.distanceTo(center) > chamberScanRadius) continue;
+        if (!isTrapdoor(await blockAtHatch(bot, hatch))) continue;
+        observations.push({ ...hatch, present:hasEnderPearlNear(bot, hatch) });
+      }
+      note(job, 'info', 'Scanned the pearl chambers in view.', {
+        chambers:hatches.length,
+        scanned:observations.length,
+        missing:observations.filter(item => !item.present).map(item => `${item.x} ${item.y} ${item.z}`)
+      });
+      await recordScans(observations);
+      return observations;
+    } catch (error) {
+      note(job, 'warn', 'Could not scan the pearl chambers.', { error:error?.message || String(error) });
+      return null;
+    }
+  }
+
+  // The last scan of this chamber, or null when there is no recent one
+  async function loadRecentScan(hatch) {
+    await scanWrites;
+    const result = await pool.query(`
+      SELECT pearl_present,checked_at FROM pearl_chamber_scans
+      WHERE hatch_x=$1 AND hatch_y=$2 AND hatch_z=$3
+    `, [hatch.x, hatch.y, hatch.z]);
+    const row = result?.rows?.[0];
+    if (!row || typeof row.pearl_present !== 'boolean' || !row.checked_at) return null;
+    const checkedAt = new Date(row.checked_at);
+    const age = Date.now() - checkedAt.getTime();
+    if (!Number.isFinite(age) || age > chamberScanMaxAgeMs) return null;
+    return { present:row.pearl_present, checkedAt, age:Math.max(0, age) };
+  }
+
+  function agoText(ms) {
+    const minutes = Math.floor(ms / 60_000);
+    if (minutes < 1) return 'less than a minute ago';
+    if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  }
+
+  // "pearl": the primary answers from the last scan and the loader stays
+  // offline; without a recent scan the loader goes to look, as for "check"
+  async function answerFromScan(username) {
+    const hatch = await loadPlayerHatch(username);
+    if (!hatch) return false;
+    const scan = await loadRecentScan(hatch);
+    if (!scan) return false;
+    await tellPrimary(username, scan.present
+      ? `Your ender pearl is set (checked ${agoText(scan.age)}). Whisper "load" when you need it.`
+      : `Your ender pearl is not set (checked ${agoText(scan.age)}). Whisper "check" to have it looked at now.`);
+    log('info', `Pearl Loader answered the pearl of ${hatch.username} from its last scan: ${scan.present ? 'set' : 'not set'}.`, {
+      username:hatch.username,
+      hatch:{ x:hatch.x, y:hatch.y, z:hatch.z },
+      pearlSet:scan.present,
+      checkedAt:scan.checkedAt.toISOString(),
+      fromScan:true
+    });
+    return true;
+  }
+
+  // Before the loader leaves it looks at the chambers once more: the freshest
+  // view, after the entities around it have had time to arrive
+  async function leave(job, reason) {
+    const bot = job.runtime?.bot;
+    if (bot?.entity) await scanChambers(job, bot);
+    await job.runtime?.stop?.(reason).catch(() => {});
   }
 
   async function waitForLoader(runtime) {
@@ -676,6 +804,8 @@ function createPearlLoaderFeature({
     clearTimer(job.readyTimer);
     clearTimer(job.visibilityTimer);
     clearTimer(job.visibilityDeadlineTimer);
+    clearTimer(job.scanTimer);
+    job.scanTimer = null;
     job.readyTimer = null;
     job.visibilityTimer = null;
     job.visibilityDeadlineTimer = null;
@@ -691,7 +821,7 @@ function createPearlLoaderFeature({
     job.runtime?.assignTask?.('idle');
     activeJob = null;
     note(job, 'error', 'Request failed.', { stage:job.stage, error:error?.message || String(error) });
-    await job.runtime?.stop?.('Pearl Loader request ended').catch(() => {});
+    await leave(job, 'Pearl Loader request ended');
     writeJobLog(job, 'error', `Pearl Loader request for ${job.username} failed.`, {
       outcome:'failed',
       stage: job.stage,
@@ -707,7 +837,7 @@ function createPearlLoaderFeature({
     job.runtime?.assignTask?.('idle');
     activeJob = null;
     note(job, 'info', 'Request cancelled by the player.', { stage:job.stage });
-    await job.runtime?.stop?.('Pearl Loader request cancelled').catch(() => {});
+    await leave(job, 'Pearl Loader request cancelled');
     writeJobLog(job, 'info', `Pearl Loader request for ${job.username} was cancelled.`, { outcome:'cancelled', stage:job.stage });
     advanceQueue();
   }
@@ -718,7 +848,9 @@ function createPearlLoaderFeature({
     job.runtime?.assignTask?.('idle');
     activeJob = null;
     note(job, 'info', 'Trapdoor opened; hatch cycle complete.');
-    await job.runtime?.stop?.('Pearl Loader request complete').catch(() => {});
+    await leave(job, 'Pearl Loader request complete');
+    // The pearl was used up: its chamber stays empty until a new one is thrown
+    recordScans([{ ...job.hatch, present:false }]);
     writeJobLog(job, 'info', `Pearl Loader completed the hatch cycle for ${job.username}.`, { outcome:'completed' });
     advanceQueue();
   }
@@ -729,7 +861,7 @@ function createPearlLoaderFeature({
     job.runtime?.assignTask?.('idle');
     activeJob = null;
     note(job, 'info', pearlSet ? 'Ender pearl found near the hatch.' : 'No ender pearl found near the hatch.', { radius:PEARL_SEARCH_RADIUS });
-    await job.runtime?.stop?.('Pearl Loader check complete').catch(() => {});
+    await leave(job, 'Pearl Loader check complete');
     // A check is not a load, so it is left out of the Control center counter
     writeJobLog(job, 'info', `Pearl Loader checked the pearl of ${job.username}: ${pearlSet ? 'set' : 'not set'}.`, {
       check:true,
@@ -745,7 +877,7 @@ function createPearlLoaderFeature({
     job.runtime?.assignTask?.('idle');
     activeJob = null;
     note(job, 'info', 'No ender pearl found near the hatch.', { radius:PEARL_SEARCH_RADIUS });
-    await job.runtime?.stop?.('Pearl Loader ender pearl is not set').catch(() => {});
+    await leave(job, 'Pearl Loader ender pearl is not set');
     writeJobLog(job, 'info', `Pearl Loader found no ender pearl for ${job.username}.`, {
       outcome:'no_pearl',
       radius:PEARL_SEARCH_RADIUS
@@ -889,6 +1021,7 @@ function createPearlLoaderFeature({
       visibilityTimer: null,
       visibilityDeadlineTimer: null,
       aimPromise: null,
+      scanTimer: null,
       cancelRequested: false
     };
     activeJob = job;
@@ -929,6 +1062,12 @@ function createPearlLoaderFeature({
       const loaderBot = await waitForLoader(runtime);
       if (activeJob !== job) return;
       runtime.assignTask?.('pearl_loader');
+      // Every time the loader is in game it looks at all chambers it can see
+      job.scanTimer = setTimer(() => {
+        job.scanTimer = null;
+        if (activeJob === job && runtime.bot === loaderBot) void scanChambers(job, loaderBot);
+      }, chamberScanDelayMs);
+      job.scanTimer?.unref?.();
       job.onRuntimeEnd = reason => failJob(job, new Error(`Pearl Loader disconnected: ${String(reason || 'connection closed')}`));
       job.onRuntimeStatus = status => {
         if (['stopped','paused','error'].includes(String(status?.status || ''))) {
@@ -944,6 +1083,7 @@ function createPearlLoaderFeature({
       job.stage = 'checking_pearl';
       const pearlSet = await findPearl(job, loaderBot, hatch);
       if (activeJob !== job) return;
+      recordScans([{ ...hatch, present:pearlSet }]);
       if (mode === 'check') {
         await sendLastWhisper(job, loaderBot, pearlSet
           ? 'Your ender pearl is set. Whisper "load" when you need it.'
@@ -985,16 +1125,28 @@ function createPearlLoaderFeature({
   // reply: sends a whisper back from the bot that got this one (the primary when left out)
   async function handlePrimaryWhisper(username, message, { reply = null } = {}) {
     const text = cleanWhisperText(message);
-    if (CANCEL_COMMAND.test(text) || LOAD_COMMAND.test(text) || CHECK_COMMAND.test(text)) {
+    if (CANCEL_COMMAND.test(text) || LOAD_COMMAND.test(text) || CHECK_COMMAND.test(text) || PEARL_COMMAND.test(text)) {
       const key = String(username || '').toLowerCase();
       if (typeof reply === 'function') replyRoutes.set(key, reply);
       else replyRoutes.delete(key);
     }
     // "cancel" is only taken from someone queued or being served; anyone else's goes on as a whisper
     if (CANCEL_COMMAND.test(text)) return cancel(username);
-    const mode = LOAD_COMMAND.test(text) ? 'load' : CHECK_COMMAND.test(text) ? 'check' : null;
+    const mode = LOAD_COMMAND.test(text) ? 'load'
+      : CHECK_COMMAND.test(text) ? 'check'
+      : PEARL_COMMAND.test(text) ? 'pearl'
+      : null;
     if (!mode) return false;
-    try { await begin(username, mode); }
+    try {
+      if (mode !== 'pearl') await begin(username, mode);
+      else {
+        const answered = await answerFromScan(username).catch(error => {
+          console.error('[PearlLoader] Could not read the chamber scan:', error.message);
+          return false;
+        });
+        if (!answered) await begin(username, 'check');
+      }
+    }
     catch (error) { await tellPrimary(username, `Pearl Loader unavailable: ${error?.message || String(error)}`).catch(() => {}); }
     return true;
   }
@@ -1074,6 +1226,8 @@ function createPearlLoaderFeature({
 }
 
 module.exports = {
+  CHAMBER_SCAN_MAX_AGE_MS,
+  CHAMBER_SCAN_RADIUS,
   PEARL_LOADER_ROLE,
   QUEUE_TIMEOUT_MS,
   PEARL_RELOAD_REMINDERS,
