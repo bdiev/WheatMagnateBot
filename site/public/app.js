@@ -12008,9 +12008,16 @@ function pearlChamberChecked(chamber) {
   const status = pearlChamberStatus(chamber);
   if (status === 'unknown') return 'not seen yet';
   const ago = formatAgo(chamber.checkedAt);
+  // The status column already says "No trapdoor": only the block found there
   return status === 'no_trapdoor'
-    ? `block is ${chamber.blockName ? chamber.blockName.replace(/_/g, ' ') : 'not a trapdoor'} · ${ago}`
+    ? `${chamber.blockName ? chamber.blockName.replace(/_/g, ' ') : 'other block'} · ${ago}`
     : ago;
+}
+
+function pearlChamberCheckedTitle(chamber) {
+  const status = pearlChamberStatus(chamber);
+  if (status !== 'no_trapdoor') return pearlChamberChecked(chamber);
+  return `The block at the saved coordinates is ${chamber.blockName ? chamber.blockName.replace(/_/g, ' ') : 'not a trapdoor'}, checked ${formatAgo(chamber.checkedAt)}`;
 }
 
 function renderPearlChambers(chambers = []) {
@@ -12033,7 +12040,7 @@ function renderPearlChambers(chambers = []) {
     create: chamber => {
       const row = document.createElement('tr');
       row.innerHTML = `<td>${pearlPlayerCell(chamber.username, chamber.uuid)}</td>`
-        + '<td><span class="pearl-status"></span></td><td class="pearl-muted"></td><td><i class="pearl-online"></i></td>';
+        + '<td><span class="pearl-status"></span></td><td class="pearl-muted pearl-one-line"></td><td><i class="pearl-online"></i></td>';
       return row;
     },
     update: (row, chamber) => {
@@ -12042,6 +12049,7 @@ function renderPearlChambers(chambers = []) {
       setPearlAttribute(badge, 'class', `pearl-status is-${status}`);
       setPearlText(badge, PEARL_CHAMBER_LABELS[status]);
       setPearlText(row.children[2], pearlChamberChecked(chamber));
+      setPearlAttribute(row.children[2], 'title', pearlChamberCheckedTitle(chamber));
       const online = row.querySelector('.pearl-online');
       online.classList.toggle('is-online', Boolean(chamber.isOnline));
       setPearlAttribute(online, 'title', chamber.isOnline ? 'Online' : 'Offline');

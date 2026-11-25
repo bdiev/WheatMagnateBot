@@ -88,4 +88,7 @@ assert.match(app,/delete tab\.dataset\.pearlLoading;/,'the skeleton goes once th
     'on phones the five chamber filters stay in one row without scrolling');
   assert.match(phone,/\.pearl-filter-long \{ display: none; \}\s*#tab-pearl-loader \.pearl-filter-short \{ display: inline; \}/,'phones use the short labels');
 }
+assert.match(css(),/\.pearl-table td\.pearl-one-line \{ overflow: hidden; white-space: nowrap; text-overflow: ellipsis;/,
+  'on phones the Checked cell stays on one line');
+assert.match(app,/: 'other block'\} · $\{ago\}/,'a wrong hatch shows only the block found there and when');
 console.log('Pearl Loader admin UI tests passed.');
