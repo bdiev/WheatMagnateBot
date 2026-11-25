@@ -17828,3 +17828,54 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 @media (prefers-reduced-motion: reduce) {
   #tab-pearl-loader * { animation: none !important; transition: none !important; }
 }
+
+/* Navigation menu: an item icon for every section, and on phones a two-column
+   grid so the whole menu fits on one screen. Order and hidden sections from
+   Settings > Navigation still apply, since only the buttons are styled. */
+.tab-nav .tab-button { justify-content: flex-start; gap: 10px; }
+.tab-nav .tab-button::before {
+  content: "";
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background: var(--nav-icon, none) center / contain no-repeat;
+  image-rendering: pixelated;
+}
+.tab-nav .tab-button .notification-badge { margin-left: auto; }
+.tab-nav .tab-button.active::before { filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, .35)); }
+.tab-button[data-tab="chat"] { --nav-icon: url("/items/Oak_Sign.png"); }
+.tab-button[data-tab="bot"] { --nav-icon: url("/items/Armor_Stand.png"); }
+.tab-button[data-tab="kill-aura"] { --nav-icon: url("/items/Diamond_Sword.png"); }
+.tab-button[data-tab="obsidian"] { --nav-icon: url("/items/Obsidian.png"); }
+.tab-button[data-tab="stone-miner"] { --nav-icon: url("/items/Stone_Pickaxe.png"); }
+.tab-button[data-tab="trader"] { --nav-icon: url("/items/Emerald.png"); }
+.tab-button[data-tab="pearl-loader"] { --nav-icon: url("/items/Ender_Pearl.png"); }
+.tab-button[data-tab="server"] { --nav-icon: url("/items/Beacon.png"); }
+.tab-button[data-tab="players"] { --nav-icon: url("/items/Totem_Of_Undying.png"); }
+.tab-button[data-tab="area-explorer"] { --nav-icon: url("/items/Filled_Map.png"); }
+.tab-nav .requests-nav-link { --nav-icon: url("/items/Paper.png"); }
+.tab-button[data-tab="settings"] { --nav-icon: url("/items/Comparator.png"); }
+.tab-button[data-tab="notifications"] { --nav-icon: url("/items/Bell.png"); }
+.tab-button[data-tab="child-ai"] { --nav-icon: url("/items/Enchanted_Book.png"); }
+.tab-button[data-tab="admin"] { --nav-icon: url("/items/Netherite_Ingot.png"); }
+
+@media (max-width: 700px) {
+  .tab-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: calc(100dvh - 150px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .tab-nav .tab-button {
+    min-height: 44px;
+    padding: 6px 10px;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 1.15;
+    white-space: normal;
+    text-align: left;
+  }
+
+  .tab-nav .tab-button::before { width: 18px; height: 18px; }
+}
