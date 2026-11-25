@@ -90,5 +90,5 @@ assert.match(app,/delete tab\.dataset\.pearlLoading;/,'the skeleton goes once th
 }
 assert.match(css(),/\.pearl-table td\.pearl-one-line \{ overflow: hidden; white-space: nowrap; text-overflow: ellipsis;/,
   'on phones the Checked cell stays on one line');
-assert.match(app,/: 'other block'\} · $\{ago\}/,'a wrong hatch shows only the block found there and when');
+assert.match(app,/: 'other block'\} · \$\{ago\}/,'a wrong hatch shows only the block found there and when');
 console.log('Pearl Loader admin UI tests passed.');
