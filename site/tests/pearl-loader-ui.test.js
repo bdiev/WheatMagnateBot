@@ -84,6 +84,8 @@ assert.match(app,/delete tab\.dataset\.pearlLoading;/,'the skeleton goes once th
   const phone = css().slice(css().indexOf('/* Phones: everything fits the screen width'));
   assert.match(phone,/\.pearl-table-wrap \{ overflow-x: hidden; \}/,'on phones the tables do not scroll sideways');
   assert.match(phone,/\.pearl-table \{ table-layout: fixed; \}/,'on phones the table columns share the screen width');
-  assert.match(phone,/\.pearl-filters \{\s*display: grid;[\s\S]*?overflow: visible;/,'on phones the chamber filters wrap instead of scrolling');
+  assert.match(phone,/\.pearl-filters \{\s*display: grid;\s*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);\s*overflow: visible;/,
+    'on phones the five chamber filters stay in one row without scrolling');
+  assert.match(phone,/\.pearl-filter-long \{ display: none; \}\s*#tab-pearl-loader \.pearl-filter-short \{ display: inline; \}/,'phones use the short labels');
 }
 console.log('Pearl Loader admin UI tests passed.');

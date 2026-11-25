@@ -17791,6 +17791,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   font-variant-numeric: tabular-nums;
 }
 
+#tab-pearl-loader .pearl-filter-short { display: none; }
+
 #tab-pearl-loader .pearl-filters .chart-range-button.active .pearl-filter-count { background: rgb(0 0 0 / .18); }
 
 #tab-pearl-loader .pearl-table-wrap { max-height: 520px; overflow: auto; border-top: 2px solid var(--line-soft); }
@@ -17895,13 +17897,24 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 
 /* Phones: everything fits the screen width, nothing scrolls sideways */
 @media (max-width: 640px) {
+  /* One row of five: a short label over its count */
   #tab-pearl-loader .pearl-filters {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     overflow: visible;
   }
 
-  #tab-pearl-loader .pearl-filters .chart-range-button { padding: 0 4px; font-size: 11px; gap: 4px; }
+  #tab-pearl-loader .pearl-filters .chart-range-button {
+    flex-direction: column;
+    gap: 2px;
+    min-height: 44px;
+    padding: 4px 2px;
+    font-size: 11px;
+    line-height: 1.1;
+  }
+
+  #tab-pearl-loader .pearl-filter-long { display: none; }
+  #tab-pearl-loader .pearl-filter-short { display: inline; }
 
   #tab-pearl-loader .pearl-table-wrap { overflow-x: hidden; }
   #tab-pearl-loader .pearl-table { table-layout: fixed; }
