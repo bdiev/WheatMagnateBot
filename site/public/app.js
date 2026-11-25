@@ -11896,12 +11896,12 @@ function renderPearlLoaderHero(data) {
     warm: 'In game',
     active: check ? 'Checking a pearl' : 'Loading a pearl'
   }[view];
-  const elapsed = live.startedAt ? ` · ${formatDurationMs(Date.now() - new Date(live.startedAt).getTime())}` : '';
+  const elapsedMs = live.startedAt ? Date.now() - new Date(live.startedAt).getTime() : NaN;
   $('#pearlLoaderStatus').textContent = {
     unassigned: 'Give one bot the Pearl Loader role in its account settings.',
     offline: 'Waits offline until a player whispers "load", "check" or "pearl". "pearl" is answered from the last chamber scan.',
     warm: live.queue?.length ? 'Staying in game for the next player in the queue.' : 'In game, about to leave.',
-    active: `${PEARL_STAGE_TEXT[live.stage] || 'Working'}${elapsed}.`
+    active: `${PEARL_STAGE_TEXT[live.stage] || 'Working'}.`
   }[view];
 
   const player = $('#pearlLoaderPlayer');
@@ -11910,8 +11910,9 @@ function renderPearlLoaderHero(data) {
     $('#pearlLoaderPlayerName').textContent = live.username;
     $('#pearlLoaderPlayerMode').textContent = check ? 'Check for' : 'Load for';
     const head = $('#pearlLoaderPlayerHead');
-    const url = playerHeadUrl(live.username, 40);
+    const url = playerHeadUrl(live.username, 64);
     if (head.getAttribute('src') !== url) head.src = url;
+    $('#pearlLoaderPlayerElapsed').textContent = Number.isFinite(elapsedMs) ? `for ${formatDurationMs(elapsedMs)}` : '';
   }
 
   const steps = $('#pearlLoaderSteps');
@@ -11927,6 +11928,10 @@ function renderPearlLoaderHero(data) {
     if (index === currentIndex) item.setAttribute('aria-current', 'step');
     else item.removeAttribute('aria-current');
   }
+  // The glowing line runs from the first step to the current one
+  const lastStep = check ? PEARL_STEP_ORDER.indexOf('check') : PEARL_STEP_ORDER.length - 1;
+  const progress = currentIndex > 0 ? Math.min(1, currentIndex / (PEARL_STEP_ORDER.length - 1)) : 0;
+  $('#pearlLoaderProgress').style.width = `${Math.round(Math.min(progress, lastStep / (PEARL_STEP_ORDER.length - 1)) * 100)}%`;
 
   const loader = data.loader;
   $('#pearlLoaderAccount').textContent = loader
@@ -11940,7 +11945,9 @@ function renderPearlLoaderStats(totals = {}) {
   $('#pearlLoaderLoadsDetail').textContent = `${formatNumber(totals.total)} requests in all`;
   setRollingNumber('#pearlLoaderToday', totals.today);
   const recentLoads = totals.recentTotal || 0;
-  $('#pearlLoaderSuccess').textContent = recentLoads ? `${Math.round((totals.recentCompleted / recentLoads) * 100)}%` : '-';
+  const successPercent = recentLoads ? Math.round((totals.recentCompleted / recentLoads) * 100) : 0;
+  $('#pearlLoaderSuccess').textContent = recentLoads ? `${successPercent}%` : '-';
+  $('#pearlLoaderSuccessRing')?.style.setProperty('--value', String(successPercent));
   $('#pearlLoaderSuccessDetail').textContent = recentLoads
     ? `${formatNumber(totals.recentFailed)} failed of ${formatNumber(recentLoads)} · 30 days`
     : 'no requests in 30 days';
@@ -12047,20 +12054,21 @@ function renderPearlChambers(chambers = []) {
   patchPearlList($('#pearlChambers'), shown, {
     key: chamber => chamber.uuid || String(chamber.username).toLowerCase(),
     create: chamber => {
+      // A stasis tube: trapdoor on top, water, and the pearl when it is there
       const card = document.createElement('li');
-      card.innerHTML = '<div class="pearl-chamber-top"><span class="pearl-chamber-head">'
-        + `<img src="${escapeHtml(playerHeadUrl(chamber.username, 48, { uuid: chamber.uuid }))}" alt="" width="40" height="40" loading="lazy"></span>`
-        + `<div><strong>${escapeHtml(chamber.username)}</strong><small></small></div>`
-        + '<span class="pearl-chamber-pearl" aria-hidden="true"><img src="" alt=""></span></div>'
+      card.innerHTML = '<span class="pearl-tube" aria-hidden="true"><span class="pearl-tube-water"></span>'
+        + '<img src="/items/Ender_Pearl.png" alt=""><span class="pearl-tube-mark">?</span></span>'
+        + `<div class="pearl-chamber-who"><img src="${escapeHtml(playerHeadUrl(chamber.username, 32, { uuid: chamber.uuid }))}" alt="" width="26" height="26" loading="lazy">`
+        + `<strong>${escapeHtml(chamber.username)}</strong><i></i></div>`
         + '<span class="pearl-chamber-badge"></span><p></p>';
       return card;
     },
     update: (card, chamber) => {
       const status = pearlChamberStatus(chamber);
       setPearlAttribute(card, 'class', `pearl-chamber-card is-${status}`);
-      card.querySelector('.pearl-chamber-head').classList.toggle('is-online', Boolean(chamber.isOnline));
-      setPearlText(card.querySelector('.pearl-chamber-top small'), chamber.isOnline ? 'online' : 'offline');
-      setPearlAttribute(card.querySelector('.pearl-chamber-pearl img'), 'src', `/items/${status === 'no_trapdoor' ? 'Oak_Trapdoor' : 'Ender_Pearl'}.png`);
+      const dot = card.querySelector('.pearl-chamber-who i');
+      dot.classList.toggle('is-online', Boolean(chamber.isOnline));
+      setPearlAttribute(dot, 'title', chamber.isOnline ? 'Online' : 'Offline');
       const badge = card.querySelector('.pearl-chamber-badge');
       setPearlAttribute(badge, 'class', `pearl-chamber-badge is-${status}`);
       setPearlText(badge, PEARL_CHAMBER_LABELS[status]);
