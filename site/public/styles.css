@@ -17739,37 +17739,59 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 #tab-pearl-loader .pearl-head { flex-wrap: wrap; align-items: center; padding: 12px 16px; }
 #tab-pearl-loader .pearl-head p { margin-top: 2px; color: var(--muted); font-size: 13px; }
 
-/* Chamber filters: the site's segmented control, one row under the head */
+/* Chamber filters: one segmented control in a single row under the head, like
+   the other pages: one frame around it, flat buttons, the active one filled */
 #tab-pearl-loader .pearl-filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  display: flex;
+  gap: 3px;
+  max-width: calc(100% - 32px);
   margin: 12px 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+
+#tab-pearl-loader .pearl-filters::-webkit-scrollbar { display: none; }
 
 #tab-pearl-loader .pearl-filters .chart-range-button {
   display: inline-flex;
+  flex: 1 0 auto;
   align-items: center;
   justify-content: center;
   gap: 6px;
   min-width: 0;
-  min-height: 34px;
-  padding: 4px 8px;
-  font-size: 13px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  text-shadow: none;
+  font-size: 12px;
   white-space: nowrap;
 }
 
+#tab-pearl-loader .pearl-filters .chart-range-button:hover { color: var(--text); background: var(--panel); transform: none; }
+
+#tab-pearl-loader .pearl-filters .chart-range-button.active,
+#tab-pearl-loader .pearl-filters .chart-range-button.active:hover {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--bevel-light);
+}
+
 #tab-pearl-loader .pearl-filter-count {
-  min-width: 20px;
-  padding: 0 5px;
-  border-radius: 3px;
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 2px;
   background: color-mix(in srgb, var(--text) 10%, transparent);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
-  line-height: 18px;
+  line-height: 16px;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
-#tab-pearl-loader .pearl-filters .chart-range-button.active .pearl-filter-count { background: rgb(255 255 255 / .22); }
+#tab-pearl-loader .pearl-filters .chart-range-button.active .pearl-filter-count { background: rgb(0 0 0 / .18); }
 
 #tab-pearl-loader .pearl-table-wrap { max-height: 520px; overflow: auto; border-top: 2px solid var(--line-soft); }
 #tab-pearl-loader .pearl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
