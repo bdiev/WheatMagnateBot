@@ -59,4 +59,6 @@ assert.match(html,/<tbody id="pearlChambers"><\/tbody>[\s\S]*<tbody id="pearlLoa
 assert.doesNotMatch(chamberRender,/grid\.innerHTML\s*=/,'rebuilding the grid every refresh made the cards blink');
 assert.match(bot,/connected && !wasConnected[\s\S]*markConnected\?\.\(account\.id\)/,'a managed account records when it gets into the game');
 assert.match(server,/GREATEST\(account\.last_connected_at, runtime\.started_at\) AS last_connected_at/,'the page falls back to the runtime start time');
+assert.match(html,/id="pearlChamberFilters" class="chart-controls pearl-filters"[\s\S]*class="chart-range-button active" type="button" data-pearl-filter="all"/,
+  'the chamber filters use the same segmented control as the other pages');
 console.log('Pearl Loader admin UI tests passed.');

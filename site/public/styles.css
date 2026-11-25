@@ -17739,37 +17739,39 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 #tab-pearl-loader .pearl-head { flex-wrap: wrap; align-items: center; padding: 12px 16px; }
 #tab-pearl-loader .pearl-head p { margin-top: 2px; color: var(--muted); font-size: 13px; }
 
-#tab-pearl-loader .pearl-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  padding: 2px;
-  border: 2px solid var(--line);
-  border-radius: var(--card-radius);
-  background: var(--panel);
-  box-shadow: var(--shadow-inset);
+/* Chamber filters: the site's segmented control, one row under the head */
+#tab-pearl-loader .pearl-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  margin: 12px 16px;
 }
 
-#tab-pearl-loader .pearl-tabs button {
-  width: auto;
+#tab-pearl-loader .pearl-filters .chart-range-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-width: 0;
-  min-height: 0;
-  padding: 3px 8px;
-  border: 0;
-  border-radius: var(--card-radius);
-  color: var(--muted);
-  background: transparent;
-  box-shadow: none;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
+  min-height: 34px;
+  padding: 4px 8px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
-#tab-pearl-loader .pearl-tabs button:hover { color: var(--text); }
-#tab-pearl-loader .pearl-tabs button.active { color: var(--text); background: color-mix(in srgb, var(--accent) 18%, var(--panel-soft)); font-weight: 800; }
-#tab-pearl-loader .pearl-tabs button span { font-variant-numeric: tabular-nums; }
+#tab-pearl-loader .pearl-filter-count {
+  min-width: 20px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
 
-#tab-pearl-loader .pearl-table-wrap { max-height: 520px; overflow: auto; }
+#tab-pearl-loader .pearl-filters .chart-range-button.active .pearl-filter-count { background: rgb(255 255 255 / .22); }
+
+#tab-pearl-loader .pearl-table-wrap { max-height: 520px; overflow: auto; border-top: 2px solid var(--line-soft); }
 #tab-pearl-loader .pearl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 
 #tab-pearl-loader .pearl-table th {
