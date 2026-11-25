@@ -12079,6 +12079,12 @@ function renderPearlLoader(data = {}) {
   renderPearlLoaderStats(data.totals);
   renderPearlChambers(data.chambers || []);
   renderPearlLoaderRecent(data.recent || []);
+  // The first data replaces the loading skeleton
+  const tab = $('#tab-pearl-loader');
+  if (tab.dataset.pearlLoading) {
+    delete tab.dataset.pearlLoading;
+    tab.removeAttribute('aria-busy');
+  }
 }
 
 async function loadPearlLoader() {
