@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=342">
+  <link rel="stylesheet" href="/styles.css?v=343">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -1011,89 +1011,60 @@
       </section>
 
       <section id="tab-pearl-loader" class="tab-panel admin-only" data-panel="pearl-loader" data-pearl-state="offline" hidden>
-        <section class="panel pearl-hero" aria-labelledby="pearlLoaderState">
-          <div class="pearl-hero-body">
-            <span class="pearl-hero-icon" aria-hidden="true"><img src="/items/Ender_Pearl.png" alt=""></span>
-            <div class="pearl-hero-text">
-              <span class="stat-label">Pearl Loader</span>
-              <div class="pearl-state-value"><i aria-hidden="true"></i><strong id="pearlLoaderState">-</strong></div>
-              <p id="pearlLoaderStatus" class="pearl-hero-status" aria-live="polite">Waits offline until a player whispers "load", "check" or "pearl".</p>
-            </div>
-            <div id="pearlLoaderPlayer" class="pearl-hero-player" hidden>
-              <img id="pearlLoaderPlayerHead" src="" alt="" width="44" height="44">
-              <span id="pearlLoaderPlayerMode">Load for</span>
-              <strong id="pearlLoaderPlayerName">-</strong>
-              <small id="pearlLoaderPlayerElapsed"></small>
-            </div>
-          </div>
-          <div class="pearl-path">
-            <div class="pearl-path-track" aria-hidden="true"><span id="pearlLoaderProgress"></span></div>
-            <ol id="pearlLoaderSteps" class="pearl-steps is-idle" aria-label="Request progress">
-              <li data-pearl-step="connect"><span class="pearl-step-node"><img src="/items/Compass.png" alt=""></span><span>Connect</span></li>
-              <li data-pearl-step="walk"><span class="pearl-step-node"><img src="/items/Leather_Boots.png" alt=""></span><span>Walk</span></li>
-              <li data-pearl-step="check"><span class="pearl-step-node"><img src="/items/Spyglass.png" alt=""></span><span>Check</span></li>
-              <li data-pearl-step="confirm"><span class="pearl-step-node"><img src="/items/Bell.png" alt=""></span><span>Confirm</span></li>
-              <li data-pearl-step="teleport"><span class="pearl-step-node"><img src="/items/Ender_Eye.png" alt=""></span><span>Teleport</span></li>
-              <li data-pearl-step="reload"><span class="pearl-step-node"><img src="/items/Ender_Pearl.png" alt=""></span><span>New pearl</span></li>
-            </ol>
-          </div>
-          <div class="pearl-hero-foot">
-            <span id="pearlLoaderAccount" class="pearl-hero-account">No bot has the Pearl Loader role.</span>
-            <span id="pearlLoaderQueueNote" class="pearl-queue-note" hidden></span>
-            <small id="pearlLoaderUpdated">last update: -</small>
-          </div>
+        <section class="pearl-box pearl-bar" aria-label="Pearl Loader status">
+          <img class="pearl-bar-icon" src="/items/Ender_Pearl.png" alt="" width="22" height="22">
+          <span class="pearl-bar-state"><i aria-hidden="true"></i><strong id="pearlLoaderState">-</strong></span>
+          <span id="pearlLoaderPlayer" class="pearl-chip" hidden><img id="pearlLoaderPlayerHead" src="" alt="" width="20" height="20"><span id="pearlLoaderPlayerName">-</span></span>
+          <ol id="pearlLoaderSteps" class="pearl-dots" aria-label="Request progress">
+            <li data-pearl-step="connect" title="Connect"></li>
+            <li data-pearl-step="walk" title="Walk"></li>
+            <li data-pearl-step="check" title="Check"></li>
+            <li data-pearl-step="confirm" title="Confirm"></li>
+            <li data-pearl-step="teleport" title="Teleport"></li>
+            <li data-pearl-step="reload" title="New pearl"></li>
+          </ol>
+          <span id="pearlLoaderStatus" class="pearl-bar-status" aria-live="polite">Waits offline until a player whispers "load", "check" or "pearl".</span>
+          <span class="pearl-bar-grow"></span>
+          <span id="pearlLoaderQueueNote" class="pearl-bar-meta" hidden></span>
+          <span id="pearlLoaderAccount" class="pearl-bar-meta">No bot has the Pearl Loader role.</span>
         </section>
 
-        <section class="stats-grid pearl-stats" aria-label="Pearl Loader totals">
-          <article class="stat pearl-stat">
-            <div class="aura-stat-topline"><span class="stat-label">Loads</span><span class="aura-stat-icon" aria-hidden="true"><img src="/items/Ender_Pearl.png" alt=""></span></div>
-            <strong id="pearlLoaderLoads">-</strong>
-            <small id="pearlLoaderLoadsDetail">all time</small>
-          </article>
-          <article class="stat pearl-stat">
-            <div class="aura-stat-topline"><span class="stat-label">Today</span><span class="aura-stat-icon" aria-hidden="true"><img src="/items/Clock.png" alt=""></span></div>
-            <strong id="pearlLoaderToday">-</strong>
-            <small>completed loads</small>
-          </article>
-          <article class="stat pearl-stat">
-            <div class="aura-stat-topline"><span class="stat-label">Success</span><span class="aura-stat-icon" aria-hidden="true"><img src="/items/Ender_Eye.png" alt=""></span></div>
-            <strong id="pearlLoaderSuccess">-</strong>
-            <span class="pearl-meter" aria-hidden="true"><span id="pearlLoaderSuccessBar"></span></span>
-            <small id="pearlLoaderSuccessDetail">last 30 days</small>
-          </article>
-          <article class="stat pearl-stat">
-            <div class="aura-stat-topline"><span class="stat-label">Average Load</span><span class="aura-stat-icon" aria-hidden="true"><img src="/items/Feather.png" alt=""></span></div>
-            <strong id="pearlLoaderAverage">-</strong>
-            <small>from request to done</small>
-          </article>
+        <section class="pearl-box pearl-nums" aria-label="Pearl Loader totals">
+          <div class="pearl-num"><strong id="pearlLoaderLoads">-</strong><span id="pearlLoaderLoadsDetail">loads</span></div>
+          <div class="pearl-num"><strong id="pearlLoaderToday">-</strong><span>loads today</span></div>
+          <div class="pearl-num"><strong id="pearlLoaderSuccess">-</strong><span id="pearlLoaderSuccessDetail">success · 30 days</span></div>
+          <div class="pearl-num"><strong id="pearlLoaderAverage">-</strong><span>average load</span></div>
         </section>
 
-        <section class="panel pearl-chambers-panel">
-          <div class="panel-head">
-            <div><h2>Stasis Chambers</h2><p id="pearlChambersSummary">What the bots last saw at every saved pearl hatch.</p></div>
-            <span class="admin-card-icon" aria-hidden="true"><img src="/items/Oak_Trapdoor.png" alt=""></span>
-          </div>
-          <div class="pearl-panel-body">
-            <div id="pearlChamberFilters" class="pearl-chamber-filters" role="group" aria-label="Show chambers">
-              <button type="button" class="ghost-button active" data-pearl-filter="all" aria-pressed="true">All <span data-pearl-count="all">0</span></button>
-              <button type="button" class="ghost-button" data-pearl-filter="set" aria-pressed="false"><i class="is-set"></i>Set <span data-pearl-count="set">0</span></button>
-              <button type="button" class="ghost-button" data-pearl-filter="empty" aria-pressed="false"><i class="is-empty"></i>Empty <span data-pearl-count="empty">0</span></button>
-              <button type="button" class="ghost-button" data-pearl-filter="no_trapdoor" aria-pressed="false"><i class="is-no_trapdoor"></i>No trapdoor <span data-pearl-count="no_trapdoor">0</span></button>
-              <button type="button" class="ghost-button" data-pearl-filter="unknown" aria-pressed="false"><i class="is-unknown"></i>Not checked <span data-pearl-count="unknown">0</span></button>
+        <div class="pearl-columns">
+          <section class="pearl-box">
+            <div class="pearl-section-title">
+              <h2>Stasis chambers</h2>
+              <div id="pearlChamberFilters" class="pearl-tabs" role="group" aria-label="Show chambers">
+                <button type="button" class="active" data-pearl-filter="all" aria-pressed="true">All <span data-pearl-count="all">0</span></button>
+                <button type="button" data-pearl-filter="set" aria-pressed="false">Set <span data-pearl-count="set">0</span></button>
+                <button type="button" data-pearl-filter="empty" aria-pressed="false">Empty <span data-pearl-count="empty">0</span></button>
+                <button type="button" data-pearl-filter="no_trapdoor" aria-pressed="false">No trapdoor <span data-pearl-count="no_trapdoor">0</span></button>
+                <button type="button" data-pearl-filter="unknown" aria-pressed="false">Not checked <span data-pearl-count="unknown">0</span></button>
+              </div>
             </div>
-            <ul id="pearlChambers" class="pearl-chamber-grid"></ul>
-          </div>
-        </section>
-
-        <section class="panel pearl-recent-panel">
-          <div class="panel-head">
-            <div><h2>Recent Requests</h2><p>The last requests and how they ended.</p></div>
-            <span class="admin-card-icon" aria-hidden="true"><img src="/items/Writable_Book.png" alt=""></span>
-          </div>
-          <div class="pearl-panel-body">
-            <ul id="pearlLoaderRecent" class="pearl-recent"></ul>
-          </div>
-        </section>
+            <div class="pearl-table-wrap">
+              <table class="pearl-table">
+                <thead><tr><th>Player</th><th>Status</th><th>Checked</th><th><span class="sr-only">Online</span></th></tr></thead>
+                <tbody id="pearlChambers"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="pearl-box">
+            <div class="pearl-section-title"><h2>Recent requests</h2><span id="pearlLoaderRecentCount" class="pearl-muted"></span></div>
+            <div class="pearl-table-wrap">
+              <table class="pearl-table">
+                <thead><tr><th>Player</th><th>Result</th><th>When</th></tr></thead>
+                <tbody id="pearlLoaderRecent"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
       </section>
 
       <section id="tab-obsidian" class="tab-panel" data-panel="obsidian">
@@ -2120,6 +2091,6 @@
     <script src="/player-accent.js?v=3" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=403" defer></script>
+    <script src="/app.js?v=404" defer></script>
   </body>
 </html>

@@ -11852,25 +11852,28 @@ function renderAdminPlayerPearlChamber() {
   element.hidden = false;
 }
 
-// Pearl Loader page: what the loader does right now, the queue, totals, recent
-// requests and every stasis chamber. Coordinates are never shown here.
+// Pearl Loader page: one status line, totals in a row, chambers and recent
+// requests as tables. Coordinates are never shown here.
 const PEARL_STEP_ORDER = Object.freeze(['connect', 'walk', 'check', 'confirm', 'teleport', 'reload']);
+const PEARL_STEP_LABELS = Object.freeze({
+  connect: 'Connect', walk: 'Walk', check: 'Check', confirm: 'Confirm', teleport: 'Teleport', reload: 'New pearl'
+});
 const PEARL_STAGE_STEP = Object.freeze({
   lookup: 'connect', connecting: 'connect', navigating: 'walk', checking_pearl: 'check',
   aiming: 'confirm', awaiting_yes: 'confirm', closing: 'teleport', waiting_visibility: 'teleport',
   opening: 'teleport', awaiting_new_pearl: 'reload'
 });
 const PEARL_STAGE_TEXT = Object.freeze({
-  lookup: 'Looking up the hatch',
-  connecting: 'Joining the server',
-  navigating: 'Walking to the chamber',
-  checking_pearl: 'Looking for the pearl',
-  aiming: 'At the chamber, asking if the player is ready',
-  awaiting_yes: 'Waiting for the player to say yes',
-  closing: 'Closing the trapdoor',
-  waiting_visibility: 'Waiting for the player to arrive',
-  opening: 'Opening the trapdoor',
-  awaiting_new_pearl: 'Waiting for the player to throw a new pearl'
+  lookup: 'looking up the hatch',
+  connecting: 'joining the server',
+  navigating: 'walking to the chamber',
+  checking_pearl: 'looking for the pearl',
+  aiming: 'asking if the player is ready',
+  awaiting_yes: 'waiting for the player to say yes',
+  closing: 'closing the trapdoor',
+  waiting_visibility: 'waiting for the player to arrive',
+  opening: 'opening the trapdoor',
+  awaiting_new_pearl: 'waiting for a new pearl'
 });
 const PEARL_OUTCOME_LABELS = Object.freeze({
   completed: 'Loaded', no_pearl: 'No pearl', failed: 'Failed', cancelled: 'Cancelled'
@@ -11884,91 +11887,95 @@ function pearlLoaderViewState(data) {
   return ['connected', 'connecting'].includes(data.loader.runtimeStatus) ? 'warm' : 'offline';
 }
 
-function renderPearlLoaderHero(data) {
+function setPearlText(element, value) {
+  if (element && element.textContent !== value) element.textContent = value;
+}
+
+function setPearlAttribute(element, name, value) {
+  if (element && element.getAttribute(name) !== value) element.setAttribute(name, value);
+}
+
+function renderPearlLoaderBar(data) {
   const live = data.live || {};
   const view = pearlLoaderViewState(data);
-  const tab = $('#tab-pearl-loader');
-  tab.dataset.pearlState = view;
+  $('#tab-pearl-loader').dataset.pearlState = view;
   const check = live.mode === 'check';
-  $('#pearlLoaderState').textContent = {
+  setPearlText($('#pearlLoaderState'), {
     unassigned: 'Not set up',
     offline: 'Offline',
     warm: 'In game',
     active: check ? 'Checking a pearl' : 'Loading a pearl'
-  }[view];
-  const elapsedMs = live.startedAt ? Date.now() - new Date(live.startedAt).getTime() : NaN;
-  $('#pearlLoaderStatus').textContent = {
-    unassigned: 'Give one bot the Pearl Loader role in its account settings.',
-    offline: 'Waits offline until a player whispers "load", "check" or "pearl". "pearl" is answered from the last chamber scan.',
-    warm: live.queue?.length ? 'Staying in game for the next player in the queue.' : 'In game, about to leave.',
-    active: `${PEARL_STAGE_TEXT[live.stage] || 'Working'}.`
-  }[view];
+  }[view]);
 
   const player = $('#pearlLoaderPlayer');
   player.hidden = !live.active || !live.username;
   if (live.active && live.username) {
-    $('#pearlLoaderPlayerName').textContent = live.username;
-    $('#pearlLoaderPlayerMode').textContent = check ? 'Check for' : 'Load for';
-    const head = $('#pearlLoaderPlayerHead');
-    const url = playerHeadUrl(live.username, 48);
-    if (head.getAttribute('src') !== url) head.src = url;
-    $('#pearlLoaderPlayerElapsed').textContent = Number.isFinite(elapsedMs) ? `for ${formatDurationMs(elapsedMs)}` : '';
+    setPearlText($('#pearlLoaderPlayerName'), live.username);
+    setPearlAttribute($('#pearlLoaderPlayerHead'), 'src', playerHeadUrl(live.username, 32));
   }
 
   const steps = $('#pearlLoaderSteps');
   const current = live.active ? PEARL_STAGE_STEP[live.stage] : null;
   const currentIndex = current ? PEARL_STEP_ORDER.indexOf(current) : -1;
   steps.classList.toggle('is-idle', !current);
-  steps.classList.toggle('is-check', check);
   for (const item of steps.querySelectorAll('[data-pearl-step]')) {
     const index = PEARL_STEP_ORDER.indexOf(item.dataset.pearlStep);
     // A check stops after looking: the later steps do not happen
     const skipped = check && index > PEARL_STEP_ORDER.indexOf('check');
     item.dataset.state = skipped ? 'skipped' : index < currentIndex ? 'done' : index === currentIndex ? 'active' : 'idle';
-    if (index === currentIndex) item.setAttribute('aria-current', 'step');
-    else item.removeAttribute('aria-current');
   }
-  // The glowing line runs from the first step to the current one
-  const lastStep = check ? PEARL_STEP_ORDER.indexOf('check') : PEARL_STEP_ORDER.length - 1;
-  const progress = currentIndex > 0 ? Math.min(1, currentIndex / (PEARL_STEP_ORDER.length - 1)) : 0;
-  $('#pearlLoaderProgress').style.width = `${Math.round(Math.min(progress, lastStep / (PEARL_STEP_ORDER.length - 1)) * 100)}%`;
+
+  const status = $('#pearlLoaderStatus');
+  if (view === 'active') {
+    const elapsed = live.startedAt ? ` · ${formatDurationMs(Date.now() - new Date(live.startedAt).getTime())}` : '';
+    const html = `<b>${escapeHtml(PEARL_STEP_LABELS[current] || 'Working')}:</b> ${escapeHtml(PEARL_STAGE_TEXT[live.stage] || 'working')}${escapeHtml(elapsed)}`;
+    if (status.innerHTML !== html) status.innerHTML = html;
+  } else {
+    setPearlText(status, {
+      unassigned: 'Give one bot the Pearl Loader role in its account settings.',
+      offline: 'Waits offline until a player whispers "load", "check" or "pearl".',
+      warm: live.queue?.length ? 'Staying in game for the next player.' : 'In game, about to leave.'
+    }[view]);
+  }
+
+  const queue = live.queue || [];
+  const note = $('#pearlLoaderQueueNote');
+  note.hidden = !queue.length;
+  const noteHtml = queue.length ? `Waiting: <b>${escapeHtml(queue.map(entry => entry.username).join(', '))}</b>` : '';
+  if (note.innerHTML !== noteHtml) note.innerHTML = noteHtml;
 
   const loader = data.loader;
-  $('#pearlLoaderAccount').textContent = loader
-    ? `${loader.displayName || loader.username} · ${loader.lastConnectedAt ? `last in game ${formatRecentDate(loader.lastConnectedAt)}` : 'never connected yet'}`
-    : 'No bot has the Pearl Loader role.';
-  $('#pearlLoaderUpdated').textContent = `last update: ${live.observedAt ? formatAgo(live.observedAt) : '-'}`;
+  setPearlText($('#pearlLoaderAccount'), loader
+    ? `${loader.displayName || loader.username} · ${loader.lastConnectedAt ? `in game ${formatRecentDate(loader.lastConnectedAt)}` : 'never connected'}`
+    : 'No bot has the Pearl Loader role.');
 }
 
 function renderPearlLoaderStats(totals = {}) {
   setRollingNumber('#pearlLoaderLoads', totals.completed);
-  $('#pearlLoaderLoadsDetail').textContent = `${formatNumber(totals.total)} requests in all`;
+  setPearlText($('#pearlLoaderLoadsDetail'), `loads · ${formatNumber(totals.total)} requests`);
   setRollingNumber('#pearlLoaderToday', totals.today);
-  const recentLoads = totals.recentTotal || 0;
-  const successPercent = recentLoads ? Math.round((totals.recentCompleted / recentLoads) * 100) : 0;
-  $('#pearlLoaderSuccess').textContent = recentLoads ? `${successPercent}%` : '-';
-  const successBar = $('#pearlLoaderSuccessBar');
-  if (successBar) successBar.style.width = `${successPercent}%`;
-  $('#pearlLoaderSuccessDetail').textContent = recentLoads
-    ? `${formatNumber(totals.recentFailed)} failed of ${formatNumber(recentLoads)} · 30 days`
-    : 'no requests in 30 days';
-  $('#pearlLoaderAverage').textContent = totals.averageMs ? formatDurationMs(totals.averageMs) : '-';
+  const recentTotal = totals.recentTotal || 0;
+  setPearlText($('#pearlLoaderSuccess'), recentTotal ? `${Math.round((totals.recentCompleted / recentTotal) * 100)}%` : '-');
+  setPearlText($('#pearlLoaderSuccessDetail'), recentTotal
+    ? `success · ${formatNumber(totals.recentFailed)} failed in 30 days`
+    : 'success · no requests in 30 days');
+  setPearlText($('#pearlLoaderAverage'), totals.averageMs ? formatDurationMs(totals.averageMs) : '-');
 }
 
 // The page refreshes every few seconds. Rows are kept and only their changing
-// parts are updated, so heads do not reload and cards do not pop in again.
-function patchPearlList(list, items, { key, create, update, empty }) {
+// parts are updated, so heads do not reload and nothing blinks.
+function patchPearlRows(body, items, { key, create, update, empty, columns }) {
   const keyed = new Map();
-  for (const child of [...list.children]) {
+  for (const child of [...body.children]) {
     if (child.dataset.pearlKey) keyed.set(child.dataset.pearlKey, child);
     else child.remove();
   }
   if (!items.length) {
     keyed.forEach(child => child.remove());
-    const row = document.createElement('li');
+    const row = document.createElement('tr');
     row.className = 'pearl-empty-row';
-    row.textContent = empty;
-    list.append(row);
+    row.innerHTML = `<td colspan="${columns}">${escapeHtml(empty)}</td>`;
+    body.append(row);
     return;
   }
   const wanted = new Set();
@@ -11981,64 +11988,33 @@ function patchPearlList(list, items, { key, create, update, empty }) {
       row.dataset.pearlKey = itemKey;
     }
     update(row, item);
-    if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
+    if (body.children[index] !== row) body.insertBefore(row, body.children[index] || null);
   });
   keyed.forEach((child, childKey) => { if (!wanted.has(childKey)) child.remove(); });
 }
 
-function setPearlText(element, value) {
-  if (element && element.textContent !== value) element.textContent = value;
-}
-
-function setPearlAttribute(element, name, value) {
-  if (element && element.getAttribute(name) !== value) element.setAttribute(name, value);
-}
-
-function pearlPlayerRow(username, { outcome = false } = {}) {
-  const row = document.createElement('li');
-  row.innerHTML = `<img class="pearl-head" src="${escapeHtml(playerHeadUrl(username, 32))}" alt="" width="28" height="28" loading="lazy">`
-    + `<span class="pearl-player-name">${escapeHtml(username)}</span><small></small>`
-    + (outcome ? '<span class="pearl-outcome"></span>' : '');
-  return row;
-}
-
-// Queues are rare: whoever waits is named in one line under the status
-function renderPearlLoaderQueue(queue = []) {
-  const note = $('#pearlLoaderQueueNote');
-  if (!note) return;
-  note.hidden = !queue.length;
-  setPearlText(note, queue.length
-    ? `Waiting: ${queue.map(entry => entry.username).join(', ')}`
-    : '');
-}
-
-function renderPearlLoaderRecent(recent = []) {
-  patchPearlList($('#pearlLoaderRecent'), recent, {
-    key: item => `${String(item.username).toLowerCase()}|${item.finishedAt}`,
-    create: item => pearlPlayerRow(item.username, { outcome: true }),
-    update: (row, item) => {
-      const outcome = PEARL_OUTCOME_LABELS[item.outcome] ? item.outcome : 'failed';
-      const duration = item.durationMs ? ` · ${formatDurationMs(item.durationMs)}` : '';
-      setPearlText(row.querySelector('small'), `${formatRecentDate(item.finishedAt)}${duration}`);
-      const badge = row.querySelector('.pearl-outcome');
-      setPearlAttribute(badge, 'class', `pearl-outcome is-${outcome}`);
-      setPearlText(badge, PEARL_OUTCOME_LABELS[outcome]);
-    },
-    empty: 'No requests yet.'
-  });
+function pearlPlayerCell(username, uuid = null) {
+  return `<span class="pearl-player"><img src="${escapeHtml(playerHeadUrl(username, 32, { uuid }))}" alt="" width="20" height="20" loading="lazy">`
+    + `<span>${escapeHtml(username)}</span></span>`;
 }
 
 function pearlChamberStatus(chamber) {
   return PEARL_CHAMBER_LABELS[chamber?.status] ? chamber.status : 'unknown';
 }
 
+function pearlChamberChecked(chamber) {
+  const status = pearlChamberStatus(chamber);
+  if (status === 'unknown') return 'not seen yet';
+  const ago = formatAgo(chamber.checkedAt);
+  return status === 'no_trapdoor'
+    ? `block is ${chamber.blockName ? chamber.blockName.replace(/_/g, ' ') : 'not a trapdoor'} · ${ago}`
+    : ago;
+}
+
 function renderPearlChambers(chambers = []) {
   const counts = { all: chambers.length, set: 0, empty: 0, no_trapdoor: 0, unknown: 0 };
   for (const chamber of chambers) counts[pearlChamberStatus(chamber)] += 1;
   for (const element of $$('[data-pearl-count]')) setPearlText(element, formatNumber(counts[element.dataset.pearlCount] || 0));
-  setPearlText($('#pearlChambersSummary'), chambers.length
-    ? `${formatNumber(counts.set)} of ${formatNumber(chambers.length)} hold a pearl. Bots in game check the chambers near them every minute.`
-    : 'No player has pearl hatch coordinates yet. Add them in the player card.');
   const filter = state.pearlChamberFilter || 'all';
   for (const button of $$('[data-pearl-filter]')) {
     const active = button.dataset.pearlFilter === filter;
@@ -12046,41 +12022,58 @@ function renderPearlChambers(chambers = []) {
     button.setAttribute('aria-pressed', String(active));
   }
   const shown = chambers.filter(chamber => filter === 'all' || pearlChamberStatus(chamber) === filter);
-  patchPearlList($('#pearlChambers'), shown, {
+  patchPearlRows($('#pearlChambers'), shown, {
+    columns: 4,
     key: chamber => chamber.uuid || String(chamber.username).toLowerCase(),
     create: chamber => {
-      // A stasis tube: trapdoor on top, water, and the pearl when it is there
-      const card = document.createElement('li');
-      card.innerHTML = '<span class="pearl-tube" aria-hidden="true"><span class="pearl-tube-water"></span>'
-        + '<img src="/items/Ender_Pearl.png" alt=""><span class="pearl-tube-mark">?</span></span>'
-        + `<div class="pearl-chamber-who"><img src="${escapeHtml(playerHeadUrl(chamber.username, 32, { uuid: chamber.uuid }))}" alt="" width="26" height="26" loading="lazy">`
-        + `<strong>${escapeHtml(chamber.username)}</strong><i></i></div>`
-        + '<span class="pearl-chamber-badge"></span><p></p>';
-      return card;
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${pearlPlayerCell(chamber.username, chamber.uuid)}</td>`
+        + '<td><span class="pearl-status"></span></td><td class="pearl-muted"></td><td><i class="pearl-online"></i></td>';
+      return row;
     },
-    update: (card, chamber) => {
+    update: (row, chamber) => {
       const status = pearlChamberStatus(chamber);
-      setPearlAttribute(card, 'class', `pearl-chamber-card is-${status}`);
-      const dot = card.querySelector('.pearl-chamber-who i');
-      dot.classList.toggle('is-online', Boolean(chamber.isOnline));
-      setPearlAttribute(dot, 'title', chamber.isOnline ? 'Online' : 'Offline');
-      const badge = card.querySelector('.pearl-chamber-badge');
-      setPearlAttribute(badge, 'class', `pearl-chamber-badge is-${status}`);
+      const badge = row.querySelector('.pearl-status');
+      setPearlAttribute(badge, 'class', `pearl-status is-${status}`);
       setPearlText(badge, PEARL_CHAMBER_LABELS[status]);
-      setPearlText(card.querySelector('p'), pearlChamberDetail(chamber));
+      setPearlText(row.children[2], pearlChamberChecked(chamber));
+      const online = row.querySelector('.pearl-online');
+      online.classList.toggle('is-online', Boolean(chamber.isOnline));
+      setPearlAttribute(online, 'title', chamber.isOnline ? 'Online' : 'Offline');
     },
-    empty: chambers.length ? 'No chamber matches this filter.' : 'No chambers yet.'
+    empty: chambers.length ? 'No chamber matches this filter.' : 'No player has pearl hatch coordinates yet. Add them in the player card.'
+  });
+}
+
+function renderPearlLoaderRecent(recent = []) {
+  setPearlText($('#pearlLoaderRecentCount'), recent.length ? `last ${formatNumber(recent.length)}` : '');
+  patchPearlRows($('#pearlLoaderRecent'), recent, {
+    columns: 3,
+    key: item => `${String(item.username).toLowerCase()}|${item.finishedAt}`,
+    create: item => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${pearlPlayerCell(item.username)}</td><td><span class="pearl-status"></span></td><td class="pearl-muted"></td>`;
+      return row;
+    },
+    update: (row, item) => {
+      const outcome = PEARL_OUTCOME_LABELS[item.outcome] ? item.outcome : 'failed';
+      const badge = row.querySelector('.pearl-status');
+      setPearlAttribute(badge, 'class', `pearl-status is-${outcome}`);
+      setPearlText(badge, PEARL_OUTCOME_LABELS[outcome]);
+      const duration = item.durationMs ? ` · ${formatDurationMs(item.durationMs)}` : '';
+      setPearlText(row.children[2], `${formatRecentDate(item.finishedAt)}${duration}`);
+    },
+    empty: 'No requests yet.'
   });
 }
 
 function renderPearlLoader(data = {}) {
   state.pearlLoaderData = data;
   if (!$('#tab-pearl-loader')) return;
-  renderPearlLoaderHero(data);
+  renderPearlLoaderBar(data);
   renderPearlLoaderStats(data.totals);
-  renderPearlLoaderQueue(data.live?.queue || []);
-  renderPearlLoaderRecent(data.recent || []);
   renderPearlChambers(data.chambers || []);
+  renderPearlLoaderRecent(data.recent || []);
 }
 
 async function loadPearlLoader() {
