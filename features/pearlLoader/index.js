@@ -1,7 +1,7 @@
 'use strict';
 
 const { pathfinder, Movements } = require('mineflayer-pathfinder');
-const { Goal, GoalCompositeAll, GoalNear } = require('mineflayer-pathfinder').goals;
+const { Goal, GoalCompositeAll, GoalInvert, GoalNear } = require('mineflayer-pathfinder').goals;
 const { Vec3 } = require('vec3');
 const { nextInteractionSequence } = require('../obsidianFarm/interaction-sequence');
 
@@ -300,6 +300,14 @@ function createPearlLoaderFeature({
   newPearlSettleMs = 1_500,
   navigationRange = 2.5,
   interactionReach = 4.5,
+  // While waiting for the new pearl the loader stands a few blocks off, out
+  // of the way of the player throwing it, but close enough to see it land
+  stepBackMinDistance = 3,
+  stepBackMaxDistance = 6,
+  stepBackGoalFactory = (x, y, z, min, max) => new GoalCompositeAll([
+    new GoalInvert(new GoalNear(x, y, z, min)),
+    new GoalNear(x, y, z, max)
+  ]),
   goalFactory = (x, y, z, range, bot, reach, block) => new GoalCompositeAll([
     new GoalNear(x, y, z, range),
     new GoalLookAtTrapdoor(block, bot.world, { reach })
@@ -856,6 +864,7 @@ function createPearlLoaderFeature({
   async function finishJob(job, { newPearl = false } = {}) {
     if (!job || activeJob !== job) return;
     clearJobTimers(job);
+    if (job.stage === 'awaiting_new_pearl') cancelNavigation(job.runtime?.bot);
     job.runtime?.assignTask?.('idle');
     activeJob = null;
     note(job, 'info', newPearl
@@ -1014,6 +1023,34 @@ function createPearlLoaderFeature({
     check();
   }
 
+  // Moves a few blocks away from the hatch; staying put is fine if it cannot
+  async function stepBack(job) {
+    const bot = job.runtime?.bot;
+    if (!bot?.entity || !bot.pathfinder?.goto) return;
+    let timeout = null;
+    try {
+      configureSafeMovement(bot);
+      const { x, y, z } = job.hatch;
+      const movement = bot.pathfinder.goto(stepBackGoalFactory(x, y, z, stepBackMinDistance, stepBackMaxDistance));
+      const deadline = new Promise((resolve, reject) => {
+        timeout = setTimer(() => reject(timeoutError('Stepping back timed out.')), navigationTimeoutMs);
+      });
+      await Promise.race([movement, deadline]);
+      if (activeJob !== job) return;
+      bot.clearControlStates?.();
+      note(job, 'info', 'Stepped back from the hatch while waiting for the new pearl.', { botPosition:bot.entity?.position || null });
+      // Keeps watching the chamber
+      await bot.lookAt?.(new Vec3(x + 0.5, y + 0.5, z + 0.5), true)?.catch?.(() => {});
+    } catch (error) {
+      if (activeJob === job) {
+        cancelNavigation(bot);
+        note(job, 'warn', 'Could not step back from the hatch; waiting where it stands.', { error:error?.message || String(error) });
+      }
+    } finally {
+      clearTimer(timeout);
+    }
+  }
+
   function pearlIdsNear(bot, hatch) {
     const center = new Vec3(hatch.x + 0.5, hatch.y + 0.5, hatch.z + 0.5);
     return Object.entries(bot?.entities || {})
@@ -1031,6 +1068,7 @@ function createPearlLoaderFeature({
     job.stage = 'awaiting_new_pearl';
     note(job, 'info', 'Trapdoor opened; waiting for the player to throw a new pearl.');
     const known = new Set(pearlIdsNear(job.runtime?.bot, job.hatch));
+    void stepBack(job);
     const firstSeen = new Map();
     const check = () => {
       if (activeJob !== job || job.stage !== 'awaiting_new_pearl') return;

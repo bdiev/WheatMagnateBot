@@ -163,6 +163,12 @@ async function testCompleteCycle() {
   assert.equal(open,true,'the trapdoor opens after the configured delay once the player is visible');
   assert.equal(feature.getStatus().stage,'awaiting_new_pearl','after the teleport the loader stays for the new pearl');
   assert.equal(stopped,0);
+  assert.deepEqual(bot.pathfinder.goal.goals.map(goal => goal.constructor.name),['GoalInvert','GoalNear'],
+    'while waiting the loader steps a few blocks back from the hatch');
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(10,64,-20)),false,'it does not wait right at the hatch');
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(14,64,-20)),true,'four blocks off is a good place to wait');
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(30,64,-20)),false,'it stays close enough to see the chamber');
+  assert.equal(eventOrder.at(-1),'look:10.5,64.5,-19.5','it keeps looking at the chamber');
   // A pearl flying past and gone again does not count
   bot.entities.passing={name:'ender_pearl',position:new Vec3(11,65,-20)};
   await delay(10);
