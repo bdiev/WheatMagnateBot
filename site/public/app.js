@@ -8239,6 +8239,13 @@ function areaExplorerRunStretches(events, now = Date.now()) {
 function areaExplorerRunClock(time, now = Date.now()) {
   const day = value => new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: state.accountTimezone }).format(new Date(value));
   if (day(time) === day(now)) return formatChatTime(time);
+  // A week or more away a weekday would be ambiguous: the date (and the year, when it's another)
+  if (Math.abs(time - now) >= 7 * 86_400_000) {
+    const otherYear = day(time).slice(0, 4) !== day(now).slice(0, 4);
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short', day: 'numeric', ...(otherYear ? { year: 'numeric' } : {}), hour: '2-digit', minute: '2-digit', timeZone: state.accountTimezone
+    }).format(new Date(time));
+  }
   return new Intl.DateTimeFormat('en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: state.accountTimezone }).format(new Date(time));
 }
 

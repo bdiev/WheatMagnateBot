@@ -841,6 +841,15 @@ function testRunTimeline() {
     'a pause ends when it resumes, or when the mod loses the server');
   assert.equal(JSON.stringify(gaps.map(g => [g.from, g.to, !!g.open])), JSON.stringify([[Date.parse(at(20)), Date.parse(at(22)), false], [Date.parse(at(50)), now, true]]),
     'off the server until it is back; still off: up to now');
+  // Times along it: the clock today, the weekday within a week, the date a week or more away
+  const clock = vm.createContext({ state: { accountTimezone: 'UTC' }, formatChatTime: () => 'today' });
+  vm.runInContext(functionSource('areaExplorerRunClock'), clock);
+  const today = Date.UTC(2026, 10, 26, 20, 0);
+  assert.equal(clock.areaExplorerRunClock(today - 3_600_000, today), 'today');
+  assert.match(clock.areaExplorerRunClock(today - 3 * 86_400_000, today), /^Mon,? 08:00 PM$/);
+  assert.match(clock.areaExplorerRunClock(Date.UTC(2026, 10, 16, 22, 18), today), /^Nov 16,? 10:18 PM$/, 'started over a week ago: the date');
+  assert.match(clock.areaExplorerRunClock(Date.UTC(2026, 11, 8, 6, 0), today), /^Dec 8,? 06:00 AM$/, 'done in over a week: the date');
+  assert.match(clock.areaExplorerRunClock(Date.UTC(2025, 11, 30, 9, 0), today), /2025/, 'another year: with it');
   // The filled part is the percent explored: the time so far spread over it, the time left over the rest
   vm.runInContext(functionSource('areaExplorerRunPosition'), context);
   const run = { started: 0, now: 100, end: 300, percent: 77 };
