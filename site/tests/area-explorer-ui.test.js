@@ -756,29 +756,23 @@ function testSectorGrid() {
 }
 
 function testHighlightsEditor() {
-  // The editor's draft: moved as a block, stepped past unselected neighbours, matched as the site matches
+  // The draft: moved into place, matched as the site matches
   const editor = { items: [] };
   const context = vm.createContext({ areaExplorerHighlightsEditor: () => editor });
-  for (const name of ['moveAreaExplorerHighlights', 'stepAreaExplorerHighlights', 'areaExplorerHighlightIndex', 'areaExplorerHighlightMatches',
-    'areaExplorerHighlightsStats', 'areaExplorerHighlightsChanges']) vm.runInContext(functionSource(name), context);
+  for (const name of ['moveAreaExplorerHighlights', 'areaExplorerHighlightIndex', 'areaExplorerHighlightMatches',
+    'areaExplorerHighlightsStats', 'areaExplorerHighlightsChanges', 'areaExplorerHighlightNote']) vm.runInContext(functionSource(name), context);
   context.formatNumber = value => String(value);
-  const reset = selected => { editor.items = ['A', 'B', 'C', 'D', 'E'].map((name, id) => ({ id, name, match: 'exact', selected: selected.includes(name) })); };
+  const reset = () => { editor.items = ['A', 'B', 'C', 'D', 'E'].map((name, id) => ({ id, name, match: 'exact' })); };
   const names = () => editor.items.map(item => item.name).join('');
-  reset(['B', 'D']);
-  context.moveAreaExplorerHighlights(new Set([1, 3]), 0);
-  assert.equal(names(), 'BDACE', 'the selected to the top, in their order');
-  reset(['B', 'D']);
-  context.moveAreaExplorerHighlights(new Set([1, 3]), Infinity);
-  assert.equal(names(), 'ACEBD', 'and to the bottom');
-  reset(['A', 'C']);
-  context.stepAreaExplorerHighlights(-1);
-  assert.equal(names(), 'ACBDE', 'the first stays put, the next goes up one');
-  reset(['D', 'E']);
-  context.stepAreaExplorerHighlights(1);
-  assert.equal(names(), 'ABCDE', 'nothing to pass at the bottom');
-  reset(['A']);
-  context.stepAreaExplorerHighlights(1);
-  assert.equal(names(), 'BACDE');
+  reset();
+  context.moveAreaExplorerHighlights(new Set([3]), 0);
+  assert.equal(names(), 'DABCE', 'a chip dropped at the front');
+  reset();
+  context.moveAreaExplorerHighlights(new Set([0]), 2);
+  assert.equal(names(), 'BCADE', 'before the third of the rest');
+  reset();
+  context.moveAreaExplorerHighlights(new Set([1]), Infinity);
+  assert.equal(names(), 'ACDEB', 'and to the end');
   const list = [{ name: 'Elytra', match: 'exact' }, { name: 'Shulker Box', match: 'contains' }, { name: ' ', match: 'contains' }];
   assert.equal(context.areaExplorerHighlightIndex(list, 'elytra'), 0);
   assert.equal(context.areaExplorerHighlightIndex(list, 'Pink Shulker Box'), 1);
@@ -792,7 +786,7 @@ function testHighlightsEditor() {
   ];
   const items = [
     { id: 1, name: 'Shulker Box', match: 'contains' }, { id: 2, name: 'Red Shulker Box', match: 'exact' },
-    { id: 3, name: 'Elytra', match: 'exact' }, { id: 4, name: 'elytra', match: 'exact' }
+    { id: 3, name: 'Elytra', match: 'exact' }, { id: 4, name: 'elytra', match: 'exact' }, { id: 5, name: 'Dragon Egg', match: 'exact' }
   ];
   const stats = context.areaExplorerHighlightsStats(items);
   assert.equal(stats.get(1).here, 3);
@@ -803,21 +797,31 @@ function testHighlightsEditor() {
   assert.equal(stats.get(3).here, 0, 'found elsewhere only');
   assert.equal(stats.get(3).total, 2);
   assert.equal(stats.get(4).duplicateOf, items[2], 'the same entry twice');
-  // The footer's summary of what's unsaved
+  // What a chip says about itself
+  const note = entry => context.areaExplorerHighlightNote(items, stats, entry);
+  assert.equal(note(items[0]).text, '2 kinds: Red Shulker Box, Shulker Box');
+  assert.equal(note(items[1]).text, 'Taken first by #1 Shulker Box');
+  assert.equal(note(items[1]).warn, true);
+  assert.equal(note(items[2]).text, '2 elsewhere, none here');
+  assert.equal(note(items[3]).text, 'Same as #3');
+  assert.equal(note(items[4]).text, 'Not found anywhere yet');
+  // The summary of what's unsaved
   editor.saved = [{ name: 'A', match: 'exact' }, { name: 'B', match: 'exact' }, { name: 'C', match: 'exact' }];
   editor.items = [{ name: 'C', match: 'exact' }, { name: 'A', match: 'contains' }, { name: 'D', match: 'exact' }];
   assert.equal(context.areaExplorerHighlightsChanges(), '1 added · 1 removed · 1 changed · order changed');
   editor.items = editor.saved.map(item => ({ ...item }));
   assert.equal(context.areaExplorerHighlightsChanges(), '');
-  // Wiring: administrators only, saved as a whole, Escape and the bulk tools
-  assert.match(indexHtml, /id="areaExplorerHighlightsEdit" class="[^"]*admin-only[^"]*"/);
-  for (const action of ['top', 'up', 'down', 'bottom', 'delete']) assert.match(indexHtml, new RegExp(`data-hl-bulk="${action}"`));
-  assert.match(functionSource('saveAreaExplorerHighlights'), /putJson\(`\/api\/area-explorer\/highlights\?\$\{params\}`/);
-  assert.match(functionSource('bindAreaExplorerHighlightsEditor'), /list\.addEventListener\('pointerdown', startAreaExplorerHighlightsDrag\)/, 'dragged with a mouse or a finger');
-  assert.match(functionSource('bindAreaExplorerHighlightsEditor'), /event\.key\.toLowerCase\(\) === 'z'[\s\S]*?undoAreaExplorerHighlights\(\)/, 'Ctrl+Z undoes');
-  assert.match(indexHtml, /id="areaExplorerHighlightsUndo"/);
-  assert.match(indexHtml, /id="areaExplorerHighlightsPreview"/);
-  assert.match(source, /Escape' && !\$\('#areaExplorerHighlightsModal'\)\?\.hidden\) \{\s+closeAreaExplorerHighlights\(\)/);
+  // Edited in the panel itself, by administrators: no dialog
+  assert.match(indexHtml, /class="area-explorer-highlights-actions admin-only" hidden>[\s\S]*?id="areaExplorerHighlightsEdit"[\s\S]*?id="areaExplorerHighlightsCancel"[\s\S]*?id="areaExplorerHighlightsSave"/);
+  assert.doesNotMatch(indexHtml, /areaExplorerHighlightsModal/);
+  assert.match(functionSource('renderAreaExplorerHighlights'), /if \(editor\.editing\) \{\s+sections\.push\(renderAreaExplorerHighlightsEditing\(\)\)/);
+  assert.match(functionSource('renderAreaExplorerHighlights'), /if \(editor\.drag\) \{\s+editor\.renderPending = true;/, 'a live update waits for the chip being dragged');
+  assert.match(functionSource('saveAreaExplorerHighlights'), /putJson\(`\/api\/area-explorer\/highlights\?\$\{areaExplorerHighlightsParams\(\)\}`/);
+  const bind = functionSource('bindAreaExplorerHighlightsEditor');
+  assert.match(bind, /const hold = event\.pointerType !== 'mouse';/, 'a finger drags after a hold, so the page still scrolls');
+  assert.match(bind, /touchmove', event => \{ if \(editor\.drag\) event\.preventDefault\(\); \}, \{ passive: false \}/);
+  assert.match(bind, /event\.key\.toLowerCase\(\) === 'z'[\s\S]*?undoAreaExplorerHighlights\(\)/, 'Ctrl+Z undoes');
+  assert.match(source, /Escape' && \$\('#areaExplorerHighlightsMenu'\) && !\$\('#areaExplorerHighlightsMenu'\)\.hidden\) \{\s+closeAreaExplorerHighlightMenu\(\)/);
 }
 
 (async () => {
