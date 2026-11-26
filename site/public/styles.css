@@ -430,8 +430,9 @@ select::-ms-expand {
 .topbar::before {
   content: "";
   position: absolute;
-  inset: 0 -16px auto;
-  height: 100%;
+  /* Reach up under the status bar so scrolled content never shows above the header. */
+  inset: calc(-1 * env(safe-area-inset-top, 0px)) -16px auto;
+  height: calc(100% + env(safe-area-inset-top, 0px));
   z-index: -1;
   border-bottom: 1px solid transparent;
   background: color-mix(in srgb, var(--bg) 94%, transparent);
@@ -452,7 +453,7 @@ select::-ms-expand {
 }
 
 .topbar.topbar-compact::before {
-  height: calc(100% - var(--dashboard-brand-collapse-shift));
+  height: calc(100% + env(safe-area-inset-top, 0px) - var(--dashboard-brand-collapse-shift));
 }
 
 .dashboard-brand {
