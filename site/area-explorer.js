@@ -1264,25 +1264,32 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   /**
-   * GET /api/area-explorer/highlights: the list, whether it's the built-in one, and the loot names
-   * found so far (most found first) for picking new entries from.
+   * GET /api/area-explorer/highlights?server=&dimension=: the list, whether it's the built-in one,
+   * and the loot found so far by name (most found first) - everywhere, and in the scope asked for
+   * (what the page shows) - for the editor's counts and for picking new entries.
    */
-  async function getHighlights() {
+  async function getHighlights(url = null) {
+    const server = normalizeScopeName(url?.searchParams.get('server'), 128);
+    const dimension = normalizeScopeName(url?.searchParams.get('dimension'), 64);
     const [items, row, names] = await Promise.all([
       getHighlightItems(),
       pool.query(`SELECT updated_by, updated_at FROM area_explorer_settings WHERE key = 'highlights'`).catch(() => ({ rows: [] })),
-      pool.query(`SELECT name, COUNT(*)::int AS count FROM area_explorer_finds WHERE kind = 'ITEM' AND removed_at IS NULL
-                  GROUP BY name ORDER BY count DESC, name LIMIT 1000`)
+      pool.query(`SELECT name, COUNT(*)::int AS count, SUM(item_count)::int AS items,
+                    COUNT(*) FILTER (WHERE server = $1 AND dimension = $2)::int AS here,
+                    COALESCE(SUM(item_count) FILTER (WHERE server = $1 AND dimension = $2), 0)::int AS here_items
+                  FROM area_explorer_finds WHERE kind = 'ITEM' AND removed_at IS NULL
+                  GROUP BY name ORDER BY here DESC, count DESC, name LIMIT 1500`, [server || null, dimension || null])
     ]);
     const saved = row.rows[0];
     return {
       items, custom: Boolean(saved), updatedBy: saved?.updated_by || null, updatedAt: saved?.updated_at || null,
-      defaults: DEFAULT_HIGHLIGHTS, foundNames: names.rows.map(item => ({ name: item.name, count: item.count }))
+      defaults: DEFAULT_HIGHLIGHTS,
+      foundNames: names.rows.map(item => ({ name: item.name, count: item.count, items: item.items, here: item.here, hereItems: item.here_items }))
     };
   }
 
   /** An administrator's list replaces the one in use; {reset: true} goes back to the built-in one. */
-  async function setHighlights(currentUser, body) {
+  async function setHighlights(currentUser, body, url = null) {
     if (body?.reset === true) {
       await pool.query(`DELETE FROM area_explorer_settings WHERE key = 'highlights'`);
       await recordSystemLog({ category: 'area_explorer', actor: currentUser.username, message: 'Area Explorer highlights reset to the built-in list.' });
@@ -1295,7 +1302,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       await recordSystemLog({ category: 'area_explorer', actor: currentUser.username, message: `Area Explorer highlights changed: ${items.length} ${items.length === 1 ? 'item' : 'items'}.` });
     }
     publish('area_explorer_updated', { highlights: true });
-    return getHighlights();
+    return getHighlights(url);
   }
 
   async function listTokens() {
@@ -1355,10 +1362,10 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       return { statusCode: 201, payload: await createWaypoint(currentUser, await readBody(req)) };
     }
     // What the Highlights panel looks for: everyone sees it, administrators change it
-    if (path === '/api/area-explorer/highlights' && req.method === 'GET') return { statusCode: 200, payload: await getHighlights() };
+    if (path === '/api/area-explorer/highlights' && req.method === 'GET') return { statusCode: 200, payload: await getHighlights(url) };
     if (path === '/api/area-explorer/highlights' && req.method === 'PUT') {
       assertAdmin(currentUser);
-      return { statusCode: 200, payload: await setHighlights(currentUser, await readBody(req)) };
+      return { statusCode: 200, payload: await setHighlights(currentUser, await readBody(req), url) };
     }
     const findMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)$/);
     if (findMatch && req.method === 'GET') return { statusCode: 200, payload: await getFind(findMatch[1], currentUser) };

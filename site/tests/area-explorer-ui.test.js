@@ -759,7 +759,9 @@ function testHighlightsEditor() {
   // The editor's draft: moved as a block, stepped past unselected neighbours, matched as the site matches
   const editor = { items: [] };
   const context = vm.createContext({ areaExplorerHighlightsEditor: () => editor });
-  for (const name of ['moveAreaExplorerHighlights', 'stepAreaExplorerHighlights', 'areaExplorerHighlightIndex']) vm.runInContext(functionSource(name), context);
+  for (const name of ['moveAreaExplorerHighlights', 'stepAreaExplorerHighlights', 'areaExplorerHighlightIndex', 'areaExplorerHighlightMatches',
+    'areaExplorerHighlightsStats', 'areaExplorerHighlightsChanges']) vm.runInContext(functionSource(name), context);
+  context.formatNumber = value => String(value);
   const reset = selected => { editor.items = ['A', 'B', 'C', 'D', 'E'].map((name, id) => ({ id, name, match: 'exact', selected: selected.includes(name) })); };
   const names = () => editor.items.map(item => item.name).join('');
   reset(['B', 'D']);
@@ -781,10 +783,40 @@ function testHighlightsEditor() {
   assert.equal(context.areaExplorerHighlightIndex(list, 'elytra'), 0);
   assert.equal(context.areaExplorerHighlightIndex(list, 'Pink Shulker Box'), 1);
   assert.equal(context.areaExplorerHighlightIndex(list, 'Dirt'), -1, 'a blank entry matches nothing');
+  // What each entry gets: finds here and everywhere, the kinds a "contains" takes, and an entry left
+  // with nothing because one above takes its loot first
+  editor.foundNames = [
+    { name: 'Red Shulker Box', count: 3, items: 3, here: 2, hereItems: 2 },
+    { name: 'Shulker Box', count: 1, items: 1, here: 1, hereItems: 1 },
+    { name: 'Elytra', count: 2, items: 2, here: 0, hereItems: 0 }
+  ];
+  const items = [
+    { id: 1, name: 'Shulker Box', match: 'contains' }, { id: 2, name: 'Red Shulker Box', match: 'exact' },
+    { id: 3, name: 'Elytra', match: 'exact' }, { id: 4, name: 'elytra', match: 'exact' }
+  ];
+  const stats = context.areaExplorerHighlightsStats(items);
+  assert.equal(stats.get(1).here, 3);
+  assert.equal(stats.get(1).total, 4);
+  assert.equal(JSON.stringify(stats.get(1).kinds.map(item => item.name)), '["Red Shulker Box","Shulker Box"]');
+  assert.equal(stats.get(2).total, 0);
+  assert.equal(stats.get(2).takenBy, items[0], 'the "contains" above takes it first');
+  assert.equal(stats.get(3).here, 0, 'found elsewhere only');
+  assert.equal(stats.get(3).total, 2);
+  assert.equal(stats.get(4).duplicateOf, items[2], 'the same entry twice');
+  // The footer's summary of what's unsaved
+  editor.saved = [{ name: 'A', match: 'exact' }, { name: 'B', match: 'exact' }, { name: 'C', match: 'exact' }];
+  editor.items = [{ name: 'C', match: 'exact' }, { name: 'A', match: 'contains' }, { name: 'D', match: 'exact' }];
+  assert.equal(context.areaExplorerHighlightsChanges(), '1 added · 1 removed · 1 changed · order changed');
+  editor.items = editor.saved.map(item => ({ ...item }));
+  assert.equal(context.areaExplorerHighlightsChanges(), '');
   // Wiring: administrators only, saved as a whole, Escape and the bulk tools
   assert.match(indexHtml, /id="areaExplorerHighlightsEdit" class="[^"]*admin-only[^"]*"/);
   for (const action of ['top', 'up', 'down', 'bottom', 'delete']) assert.match(indexHtml, new RegExp(`data-hl-bulk="${action}"`));
-  assert.match(functionSource('saveAreaExplorerHighlights'), /putJson\('\/api\/area-explorer\/highlights'/);
+  assert.match(functionSource('saveAreaExplorerHighlights'), /putJson\(`\/api\/area-explorer\/highlights\?\$\{params\}`/);
+  assert.match(functionSource('bindAreaExplorerHighlightsEditor'), /list\.addEventListener\('pointerdown', startAreaExplorerHighlightsDrag\)/, 'dragged with a mouse or a finger');
+  assert.match(functionSource('bindAreaExplorerHighlightsEditor'), /event\.key\.toLowerCase\(\) === 'z'[\s\S]*?undoAreaExplorerHighlights\(\)/, 'Ctrl+Z undoes');
+  assert.match(indexHtml, /id="areaExplorerHighlightsUndo"/);
+  assert.match(indexHtml, /id="areaExplorerHighlightsPreview"/);
   assert.match(source, /Escape' && !\$\('#areaExplorerHighlightsModal'\)\?\.hidden\) \{\s+closeAreaExplorerHighlights\(\)/);
 }
 

@@ -7307,21 +7307,29 @@ function renderAreaExplorerHighlights(scope) {
 }
 
 // The Highlights editor (administrators): the loot the panel looks for, in order of importance. The
-// list is edited as a draft and goes to the site as a whole on Save.
+// list is edited as a draft - every change can be undone - and goes to the site as a whole on Save.
+// Counts are for the server and dimension picked on the page, as the panel shows them.
 
 /** Where a loot name goes in a highlights list (as the site works it out), or -1. */
 function areaExplorerHighlightIndex(items, itemName) {
   const name = String(itemName || '').toLowerCase();
-  return items.findIndex(entry => {
-    const wanted = String(entry.name || '').trim().toLowerCase();
-    if (!wanted) return false;
-    return entry.match === 'contains' ? name.includes(wanted) : name === wanted;
-  });
+  return items.findIndex(entry => areaExplorerHighlightMatches(entry, name));
+}
+
+function areaExplorerHighlightMatches(entry, lowerName) {
+  const wanted = String(entry.name || '').trim().toLowerCase();
+  if (!wanted) return false;
+  return entry.match === 'contains' ? lowerName.includes(wanted) : lowerName === wanted;
 }
 
 function areaExplorerHighlightsEditor() {
   const ae = areaExplorerState();
-  if (!ae.hlEditor) ae.hlEditor = { items: [], saved: '', nextId: 1, filter: '', foundNames: [], defaults: [], dragId: null };
+  if (!ae.hlEditor) {
+    ae.hlEditor = {
+      items: [], saved: [], nextId: 1, filter: '', search: '', newMatch: 'exact', foundNames: [], defaults: [],
+      history: [], lastSelectId: null, drag: null, nameBefore: null
+    };
+  }
   return ae.hlEditor;
 }
 
@@ -7331,72 +7339,115 @@ function areaExplorerHighlightsSnapshot(items) {
 
 function areaExplorerHighlightsDirty() {
   const editor = areaExplorerHighlightsEditor();
-  return areaExplorerHighlightsSnapshot(editor.items) !== editor.saved;
+  return areaExplorerHighlightsSnapshot(editor.items) !== areaExplorerHighlightsSnapshot(editor.saved);
 }
 
 function setAreaExplorerHighlightsDraft(items, { saved = false } = {}) {
   const editor = areaExplorerHighlightsEditor();
   editor.items = items.map(entry => ({ id: editor.nextId++, name: entry.name, match: entry.match === 'contains' ? 'contains' : 'exact', selected: false }));
-  if (saved) editor.saved = areaExplorerHighlightsSnapshot(editor.items);
+  if (saved) {
+    editor.saved = editor.items.map(entry => ({ name: entry.name, match: entry.match }));
+    editor.history = [];
+  }
+}
+
+/** Keeps the draft as it is before a change, for Undo. */
+function rememberAreaExplorerHighlights() {
+  const editor = areaExplorerHighlightsEditor();
+  editor.history.push(editor.items.map(entry => ({ ...entry })));
+  if (editor.history.length > 100) editor.history.shift();
+}
+
+function undoAreaExplorerHighlights() {
+  const editor = areaExplorerHighlightsEditor();
+  const previous = editor.history.pop();
+  if (!previous) return;
+  editor.items = previous;
+  renderAreaExplorerHighlightsEditor();
+}
+
+/** The scope the page shows: what the counts and the preview are for. */
+function areaExplorerHighlightsScopeLabel() {
+  const [server, dimension] = areaExplorerState().scope.split('|');
+  return server ? `${server} · ${prettyDimension(dimension)}` : '';
 }
 
 async function openAreaExplorerHighlights() {
   const editor = areaExplorerHighlightsEditor();
   const button = $('#areaExplorerHighlightsEdit');
+  const [server, dimension] = areaExplorerState().scope.split('|');
+  const params = new URLSearchParams();
+  if (server) params.set('server', server);
+  if (dimension) params.set('dimension', dimension);
   button.disabled = true;
   try {
-    const data = await fetchJson('/api/area-explorer/highlights');
-    editor.foundNames = data.foundNames || [];
-    editor.defaults = data.defaults || [];
-    editor.custom = data.custom;
-    editor.updatedBy = data.updatedBy;
-    editor.updatedAt = data.updatedAt;
-    editor.filter = '';
-    setAreaExplorerHighlightsDraft(data.items || [], { saved: true });
+    applyAreaExplorerHighlightsData(await fetchJson(`/api/area-explorer/highlights?${params}`));
   } catch (error) {
     setBanner(`Could not load the highlights: ${error.message}`);
     return;
   } finally {
     button.disabled = false;
   }
+  editor.filter = '';
+  editor.search = '';
   $('#areaExplorerHighlightsFilter').value = '';
   $('#areaExplorerHighlightsNew').value = '';
   $('#areaExplorerHighlightsError').hidden = true;
-  const origin = editor.custom
-    ? `Set by ${editor.updatedBy || 'an administrator'}${editor.updatedAt ? `, ${formatFullDateTime(editor.updatedAt)}` : ''}.`
-    : 'This is the built-in list.';
-  $('#areaExplorerHighlightsNote').textContent = `Most important first. A find counts for the first entry it matches; drag rows, use the arrows or type a position to reorder. ${origin}`;
-  renderAreaExplorerHighlightsNames();
   renderAreaExplorerHighlightsEditor();
   $('#areaExplorerHighlightsModal').hidden = false;
   document.body.classList.add('modal-open');
   $('#areaExplorerHighlightsNew').focus();
 }
 
+function applyAreaExplorerHighlightsData(data) {
+  const editor = areaExplorerHighlightsEditor();
+  editor.foundNames = data.foundNames || [];
+  editor.defaults = data.defaults || [];
+  editor.custom = data.custom;
+  editor.updatedBy = data.updatedBy;
+  editor.updatedAt = data.updatedAt;
+  setAreaExplorerHighlightsDraft(data.items || [], { saved: true });
+}
+
 function closeAreaExplorerHighlights({ force = false } = {}) {
   if (!force && areaExplorerHighlightsDirty() && !window.confirm('Close without saving the changes to the highlights?')) return;
+  endAreaExplorerHighlightsDrag(false);
   $('#areaExplorerHighlightsModal').hidden = true;
   document.body.classList.remove('modal-open');
 }
 
-/** Suggestions for a new entry: the loot found so far, then the built-in entries not on the list. */
-function renderAreaExplorerHighlightsNames() {
-  const editor = areaExplorerHighlightsEditor();
-  const options = new Map();
-  for (const item of editor.foundNames) options.set(item.name.toLowerCase(), { name: item.name, label: `found ${formatNumber(item.count)}` });
-  for (const item of editor.defaults) if (!options.has(item.name.toLowerCase())) options.set(item.name.toLowerCase(), { name: item.name, label: 'built-in' });
-  $('#areaExplorerHighlightsNames').innerHTML = [...options.values()]
-    .map(option => `<option value="${escapeHtml(option.name)}" label="${escapeHtml(option.label)}"></option>`).join('');
-}
-
-/** How many finds each entry would get with the list as it is now (over every server). */
-function areaExplorerHighlightsCounts(items) {
-  const counts = new Map(items.map(entry => [entry.id, 0]));
+/**
+ * What each entry gets with the list as it is now, in this scope and everywhere: finds, the kinds of
+ * loot it takes, and - for an entry that gets nothing although loot matches it - the entry above
+ * that takes that loot first.
+ */
+function areaExplorerHighlightsStats(items) {
+  const stats = new Map(items.map(entry => [entry.id, { here: 0, hereItems: 0, total: 0, kinds: [], takenBy: null, duplicateOf: null }]));
   for (const item of areaExplorerHighlightsEditor().foundNames) {
-    const index = areaExplorerHighlightIndex(items, item.name);
-    if (index >= 0) counts.set(items[index].id, counts.get(items[index].id) + item.count);
+    const lower = item.name.toLowerCase();
+    const index = areaExplorerHighlightIndex(items, lower);
+    if (index < 0) continue;
+    const stat = stats.get(items[index].id);
+    stat.here += item.here || 0;
+    stat.hereItems += item.hereItems || 0;
+    stat.total += item.count || 0;
+    stat.kinds.push(item);
+    // Loot this one would take on its own, but an earlier entry takes first
+    items.forEach((entry, position) => {
+      if (position > index && areaExplorerHighlightMatches(entry, lower)) {
+        const other = stats.get(entry.id);
+        if (!other.takenBy) other.takenBy = items[index];
+      }
+    });
   }
-  return counts;
+  const seen = new Map();
+  for (const entry of items) {
+    const key = `${entry.match}:${entry.name.trim().toLowerCase()}`;
+    if (!entry.name.trim()) continue;
+    if (seen.has(key)) stats.get(entry.id).duplicateOf = seen.get(key);
+    else seen.set(key, entry);
+  }
+  return stats;
 }
 
 function areaExplorerHighlightsShown() {
@@ -7405,46 +7456,205 @@ function areaExplorerHighlightsShown() {
   return filter ? editor.items.filter(entry => entry.name.toLowerCase().includes(filter)) : editor.items;
 }
 
+function areaExplorerHighlightIcon(name) {
+  const icon = areaExplorerFindIcon({ kind: 'ITEM', name: String(name || '').trim() || 'Chest' });
+  return `<img src="${escapeHtml(icon.src)}" data-fallback="${escapeHtml(icon.fallback)}" alt="" width="28" height="28" loading="lazy" decoding="async">`;
+}
+
 function renderAreaExplorerHighlightsEditor() {
   const editor = areaExplorerHighlightsEditor();
+  const stats = areaExplorerHighlightsStats(editor.items);
+  editor.stats = stats;
+  renderAreaExplorerHighlightsList(stats);
+  renderAreaExplorerHighlightsSide(stats);
+}
+
+/** The side, the toolbar and the footer: everything but the rows, so a name being typed keeps its field. */
+function renderAreaExplorerHighlightsSide(stats = areaExplorerHighlightsStats(areaExplorerHighlightsEditor().items)) {
+  renderAreaExplorerHighlightsMeta();
+  renderAreaExplorerHighlightsSuggestions();
+  renderAreaExplorerHighlightsPreview(stats);
+  renderAreaExplorerHighlightsToolbar();
+}
+
+function renderAreaExplorerHighlightsMeta() {
+  const editor = areaExplorerHighlightsEditor();
+  const scope = areaExplorerHighlightsScopeLabel();
+  const origin = editor.custom
+    ? `Set by ${editor.updatedBy || 'an administrator'}${editor.updatedAt ? `, ${formatFullDateTime(editor.updatedAt)}` : ''}`
+    : 'The built-in list';
+  $('#areaExplorerHighlightsMeta').innerHTML = [
+    `<span>${escapeHtml(origin)}</span>`,
+    scope ? `<span>Counts for <strong>${escapeHtml(scope)}</strong></span>` : '',
+    `<span class="area-explorer-hl-legend"><i aria-hidden="true"></i>In the panel at first glance</span>`
+  ].filter(Boolean).join('');
+}
+
+function renderAreaExplorerHighlightsList(stats) {
+  const editor = areaExplorerHighlightsEditor();
   const list = $('#areaExplorerHighlightsList');
-  const counts = areaExplorerHighlightsCounts(editor.items);
   const shown = areaExplorerHighlightsShown();
   const last = editor.items.length;
-  list.innerHTML = shown.length ? shown.map(entry => {
+  const top = new Set(editor.items.filter(entry => stats.get(entry.id).here > 0).slice(0, AREA_EXPLORER_TOP_VALUABLE).map(entry => entry.id));
+  const most = Math.max(1, ...editor.items.map(entry => stats.get(entry.id).here));
+  list.classList.toggle('is-filtered', Boolean(editor.filter.trim()));
+  // The field in focus stays in focus, with its caret, across the redraw
+  const active = list.contains(document.activeElement) ? document.activeElement : null;
+  const focus = active && {
+    id: active.closest('[data-hl-id]')?.dataset.hlId,
+    field: ['data-hl-name', 'data-hl-position', 'data-hl-select', 'data-hl-delete'].find(name => active.hasAttribute(name)),
+    move: active.dataset.hlMove, start: active.selectionStart, end: active.selectionEnd
+  };
+  if (!shown.length) {
+    list.innerHTML = `<li class="area-explorer-hl-empty">${editor.items.length
+      ? 'Nothing on the list matches the filter.'
+      : 'The list is empty, so the panel shows no loot.<br>Add some from the left, or bring back the built-in list.'}</li>`;
+    return;
+  }
+  list.innerHTML = shown.map(entry => {
     const position = editor.items.indexOf(entry) + 1;
-    const count = counts.get(entry.id) || 0;
-    return `<li class="area-explorer-hl-row${entry.selected ? ' is-selected' : ''}" data-hl-id="${entry.id}">
-      <span class="area-explorer-hl-handle" aria-hidden="true" title="Drag to reorder">⋮⋮</span>
-      <input class="area-explorer-hl-check" type="checkbox" data-hl-select${entry.selected ? ' checked' : ''} aria-label="Select ${escapeHtml(entry.name)}">
-      <input class="area-explorer-hl-position" type="number" min="1" max="${last}" step="1" value="${position}" data-hl-position aria-label="Position of ${escapeHtml(entry.name)}">
-      <input class="area-explorer-hl-name" value="${escapeHtml(entry.name)}" maxlength="128" data-hl-name aria-label="Item name" placeholder="Item name">
-      <select class="area-explorer-hl-match" data-hl-match aria-label="How the name matches">
-        <option value="exact"${entry.match === 'exact' ? ' selected' : ''}>Exact</option>
-        <option value="contains"${entry.match === 'contains' ? ' selected' : ''}>Contains</option>
-      </select>
-      <span class="area-explorer-hl-count${count ? '' : ' is-none'}" title="Finds it gets with this list, over every server">${count ? `×${formatNumber(count)}` : '-'}</span>
+    const stat = stats.get(entry.id);
+    const name = entry.name.trim();
+    // What the line under the name says: why it gets nothing, or what it takes
+    let note = '';
+    let noteClass = '';
+    if (!name) { note = 'Give it a name'; noteClass = 'is-warn'; }
+    else if (stat.duplicateOf) { note = `Same as #${editor.items.indexOf(stat.duplicateOf) + 1}`; noteClass = 'is-warn'; }
+    else if (!stat.total && stat.takenBy) { note = `Taken first by #${editor.items.indexOf(stat.takenBy) + 1} ${stat.takenBy.name.trim()}`; noteClass = 'is-warn'; }
+    else if (entry.match === 'contains' && stat.kinds.length) {
+      const kinds = stat.kinds.map(item => item.name);
+      note = `${formatNumber(kinds.length)} ${kinds.length === 1 ? 'kind' : 'kinds'}: ${kinds.slice(0, 3).join(', ')}${kinds.length > 3 ? '…' : ''}`;
+    } else if (!stat.total) note = 'Not found anywhere yet';
+    else if (!stat.here) note = `${formatNumber(stat.total)} elsewhere, none here`;
+    const classes = ['area-explorer-hl-row', entry.selected && 'is-selected', top.has(entry.id) && 'is-top', !stat.here && 'is-none', noteClass && 'is-warn'].filter(Boolean).join(' ');
+    const title = `${formatNumber(stat.here)} ${stat.here === 1 ? 'find' : 'finds'} here (${formatNumber(stat.hereItems)} items) · ${formatNumber(stat.total)} on every server`;
+    return `<li class="${classes}" data-hl-id="${entry.id}">
+      <span class="area-explorer-hl-handle" title="Drag to reorder" aria-hidden="true"><svg viewBox="0 0 10 16"><circle cx="2.5" cy="3" r="1.4"/><circle cx="7.5" cy="3" r="1.4"/><circle cx="2.5" cy="8" r="1.4"/><circle cx="7.5" cy="8" r="1.4"/><circle cx="2.5" cy="13" r="1.4"/><circle cx="7.5" cy="13" r="1.4"/></svg></span>
+      <input class="area-explorer-hl-check" type="checkbox" data-hl-select${entry.selected ? ' checked' : ''} aria-label="Select ${escapeHtml(name || 'entry')}">
+      <input class="area-explorer-hl-position" type="number" min="1" max="${last}" step="1" value="${position}" data-hl-position aria-label="Position of ${escapeHtml(name || 'entry')}" title="Type a position to move it there">
+      <span class="area-explorer-hl-icon" aria-hidden="true">${areaExplorerHighlightIcon(name)}</span>
+      <span class="area-explorer-hl-text">
+        <input class="area-explorer-hl-name" value="${escapeHtml(entry.name)}" maxlength="128" data-hl-name aria-label="Item name" placeholder="Item name" spellcheck="false">
+        ${note ? `<span class="area-explorer-hl-note ${noteClass}">${escapeHtml(note)}</span>` : ''}
+      </span>
+      <span class="area-explorer-hl-seg" role="group" aria-label="How the name matches">
+        <button type="button" data-hl-match="exact" aria-pressed="${entry.match === 'exact'}" title="Only loot with exactly this name">Exact</button>
+        <button type="button" data-hl-match="contains" aria-pressed="${entry.match === 'contains'}" title="Any loot whose name has this in it">Contains</button>
+      </span>
+      <span class="area-explorer-hl-count" title="${escapeHtml(title)}">
+        <strong>${stat.here ? `×${formatNumber(stat.here)}` : '-'}</strong>
+        <span class="area-explorer-hl-bar"><i style="width:${Math.round((stat.here / most) * 100)}%"></i></span>
+      </span>
       <span class="area-explorer-hl-row-actions">
-        <button class="ghost-button" type="button" data-hl-move="-1" aria-label="Move up" title="Up"${position === 1 ? ' disabled' : ''}>↑</button>
-        <button class="ghost-button" type="button" data-hl-move="1" aria-label="Move down" title="Down"${position === last ? ' disabled' : ''}>↓</button>
-        <button class="ghost-button is-danger" type="button" data-hl-delete aria-label="Delete ${escapeHtml(entry.name)}" title="Delete">&times;</button>
+        <button class="ghost-button" type="button" data-hl-move="-1" aria-label="Move up" title="Up (Alt+↑)"${position === 1 ? ' disabled' : ''}>↑</button>
+        <button class="ghost-button" type="button" data-hl-move="1" aria-label="Move down" title="Down (Alt+↓)"${position === last ? ' disabled' : ''}>↓</button>
+        <button class="ghost-button is-danger" type="button" data-hl-delete aria-label="Delete ${escapeHtml(name || 'entry')}" title="Delete">&times;</button>
       </span>
     </li>`;
-  }).join('') : `<li class="area-explorer-empty">${editor.items.length ? 'Nothing matches the filter.' : 'The list is empty: Highlights shows no loot. Add an item above.'}</li>`;
-  renderAreaExplorerHighlightsToolbar();
+  }).join('');
+  if (focus?.id && (focus.field || focus.move)) {
+    const row = list.querySelector(`[data-hl-id="${focus.id}"]`);
+    const field = row?.querySelector(focus.move ? `[data-hl-move="${focus.move}"]` : `[${focus.field}]`);
+    field?.focus({ preventScroll: true });
+    if (field && focus.field === 'data-hl-name' && focus.start !== null) field.setSelectionRange(focus.start, focus.end);
+  }
+}
+
+/** Loot not on the list yet - found here first, then elsewhere, then the built-in entries - matching the search. */
+function areaExplorerHighlightsCandidates() {
+  const editor = areaExplorerHighlightsEditor();
+  const query = editor.search.trim().toLowerCase();
+  const candidates = new Map();
+  for (const item of editor.foundNames) {
+    const lower = item.name.toLowerCase();
+    if (areaExplorerHighlightIndex(editor.items, lower) >= 0 || candidates.has(lower)) continue;
+    candidates.set(lower, { name: item.name, here: item.here || 0, total: item.count || 0 });
+  }
+  for (const item of editor.defaults) {
+    const lower = item.name.toLowerCase();
+    if (candidates.has(lower) || editor.items.some(entry => entry.name.trim().toLowerCase() === lower)) continue;
+    candidates.set(lower, { name: item.name, here: 0, total: 0, builtIn: true, match: item.match });
+  }
+  return [...candidates.values()].filter(item => !query || item.name.toLowerCase().includes(query));
+}
+
+const AREA_EXPLORER_HL_SUGGESTIONS = 40;
+
+function renderAreaExplorerHighlightsSuggestions() {
+  const editor = areaExplorerHighlightsEditor();
+  const name = editor.search.trim();
+  const candidates = areaExplorerHighlightsCandidates();
+  const lower = name.toLowerCase();
+  // What a typed name would take: how many kinds of the loot found
+  const takes = name ? editor.foundNames.filter(item => areaExplorerHighlightMatches({ name, match: editor.newMatch }, item.name.toLowerCase())) : [];
+  const exists = name && editor.items.some(entry => entry.name.trim().toLowerCase() === lower && entry.match === editor.newMatch);
+  $('#areaExplorerHighlightsAdd').disabled = !name || exists;
+  $$('[data-hl-new-match]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.hlNewMatch === editor.newMatch)));
+  const hint = $('#areaExplorerHighlightsNewHint');
+  hint.classList.toggle('is-warn', Boolean(exists));
+  hint.textContent = !name
+    ? 'Found loot that no entry takes yet; tap one to add it at the bottom.'
+    : exists ? `"${name}" is on the list already.`
+      : takes.length ? `"${name}" would take ${formatNumber(takes.length)} ${takes.length === 1 ? 'kind' : 'kinds'} of loot found${takes.length > 1 ? `: ${takes.slice(0, 3).map(item => item.name).join(', ')}${takes.length > 3 ? '…' : ''}` : ''}.`
+        : `Nothing called "${name}" has been found yet - it can still be added.`;
+  const shown = candidates.slice(0, AREA_EXPLORER_HL_SUGGESTIONS);
+  $('#areaExplorerHighlightsSuggest').innerHTML = shown.length
+    ? shown.map(item => `<li><button class="area-explorer-hl-suggestion" type="button" data-hl-suggest="${escapeHtml(item.name)}"${item.match ? ` data-hl-suggest-match="${escapeHtml(item.match)}"` : ''} title="Add ${escapeHtml(item.name)}">
+        ${areaExplorerHighlightIcon(item.name)}
+        <span class="area-explorer-hl-suggestion-name">${escapeHtml(item.name)}</span>
+        <span class="area-explorer-hl-suggestion-count">${item.here ? `${formatNumber(item.here)} here` : item.total ? `${formatNumber(item.total)} elsewhere` : 'built-in'}</span>
+        <span class="area-explorer-hl-suggestion-add" aria-hidden="true">+</span>
+      </button></li>`).join('')
+      + (candidates.length > shown.length ? `<li class="area-explorer-hl-more">${formatNumber(candidates.length - shown.length)} more - search to narrow</li>` : '')
+    : `<li class="area-explorer-hl-more">${name ? 'No loot found by that name is off the list.' : 'Every kind of loot found is on the list.'}</li>`;
+}
+
+/** The panel's loot as it will look: the first few, the rest behind Show all. */
+function renderAreaExplorerHighlightsPreview(stats) {
+  const editor = areaExplorerHighlightsEditor();
+  const found = editor.items.filter(entry => entry.name.trim() && stats.get(entry.id).here > 0);
+  const chips = found.slice(0, AREA_EXPLORER_TOP_VALUABLE).map(entry => `<span class="area-explorer-highlight-chip kind-item">
+      ${areaExplorerHighlightIcon(entry.name).replace('width="28" height="28"', 'width="24" height="24"')}
+      <span class="area-explorer-highlight-name">${escapeHtml(entry.name.trim())}</span>
+      <span class="area-explorer-highlight-count">${formatNumber(stats.get(entry.id).here)}</span>
+    </span>`);
+  if (found.length > AREA_EXPLORER_TOP_VALUABLE) chips.push(`<span class="area-explorer-hl-preview-more">+${formatNumber(found.length - AREA_EXPLORER_TOP_VALUABLE)} on Show all</span>`);
+  $('#areaExplorerHighlightsPreview').innerHTML = chips.length ? chips.join('') : '<span class="area-explorer-hl-hint">Nothing on the list has been found here yet.</span>';
+}
+
+/** Unsaved: what's added, taken off, changed or moved since the list was loaded. */
+function areaExplorerHighlightsChanges() {
+  const editor = areaExplorerHighlightsEditor();
+  const key = entry => entry.name.trim().toLowerCase();
+  const before = new Map(editor.saved.map((entry, index) => [key(entry), { ...entry, index }]));
+  const now = new Set(editor.items.map(key));
+  const added = editor.items.filter(entry => !before.has(key(entry))).length;
+  const removed = editor.saved.filter(entry => !now.has(key(entry))).length;
+  const kept = editor.items.filter(entry => before.has(key(entry)));
+  const changed = kept.filter(entry => before.get(key(entry)).match !== entry.match).length;
+  const order = kept.map(entry => before.get(key(entry)).index);
+  const moved = order.some((index, i) => i && index < order[i - 1]);
+  return [added && `${formatNumber(added)} added`, removed && `${formatNumber(removed)} removed`, changed && `${formatNumber(changed)} changed`, moved && 'order changed']
+    .filter(Boolean).join(' · ');
 }
 
 function renderAreaExplorerHighlightsToolbar() {
   const editor = areaExplorerHighlightsEditor();
   const shown = areaExplorerHighlightsShown();
   const selected = editor.items.filter(entry => entry.selected).length;
-  $('#areaExplorerHighlightsSelected').textContent = `${formatNumber(selected)} of ${formatNumber(editor.items.length)} selected`;
+  $('#areaExplorerHighlightsSelected').textContent = selected
+    ? `${formatNumber(selected)} of ${formatNumber(editor.items.length)} selected`
+    : `${formatNumber(editor.items.length)} ${editor.items.length === 1 ? 'entry' : 'entries'}`;
   const all = $('#areaExplorerHighlightsSelectAll');
   const shownSelected = shown.filter(entry => entry.selected).length;
   all.checked = shown.length > 0 && shownSelected === shown.length;
   all.indeterminate = shownSelected > 0 && shownSelected < shown.length;
   $$('[data-hl-bulk]').forEach(button => { button.disabled = !selected; });
-  $('#areaExplorerHighlightsSave').disabled = !areaExplorerHighlightsDirty();
+  $('#areaExplorerHighlightsUndo').disabled = !editor.history.length;
+  const dirty = areaExplorerHighlightsDirty();
+  $('#areaExplorerHighlightsSave').disabled = !dirty;
+  $('#areaExplorerHighlightsChanges').textContent = dirty ? `Unsaved: ${areaExplorerHighlightsChanges() || 'changes'}` : 'No changes';
+  $('#areaExplorerHighlightsChanges').classList.toggle('is-dirty', dirty);
 }
 
 /** Moves the given entries, in their order, so the first of them lands at {@code index} of the rest. */
@@ -7467,27 +7677,37 @@ function stepAreaExplorerHighlights(direction) {
   }
 }
 
-function addAreaExplorerHighlight() {
+/** A new entry at the bottom - least important until it's moved up - shown and flashed. */
+function addAreaExplorerHighlight(name, match) {
   const editor = areaExplorerHighlightsEditor();
-  const input = $('#areaExplorerHighlightsNew');
-  const name = input.value.trim();
-  const match = $('#areaExplorerHighlightsNewMatch').value === 'contains' ? 'contains' : 'exact';
-  const error = $('#areaExplorerHighlightsError');
-  if (!name) { input.focus(); return; }
-  const existing = editor.items.find(entry => entry.name.trim().toLowerCase() === name.toLowerCase() && entry.match === match);
-  if (existing) {
-    error.textContent = `"${existing.name}" is on the list already, at ${editor.items.indexOf(existing) + 1}.`;
-    error.hidden = false;
-    return;
-  }
-  error.hidden = true;
-  // A new entry goes at the bottom: least important until it's moved up
-  editor.items.push({ id: editor.nextId++, name, match, selected: false });
-  input.value = '';
+  name = String(name || '').trim();
+  if (!name) return;
+  if (editor.items.some(entry => entry.name.trim().toLowerCase() === name.toLowerCase() && entry.match === match)) return;
+  rememberAreaExplorerHighlights();
+  const entry = { id: editor.nextId++, name, match, selected: false };
+  editor.items.push(entry);
   editor.filter = '';
   $('#areaExplorerHighlightsFilter').value = '';
   renderAreaExplorerHighlightsEditor();
-  $('#areaExplorerHighlightsList').lastElementChild?.scrollIntoView({ block: 'nearest' });
+  flashAreaExplorerHighlight(entry.id);
+}
+
+function flashAreaExplorerHighlight(id) {
+  const row = $(`#areaExplorerHighlightsList [data-hl-id="${id}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  row.classList.remove('is-flash');
+  void row.offsetWidth;
+  row.classList.add('is-flash');
+}
+
+function addAreaExplorerHighlightFromSearch() {
+  const editor = areaExplorerHighlightsEditor();
+  const input = $('#areaExplorerHighlightsNew');
+  addAreaExplorerHighlight(input.value, editor.newMatch);
+  input.value = '';
+  editor.search = '';
+  renderAreaExplorerHighlightsSide();
   input.focus();
 }
 
@@ -7495,20 +7715,25 @@ async function saveAreaExplorerHighlights(event) {
   event?.preventDefault();
   const editor = areaExplorerHighlightsEditor();
   const error = $('#areaExplorerHighlightsError');
-  const blank = editor.items.findIndex(entry => !entry.name.trim());
-  if (blank >= 0) {
-    error.textContent = `Entry ${blank + 1} has no name: give it one or delete it.`;
+  const blank = editor.items.find(entry => !entry.name.trim());
+  if (blank) {
+    error.textContent = `Entry ${editor.items.indexOf(blank) + 1} has no name: give it one or delete it.`;
     error.hidden = false;
+    flashAreaExplorerHighlight(blank.id);
     return;
   }
   const button = $('#areaExplorerHighlightsSave');
+  const [server, dimension] = areaExplorerState().scope.split('|');
+  const params = new URLSearchParams();
+  if (server) params.set('server', server);
+  if (dimension) params.set('dimension', dimension);
   button.disabled = true;
   error.hidden = true;
   try {
-    const data = await putJson('/api/area-explorer/highlights', { items: editor.items.map(entry => ({ name: entry.name.trim(), match: entry.match })) });
-    setAreaExplorerHighlightsDraft(data.items, { saved: true });
+    const data = await putJson(`/api/area-explorer/highlights?${params}`, { items: editor.items.map(entry => ({ name: entry.name.trim(), match: entry.match })) });
+    applyAreaExplorerHighlightsData(data);
     closeAreaExplorerHighlights({ force: true });
-    showAreaExplorerNote(`Highlights saved: ${formatNumber(data.items.length)} ${data.items.length === 1 ? 'item' : 'items'}`);
+    showAreaExplorerNote(`Highlights saved: ${formatNumber(data.items.length)} ${data.items.length === 1 ? 'entry' : 'entries'}`);
     loadAreaExplorer({ full: false }).catch(() => {});
   } catch (err) {
     error.textContent = `Could not save: ${err.message}`;
@@ -7517,45 +7742,164 @@ async function saveAreaExplorerHighlights(event) {
   }
 }
 
-/** Back to the built-in list: in the draft only, until Save. */
+/** Back to the built-in list: in the draft only, until Save, and Undo brings this one back. */
 function resetAreaExplorerHighlights() {
   const editor = areaExplorerHighlightsEditor();
-  if (!window.confirm('Replace the list with the built-in one? Nothing is saved until you press Save.')) return;
+  rememberAreaExplorerHighlights();
   setAreaExplorerHighlightsDraft(editor.defaults);
   editor.filter = '';
   $('#areaExplorerHighlightsFilter').value = '';
   renderAreaExplorerHighlightsEditor();
 }
 
+// Dragging by the handle, with a mouse or a finger: the row follows the pointer, a line shows where it
+// goes, and the list scrolls near its edges. A selected row takes every selected one with it.
+
+function startAreaExplorerHighlightsDrag(event) {
+  const editor = areaExplorerHighlightsEditor();
+  const handle = event.target.closest('.area-explorer-hl-handle');
+  if (!handle || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  const row = handle.closest('[data-hl-id]');
+  const entry = editor.items.find(item => item.id === Number(row.dataset.hlId));
+  if (!entry) return;
+  event.preventDefault();
+  const list = $('#areaExplorerHighlightsList');
+  // The list scrolls on its own on a wide screen; on a phone the whole form does
+  const scroller = list.scrollHeight > list.clientHeight + 1 ? list : list.closest('.account-modal');
+  const ids = new Set(entry.selected ? editor.items.filter(item => item.selected).map(item => item.id) : [entry.id]);
+  editor.drag = { pointerId: event.pointerId, row, ids, scroller, startY: event.clientY, y: event.clientY, startScroll: scroller.scrollTop, target: null, after: false, frame: 0 };
+  try { handle.setPointerCapture(event.pointerId); } catch { /* a pointer the browser no longer tracks */ }
+  list.classList.add('is-sorting');
+  list.querySelectorAll('[data-hl-id]').forEach(item => {
+    if (ids.has(Number(item.dataset.hlId))) item.classList.add(item === row ? 'is-dragging' : 'is-dragged-along');
+  });
+  const tick = () => {
+    if (!editor.drag) return;
+    // Near the top or bottom of the list it scrolls, faster the nearer
+    const scroller = editor.drag.scroller;
+    const box = scroller.getBoundingClientRect();
+    const edge = 56;
+    const speed = editor.drag.y < box.top + edge ? -(box.top + edge - editor.drag.y) : editor.drag.y > box.bottom - edge ? editor.drag.y - (box.bottom - edge) : 0;
+    if (speed) scroller.scrollTop += Math.max(-24, Math.min(24, speed / 2));
+    updateAreaExplorerHighlightsDrag();
+    editor.drag.frame = requestAnimationFrame(tick);
+  };
+  editor.drag.frame = requestAnimationFrame(tick);
+}
+
+function updateAreaExplorerHighlightsDrag() {
+  const drag = areaExplorerHighlightsEditor().drag;
+  if (!drag) return;
+  const list = $('#areaExplorerHighlightsList');
+  drag.row.style.transform = `translateY(${drag.y - drag.startY + drag.scroller.scrollTop - drag.startScroll}px)`;
+  const rows = [...list.querySelectorAll('[data-hl-id]')].filter(item => !drag.ids.has(Number(item.dataset.hlId)));
+  let target = rows.find(item => drag.y < item.getBoundingClientRect().top + item.offsetHeight / 2) || null;
+  let after = false;
+  if (!target && rows.length) { target = rows[rows.length - 1]; after = true; }
+  if (target === drag.target && after === drag.after) return;
+  drag.target?.classList.remove('drop-before', 'drop-after');
+  drag.target = target;
+  drag.after = after;
+  target?.classList.add(after ? 'drop-after' : 'drop-before');
+}
+
+function endAreaExplorerHighlightsDrag(drop) {
+  const editor = areaExplorerHighlightsEditor();
+  const drag = editor.drag;
+  if (!drag) return;
+  cancelAnimationFrame(drag.frame);
+  editor.drag = null;
+  const list = $('#areaExplorerHighlightsList');
+  list.classList.remove('is-sorting');
+  drag.row.style.transform = '';
+  list.querySelectorAll('.is-dragging, .is-dragged-along, .drop-before, .drop-after')
+    .forEach(item => item.classList.remove('is-dragging', 'is-dragged-along', 'drop-before', 'drop-after'));
+  const target = drag.target && editor.items.find(item => item.id === Number(drag.target.dataset.hlId));
+  if (!drop || !target) return;
+  const rest = editor.items.filter(item => !drag.ids.has(item.id));
+  const index = rest.indexOf(target) + (drag.after ? 1 : 0);
+  const before = areaExplorerHighlightsSnapshot(editor.items);
+  const previous = editor.items.map(item => ({ ...item }));
+  moveAreaExplorerHighlights(drag.ids, index);
+  if (areaExplorerHighlightsSnapshot(editor.items) === before) return;
+  editor.history.push(previous);
+  renderAreaExplorerHighlightsEditor();
+  drag.ids.forEach(id => $(`#areaExplorerHighlightsList [data-hl-id="${id}"]`)?.classList.add('is-flash'));
+}
+
 function bindAreaExplorerHighlightsEditor() {
   const editor = areaExplorerHighlightsEditor();
+  const modal = $('#areaExplorerHighlightsModal');
   const list = $('#areaExplorerHighlightsList');
   const entryOf = element => {
     const id = Number(element.closest('[data-hl-id]')?.dataset.hlId);
     return editor.items.find(entry => entry.id === id) || null;
   };
+  // A field left by pressing another button: the rows are redrawn once that button has had its
+  // click, so the click isn't lost under the redraw
+  modal.addEventListener('pointerdown', () => { editor.pointerDown = true; }, true);
+  modal.addEventListener('pointerup', () => {
+    editor.pointerDown = false;
+    if (!editor.pendingRender) return;
+    editor.pendingRender = false;
+    setTimeout(renderAreaExplorerHighlightsEditor, 0);
+  }, true);
+  const renderSoon = () => {
+    if (editor.pointerDown) editor.pendingRender = true;
+    else renderAreaExplorerHighlightsEditor();
+  };
+  const change = mutate => {
+    rememberAreaExplorerHighlights();
+    mutate();
+    renderAreaExplorerHighlightsEditor();
+  };
+  // Loot with no picture of its own shows a chest (errors don't bubble: caught on the way down)
+  modal.addEventListener('error', event => {
+    const image = event.target;
+    if (image.tagName !== 'IMG' || !image.dataset.fallback || image.getAttribute('src') === image.dataset.fallback) return;
+    image.src = image.dataset.fallback;
+  }, true);
   $('#areaExplorerHighlightsEdit')?.addEventListener('click', () => openAreaExplorerHighlights());
   $('#areaExplorerHighlightsForm').addEventListener('submit', saveAreaExplorerHighlights);
   $('#areaExplorerHighlightsClose').addEventListener('click', () => closeAreaExplorerHighlights());
   $('#areaExplorerHighlightsCancel').addEventListener('click', () => closeAreaExplorerHighlights());
-  $('#areaExplorerHighlightsModal').addEventListener('click', event => { if (event.target.id === 'areaExplorerHighlightsModal') closeAreaExplorerHighlights(); });
+  modal.addEventListener('click', event => { if (event.target === modal) closeAreaExplorerHighlights(); });
   $('#areaExplorerHighlightsReset').addEventListener('click', resetAreaExplorerHighlights);
-  $('#areaExplorerHighlightsAdd').addEventListener('click', addAreaExplorerHighlight);
-  $('#areaExplorerHighlightsNew').addEventListener('keydown', event => {
+  $('#areaExplorerHighlightsUndo').addEventListener('click', undoAreaExplorerHighlights);
+  // Ctrl+Z undoes a change to the list; inside a field it's the field's own undo
+  modal.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z' && !event.target.matches('input:not([type="checkbox"])')) {
+      event.preventDefault();
+      undoAreaExplorerHighlights();
+    }
+  });
+
+  // Adding: a search over the loot found, or a name typed in
+  const search = $('#areaExplorerHighlightsNew');
+  search.addEventListener('input', () => {
+    editor.search = search.value;
+    renderAreaExplorerHighlightsSuggestions();
+  });
+  search.addEventListener('keydown', event => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
-    addAreaExplorerHighlight();
+    if (!$('#areaExplorerHighlightsAdd').disabled) addAreaExplorerHighlightFromSearch();
   });
+  $('#areaExplorerHighlightsAdd').addEventListener('click', addAreaExplorerHighlightFromSearch);
+  $$('[data-hl-new-match]').forEach(button => button.addEventListener('click', () => {
+    editor.newMatch = button.dataset.hlNewMatch;
+    renderAreaExplorerHighlightsSuggestions();
+  }));
+  $('#areaExplorerHighlightsSuggest').addEventListener('click', event => {
+    const button = event.target.closest('[data-hl-suggest]');
+    if (!button) return;
+    addAreaExplorerHighlight(button.dataset.hlSuggest, button.dataset.hlSuggestMatch || 'exact');
+  });
+
   $('#areaExplorerHighlightsFilter').addEventListener('input', event => {
     editor.filter = event.target.value;
-    renderAreaExplorerHighlightsEditor();
-  });
-  // Enter in a row's field doesn't save the whole list
-  list.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && event.target.matches('input')) {
-      event.preventDefault();
-      event.target.blur();
-    }
+    renderAreaExplorerHighlightsList(editor.stats || areaExplorerHighlightsStats(editor.items));
+    renderAreaExplorerHighlightsToolbar();
   });
   $('#areaExplorerHighlightsSelectAll').addEventListener('change', event => {
     const shown = new Set(areaExplorerHighlightsShown().map(entry => entry.id));
@@ -7566,96 +7910,126 @@ function bindAreaExplorerHighlightsEditor() {
     const ids = new Set(editor.items.filter(entry => entry.selected).map(entry => entry.id));
     if (!ids.size) return;
     const action = button.dataset.hlBulk;
-    if (action === 'delete') {
-      if (!window.confirm(`Delete ${ids.size} ${ids.size === 1 ? 'entry' : 'entries'} from the list?`)) return;
-      editor.items = editor.items.filter(entry => !ids.has(entry.id));
-    } else if (action === 'top') moveAreaExplorerHighlights(ids, 0);
-    else if (action === 'bottom') moveAreaExplorerHighlights(ids, Infinity);
-    else stepAreaExplorerHighlights(action === 'up' ? -1 : 1);
-    renderAreaExplorerHighlightsEditor();
+    change(() => {
+      if (action === 'delete') editor.items = editor.items.filter(entry => !ids.has(entry.id));
+      else if (action === 'top') moveAreaExplorerHighlights(ids, 0);
+      else if (action === 'bottom') moveAreaExplorerHighlights(ids, Infinity);
+      else stepAreaExplorerHighlights(action === 'up' ? -1 : 1);
+    });
+    if (action === 'delete') showAreaExplorerHighlightsStatus(`${formatNumber(ids.size)} deleted - Undo brings ${ids.size === 1 ? 'it' : 'them'} back`);
+    else ids.forEach(id => $(`#areaExplorerHighlightsList [data-hl-id="${id}"]`)?.classList.add('is-flash'));
   }));
-  // Typing in a row changes the draft as it goes; the list is redrawn when the field is left
+
+  // A row's name: the draft follows as it's typed, the rows are redrawn when the field is left
+  list.addEventListener('focusin', event => {
+    if (event.target.matches('[data-hl-name]')) editor.nameBefore = editor.items.map(entry => ({ ...entry }));
+  });
   list.addEventListener('input', event => {
     const entry = entryOf(event.target);
+    if (!entry || !event.target.matches('[data-hl-name]')) return;
+    entry.name = event.target.value;
+    const icon = event.target.closest('li').querySelector('.area-explorer-hl-icon');
+    clearTimeout(editor.iconTimer);
+    editor.iconTimer = setTimeout(() => { icon.innerHTML = areaExplorerHighlightIcon(entry.name); }, 250);
+    renderAreaExplorerHighlightsSide();
+  });
+  list.addEventListener('keydown', event => {
+    const entry = entryOf(event.target);
     if (!entry) return;
-    if (event.target.matches('[data-hl-name]')) {
-      entry.name = event.target.value;
-      renderAreaExplorerHighlightsToolbar();
+    // Alt+↑/↓ moves the row the focus is in
+    if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      const index = editor.items.indexOf(entry) + (event.key === 'ArrowUp' ? -1 : 1);
+      if (index < 0 || index >= editor.items.length) return;
+      const field = event.target.dataset.hlName !== undefined ? '[data-hl-name]' : event.target.dataset.hlPosition !== undefined ? '[data-hl-position]' : null;
+      change(() => moveAreaExplorerHighlights(new Set([entry.id]), index));
+      const row = $(`#areaExplorerHighlightsList [data-hl-id="${entry.id}"]`);
+      (field ? row?.querySelector(field) : row?.querySelector('[data-hl-select]'))?.focus();
+      return;
+    }
+    // Enter in a row's field doesn't save the whole list
+    if (event.key === 'Enter' && event.target.matches('input')) {
+      event.preventDefault();
+      event.target.blur();
     }
   });
   list.addEventListener('change', event => {
     const entry = entryOf(event.target);
     if (!entry) return;
-    if (event.target.matches('[data-hl-select]')) {
-      entry.selected = event.target.checked;
-      event.target.closest('li').classList.toggle('is-selected', entry.selected);
-      renderAreaExplorerHighlightsToolbar();
-      return;
-    }
-    if (event.target.matches('[data-hl-match]')) entry.match = event.target.value === 'contains' ? 'contains' : 'exact';
-    if (event.target.matches('[data-hl-position]')) {
+    if (event.target.matches('[data-hl-name]')) {
+      if (editor.nameBefore) editor.history.push(editor.nameBefore);
+      editor.nameBefore = null;
+      renderSoon();
+    } else if (event.target.matches('[data-hl-position]')) {
       const position = Number.parseInt(event.target.value, 10);
-      if (Number.isFinite(position)) moveAreaExplorerHighlights(new Set([entry.id]), position - 1);
+      if (Number.isFinite(position) && position - 1 !== editor.items.indexOf(entry)) {
+        rememberAreaExplorerHighlights();
+        moveAreaExplorerHighlights(new Set([entry.id]), position - 1);
+        renderSoon();
+        if (!editor.pendingRender) flashAreaExplorerHighlight(entry.id);
+      } else renderSoon();
     }
-    renderAreaExplorerHighlightsEditor();
   });
   list.addEventListener('click', event => {
     const entry = entryOf(event.target);
     if (!entry) return;
+    // Ticking with Shift ticks (or clears) every row from the last one ticked
+    if (event.target.matches('[data-hl-select]')) {
+      const checked = event.target.checked;
+      const shown = areaExplorerHighlightsShown();
+      const from = shown.findIndex(item => item.id === editor.lastSelectId);
+      const to = shown.indexOf(entry);
+      if (event.shiftKey && from >= 0) shown.slice(Math.min(from, to), Math.max(from, to) + 1).forEach(item => { item.selected = checked; });
+      else entry.selected = checked;
+      editor.lastSelectId = entry.id;
+      list.querySelectorAll('[data-hl-id]').forEach(row => {
+        const item = entryOf(row);
+        row.classList.toggle('is-selected', Boolean(item?.selected));
+        row.querySelector('[data-hl-select]').checked = Boolean(item?.selected);
+      });
+      renderAreaExplorerHighlightsToolbar();
+      return;
+    }
+    const match = event.target.closest('[data-hl-match]');
+    if (match) {
+      if (entry.match !== match.dataset.hlMatch) change(() => { entry.match = match.dataset.hlMatch; });
+      return;
+    }
     const move = event.target.closest('[data-hl-move]');
     if (move) {
       const index = editor.items.indexOf(entry) + Number(move.dataset.hlMove);
       if (index < 0 || index >= editor.items.length) return;
-      moveAreaExplorerHighlights(new Set([entry.id]), index);
-      renderAreaExplorerHighlightsEditor();
+      change(() => moveAreaExplorerHighlights(new Set([entry.id]), index));
+      $(`#areaExplorerHighlightsList [data-hl-id="${entry.id}"] [data-hl-move="${move.dataset.hlMove}"]`)?.focus();
       return;
     }
     if (event.target.closest('[data-hl-delete]')) {
-      editor.items = editor.items.filter(item => item !== entry);
-      renderAreaExplorerHighlightsEditor();
+      change(() => { editor.items = editor.items.filter(item => item !== entry); });
+      showAreaExplorerHighlightsStatus(`"${entry.name.trim() || 'Entry'}" deleted - Undo brings it back`);
     }
   });
-  // Dragging a row by its handle - and every selected one with it, when it's one of them - to
-  // another place; elsewhere the row's fields keep their text selection
-  list.addEventListener('pointerdown', event => {
-    const row = event.target.closest('[data-hl-id]');
-    if (row) row.draggable = Boolean(event.target.closest('.area-explorer-hl-handle'));
+  list.addEventListener('pointerdown', startAreaExplorerHighlightsDrag);
+  list.addEventListener('pointermove', event => {
+    if (!editor.drag || event.pointerId !== editor.drag.pointerId) return;
+    editor.drag.y = event.clientY;
+    updateAreaExplorerHighlightsDrag();
   });
-  list.addEventListener('dragstart', event => {
-    const entry = entryOf(event.target);
-    if (!entry || !event.target.closest('li')?.draggable) return;
-    editor.dragId = entry.id;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', entry.name);
-    event.target.closest('li').classList.add('is-dragging');
+  list.addEventListener('pointerup', event => {
+    if (!editor.drag || event.pointerId !== editor.drag.pointerId) return;
+    editor.drag.y = event.clientY;
+    updateAreaExplorerHighlightsDrag();
+    endAreaExplorerHighlightsDrag(true);
   });
-  list.addEventListener('dragover', event => {
-    if (editor.dragId === null) return;
-    const row = event.target.closest('[data-hl-id]');
-    if (!row) return;
-    event.preventDefault();
-    const after = event.clientY > row.getBoundingClientRect().top + row.offsetHeight / 2;
-    list.querySelectorAll('.drop-before, .drop-after').forEach(item => item.classList.remove('drop-before', 'drop-after'));
-    row.classList.add(after ? 'drop-after' : 'drop-before');
-  });
-  list.addEventListener('drop', event => {
-    if (editor.dragId === null) return;
-    event.preventDefault();
-    const row = event.target.closest('[data-hl-id]');
-    const target = row && entryOf(row);
-    const dragged = editor.items.find(entry => entry.id === editor.dragId);
-    if (!target || !dragged) return;
-    const ids = new Set(dragged.selected ? editor.items.filter(entry => entry.selected).map(entry => entry.id) : [dragged.id]);
-    if (ids.has(target.id)) return;
-    const after = row.classList.contains('drop-after');
-    const rest = editor.items.filter(entry => !ids.has(entry.id));
-    moveAreaExplorerHighlights(ids, rest.indexOf(target) + (after ? 1 : 0));
-    renderAreaExplorerHighlightsEditor();
-  });
-  list.addEventListener('dragend', () => {
-    editor.dragId = null;
-    list.querySelectorAll('.is-dragging, .drop-before, .drop-after').forEach(item => item.classList.remove('is-dragging', 'drop-before', 'drop-after'));
-  });
+  list.addEventListener('pointercancel', () => endAreaExplorerHighlightsDrag(false));
+}
+
+/** A word in the footer for a moment: what was just done. */
+function showAreaExplorerHighlightsStatus(text) {
+  const status = $('#areaExplorerHighlightsChanges');
+  status.textContent = text;
+  status.classList.add('is-dirty');
+  clearTimeout(showAreaExplorerHighlightsStatus.timer);
+  showAreaExplorerHighlightsStatus.timer = setTimeout(renderAreaExplorerHighlightsToolbar, 3500);
 }
 
 /** With Markers picked: which of them to show - Shulker Boxes, Spawners... - most found first. End Portals have their own tab. */
