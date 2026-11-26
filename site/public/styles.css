@@ -17998,3 +17998,55 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 
   .tab-nav .tab-button::before { width: 18px; height: 18px; }
 }
+
+/* Highlights editor: the loot the panel looks for, most important first */
+.area-explorer-highlights-edit { flex: 0 0 auto; min-width: 0; }
+.area-explorer-hl-modal { width: min(720px, 100%); }
+.area-explorer-hl-modal input:not([type="checkbox"]),
+.area-explorer-hl-modal select {
+  height: 38px; min-width: 0; border: 2px solid var(--line); border-radius: var(--card-radius); padding: 0 10px;
+  color: var(--text); background-color: color-mix(in srgb, var(--bg) 55%, var(--panel-soft)); font: inherit; font-size: 14px; outline: none;
+}
+.area-explorer-hl-modal input:focus,
+.area-explorer-hl-modal select:focus { border-color: var(--accent); }
+.area-explorer-hl-modal .ghost-button { min-width: 0; min-height: 34px; padding: 0 10px; }
+.area-explorer-hl-modal .ghost-button.is-danger { color: var(--danger); }
+.area-explorer-hl-modal .ghost-button.is-danger:hover:not(:disabled) { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--panel)); }
+.area-explorer-hl-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
+.area-explorer-hl-add button { min-width: 0; height: 38px; min-height: 38px; }
+.area-explorer-hl-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.area-explorer-hl-select-all { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.area-explorer-hl-bulk { display: flex; flex-wrap: wrap; gap: 6px; }
+.area-explorer-hl-filter { width: 100%; }
+.area-explorer-hl-list { display: grid; gap: 4px; max-height: min(52vh, 520px); margin: 0; padding: 0 2px 0 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; }
+.area-explorer-hl-row {
+  position: relative; display: grid; align-items: center; gap: 6px; padding: 5px 6px;
+  grid-template-columns: 18px 18px 58px minmax(0, 1fr) 96px 56px auto;
+  border: 2px solid var(--line); border-radius: var(--card-radius); background: var(--panel);
+}
+.area-explorer-hl-row.is-selected { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+.area-explorer-hl-row.is-dragging { opacity: 0.45; }
+.area-explorer-hl-row.drop-before { box-shadow: 0 -3px 0 var(--accent); }
+.area-explorer-hl-row.drop-after { box-shadow: 0 3px 0 var(--accent); }
+.area-explorer-hl-handle { color: var(--muted); cursor: grab; letter-spacing: -3px; text-align: center; user-select: none; touch-action: none; }
+.area-explorer-hl-row input.area-explorer-hl-position { padding: 0 4px; text-align: center; }
+.area-explorer-hl-count { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.area-explorer-hl-count.is-none { color: var(--muted); }
+.area-explorer-hl-row-actions { display: flex; gap: 4px; }
+.area-explorer-hl-row-actions .ghost-button { width: 32px; height: 32px; min-height: 32px; padding: 0; }
+.area-explorer-hl-actions .area-explorer-hl-reset { margin-right: auto; }
+
+@media (max-width: 640px) {
+  .area-explorer-hl-add { grid-template-columns: minmax(0, 1fr) auto; }
+  .area-explorer-hl-add input { grid-column: 1 / -1; }
+  .area-explorer-hl-row { grid-template-columns: 18px 48px minmax(0, 1fr) auto; grid-template-areas: "check pos name actions" "check pos match count"; }
+  .area-explorer-hl-handle { display: none; }
+  .area-explorer-hl-check { grid-area: check; }
+  .area-explorer-hl-row input.area-explorer-hl-position { grid-area: pos; align-self: stretch; height: auto; }
+  .area-explorer-hl-name { grid-area: name; }
+  .area-explorer-hl-match { grid-area: match; }
+  .area-explorer-hl-count { grid-area: count; }
+  .area-explorer-hl-row-actions { grid-area: actions; }
+  .area-explorer-hl-list { max-height: 46dvh; }
+  .area-explorer-hl-actions .area-explorer-hl-reset { margin-right: 0; }
+}

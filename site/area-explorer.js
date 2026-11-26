@@ -69,23 +69,49 @@ const CONNECTION_EVENT_TYPES = Object.freeze(['disconnect', 'reconnect', 'rejoin
 const EVENT_RETENTION_DAYS = 90;
 const EVENT_PRUNE_INTERVAL_MS = 60 * 60_000;
 
-// What loot is worth, by the name the game gives it: the higher, the more it's worth going back for
-const LOOT_VALUES = Object.freeze({
-  'Dragon Egg': 100, Elytra: 95, 'Nether Star': 90, Beacon: 88, 'Heavy Core': 86, Mace: 85,
-  'Netherite Block': 84, 'Netherite Chestplate': 82, 'Netherite Leggings': 81, 'Netherite Helmet': 80, 'Netherite Boots': 80,
-  'Netherite Sword': 79, 'Netherite Pickaxe': 79, 'Netherite Axe': 78, 'Netherite Shovel': 74, 'Netherite Hoe': 72,
-  'Totem of Undying': 77, 'Enchanted Golden Apple': 76, 'Netherite Ingot': 73, 'Netherite Upgrade': 70,
-  'Trident': 68, 'Dragon Head': 66, 'Written Book': 64, Map: 62, 'Enchanted Book': 60, 'Diamond Block': 58,
-  'Ancient Debris': 56, 'Netherite Scrap': 55, 'End Crystal': 52, 'Book and Quill': 50, 'Ender Chest': 45,
-  'Diamond Chestplate': 42, 'Diamond Leggings': 41, 'Diamond Helmet': 40, 'Diamond Boots': 40, 'Diamond Sword': 39,
-  'Diamond Pickaxe': 39, 'Diamond Axe': 38, 'Diamond Shovel': 34, 'Diamond Hoe': 32, Diamond: 30,
-  'Golden Apple': 25, 'Experience Bottle': 20
-});
+// The loot the Highlights panel looks for, most important first, until an administrator changes it on
+// the site. "exact": the item's name, any case; "contains": any item whose name has it (every colour of
+// shulker box). An item goes to the first entry it matches.
+const HIGHLIGHT_MATCHES = Object.freeze(['exact', 'contains']);
+const MAX_HIGHLIGHTS = 300;
+const MAX_HIGHLIGHT_NAME = 128;
+const DEFAULT_HIGHLIGHTS = Object.freeze([
+  'Dragon Egg', 'Elytra', 'Nether Star', 'Beacon', 'Heavy Core', 'Mace', 'Netherite Block', 'Netherite Chestplate',
+  'Netherite Leggings', 'Netherite Helmet', 'Netherite Boots', 'Netherite Sword', 'Netherite Pickaxe', 'Netherite Axe',
+  'Totem of Undying', 'Enchanted Golden Apple', { name: 'Shulker Box', match: 'contains' }, 'Netherite Shovel',
+  'Netherite Ingot', 'Netherite Hoe', 'Netherite Upgrade', 'Trident', 'Dragon Head', 'Written Book', 'Map',
+  'Enchanted Book', 'Diamond Block', 'Ancient Debris', 'Netherite Scrap', 'End Crystal', 'Book and Quill', 'Ender Chest',
+  'Diamond Chestplate', 'Diamond Leggings', 'Diamond Helmet', 'Diamond Boots', 'Diamond Sword', 'Diamond Pickaxe',
+  'Diamond Axe', 'Diamond Shovel', 'Diamond Hoe', 'Diamond', 'Golden Apple', 'Experience Bottle'
+].map(entry => Object.freeze(typeof entry === 'string' ? { name: entry, match: 'exact' } : entry)));
 
-/** How much a kind of loot is worth; shulker boxes of every colour alike. 0: not worth listing. */
-function lootValue(name) {
-  if (/Shulker Box$/.test(name)) return 75;
-  return LOOT_VALUES[name] || 0;
+/**
+ * A highlights list as the site sends it, checked: names trimmed, no two alike (the first kept), the
+ * order kept. Throws on anything that isn't one.
+ */
+function normalizeHighlights(raw) {
+  if (!Array.isArray(raw)) throw httpError(400, 'items must be a list.');
+  if (raw.length > MAX_HIGHLIGHTS) throw httpError(400, `At most ${MAX_HIGHLIGHTS} items.`);
+  const seen = new Set();
+  const items = [];
+  for (const entry of raw) {
+    const name = normalizeText(cleanFindName(typeof entry === 'string' ? entry : entry?.name), MAX_HIGHLIGHT_NAME);
+    if (!name) continue;
+    const match = HIGHLIGHT_MATCHES.includes(entry?.match) ? entry.match : 'exact';
+    const key = `${match}:${name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push({ name, match });
+  }
+  return items;
+}
+
+/** Where an item goes in the highlights list (its index), or -1 if it isn't on it. */
+function highlightIndex(highlights, itemName) {
+  const name = String(itemName || '').toLowerCase();
+  return highlights.findIndex(entry => (entry.match === 'contains'
+    ? name.includes(entry.name.toLowerCase())
+    : name === entry.name.toLowerCase()));
 }
 
 function stripControl(value, { keepNewlines = false } = {}) {
@@ -975,10 +1001,8 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
                   WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`),
       pool.query(`SELECT server, dimension, CASE WHEN marker_color IS NOT NULL THEN $1::text ELSE name END AS name, COUNT(*)::int AS count
                   FROM area_explorer_finds WHERE kind = 'MARKER' AND removed_at IS NULL GROUP BY 1, 2, 3 ORDER BY count DESC, name`, [SITE_MARKERS]),
-      // Every kind of loot with how much of it: the most valuable are picked from these below. Shulker
-      // boxes of every colour are one kind, as a click on it lists them all (the name is searched for)
-      pool.query(`SELECT server, dimension, CASE WHEN name LIKE '%Shulker Box' THEN 'Shulker Box' ELSE name END AS name,
-                    COUNT(*)::int AS count, SUM(item_count)::int AS items
+      // Every kind of loot with how much of it: the highlights are picked from these below
+      pool.query(`SELECT server, dimension, name, COUNT(*)::int AS count, SUM(item_count)::int AS items
                   FROM area_explorer_finds WHERE kind = 'ITEM' AND removed_at IS NULL GROUP BY 1, 2, 3`),
       pool.query(`SELECT DISTINCT ON (server, dimension) * FROM area_explorer_finds WHERE removed_at IS NULL
                   ORDER BY server, dimension, found_at DESC, id DESC`),
@@ -1003,16 +1027,25 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     for (const row of markerNames.rows) {
       scopes.get(`${row.server}\u0000${row.dimension}`)?.markerNames.push({ name: row.name, count: row.count });
     }
-    // The most valuable loot: Elytra, netherite gear, shulker boxes, maps, written books... the
-    // dearest first, then the one found most; anything not on the list doesn't make it. All of them
-    // go out: the site shows the first few and the rest on Show all
+    // The loot on the highlights list, in its order: each item counts for the first entry it matches
+    // (every colour of shulker box for "Shulker Box"), and what isn't on the list doesn't make it. All
+    // of them go out: the site shows the first few and the rest on Show all
+    const highlights = await getHighlightItems();
+    const found = new Map();
     for (const row of itemNames.rows) {
-      const value = lootValue(row.name);
-      if (value > 0) scopes.get(`${row.server}\u0000${row.dimension}`)?.valuableItems.push({ name: row.name, count: row.count, items: row.items, value });
+      const rank = highlightIndex(highlights, row.name);
+      if (rank < 0 || !scopes.has(`${row.server}\u0000${row.dimension}`)) continue;
+      const key = `${row.server}\u0000${row.dimension}\u0000${rank}`;
+      const entry = found.get(key);
+      if (entry) {
+        entry.count += row.count;
+        entry.items += row.items;
+      } else {
+        found.set(key, { scope: `${row.server}\u0000${row.dimension}`, name: highlights[rank].name, match: highlights[rank].match, count: row.count, items: row.items, rank: rank + 1 });
+      }
     }
-    for (const scope of scopes.values()) {
-      scope.valuableItems.sort((a, b) => b.value - a.value || b.count - a.count || a.name.localeCompare(b.name));
-    }
+    for (const { scope, ...entry } of found.values()) scopes.get(scope).valuableItems.push(entry);
+    for (const scope of scopes.values()) scope.valuableItems.sort((a, b) => a.rank - b.rank);
     for (const row of latest.rows) {
       const scope = scopes.get(`${row.server}\u0000${row.dimension}`);
       if (scope) scope.latest = publicFind(row);
@@ -1218,6 +1251,53 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     await publishCommands([String(command.id)]);
   }
 
+  /** The highlights list: the administrators' own, or the built-in one while they haven't set one. */
+  async function getHighlightItems() {
+    try {
+      const row = (await pool.query(`SELECT value FROM area_explorer_settings WHERE key = 'highlights'`)).rows[0];
+      return row ? normalizeHighlights(row.value) : DEFAULT_HIGHLIGHTS;
+    } catch (error) {
+      // A database without the settings table yet (its migration not run) has the built-in list
+      if (error.code === '42P01') return DEFAULT_HIGHLIGHTS;
+      throw error;
+    }
+  }
+
+  /**
+   * GET /api/area-explorer/highlights: the list, whether it's the built-in one, and the loot names
+   * found so far (most found first) for picking new entries from.
+   */
+  async function getHighlights() {
+    const [items, row, names] = await Promise.all([
+      getHighlightItems(),
+      pool.query(`SELECT updated_by, updated_at FROM area_explorer_settings WHERE key = 'highlights'`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT name, COUNT(*)::int AS count FROM area_explorer_finds WHERE kind = 'ITEM' AND removed_at IS NULL
+                  GROUP BY name ORDER BY count DESC, name LIMIT 1000`)
+    ]);
+    const saved = row.rows[0];
+    return {
+      items, custom: Boolean(saved), updatedBy: saved?.updated_by || null, updatedAt: saved?.updated_at || null,
+      defaults: DEFAULT_HIGHLIGHTS, foundNames: names.rows.map(item => ({ name: item.name, count: item.count }))
+    };
+  }
+
+  /** An administrator's list replaces the one in use; {reset: true} goes back to the built-in one. */
+  async function setHighlights(currentUser, body) {
+    if (body?.reset === true) {
+      await pool.query(`DELETE FROM area_explorer_settings WHERE key = 'highlights'`);
+      await recordSystemLog({ category: 'area_explorer', actor: currentUser.username, message: 'Area Explorer highlights reset to the built-in list.' });
+    } else {
+      const items = normalizeHighlights(body?.items);
+      await pool.query(
+        `INSERT INTO area_explorer_settings (key, value, updated_by, updated_at) VALUES ('highlights', $1::jsonb, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+        [JSON.stringify(items), currentUser.username]);
+      await recordSystemLog({ category: 'area_explorer', actor: currentUser.username, message: `Area Explorer highlights changed: ${items.length} ${items.length === 1 ? 'item' : 'items'}.` });
+    }
+    publish('area_explorer_updated', { highlights: true });
+    return getHighlights();
+  }
+
   async function listTokens() {
     const rows = await pool.query('SELECT * FROM area_explorer_tokens ORDER BY revoked_at IS NOT NULL, created_at DESC');
     return { tokens: rows.rows.map(publicToken) };
@@ -1274,6 +1354,12 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       assertAdmin(currentUser);
       return { statusCode: 201, payload: await createWaypoint(currentUser, await readBody(req)) };
     }
+    // What the Highlights panel looks for: everyone sees it, administrators change it
+    if (path === '/api/area-explorer/highlights' && req.method === 'GET') return { statusCode: 200, payload: await getHighlights() };
+    if (path === '/api/area-explorer/highlights' && req.method === 'PUT') {
+      assertAdmin(currentUser);
+      return { statusCode: 200, payload: await setHighlights(currentUser, await readBody(req)) };
+    }
     const findMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)$/);
     if (findMatch && req.method === 'GET') return { statusCode: 200, payload: await getFind(findMatch[1], currentUser) };
     // A user's own stars: anyone signed in
@@ -1299,7 +1385,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleFavorites, modFavorites, handleApi, getSummary, getEvents, getCoverage, createCommand, createWaypoint, listCommands, getFinds, getMapPoints, getFind, setFavorite, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleFavorites, modFavorites, handleApi, getSummary, getHighlights, setHighlights, getEvents, getCoverage, createCommand, createWaypoint, listCommands, getFinds, getMapPoints, getFind, setFavorite, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {
@@ -1317,7 +1403,9 @@ module.exports = {
   createAreaExplorerService,
   dedupeKey,
   generateToken,
-  lootValue,
+  DEFAULT_HIGHLIGHTS,
+  highlightIndex,
+  normalizeHighlights,
   normalizeCommandUpdates,
   normalizeCoverage,
   normalizeEvent,

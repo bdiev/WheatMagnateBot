@@ -6,6 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+const indexHtml = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
 function functionSource(name) {
   const asyncStart = source.indexOf(`async function ${name}(`);
   const start = asyncStart >= 0 ? asyncStart : source.indexOf(`function ${name}(`);
@@ -754,6 +755,39 @@ function testSectorGrid() {
   assert.ok(!large.includes('<svg') && large.includes('10 / 10000 sectors'), 'grids too large for cells show the counts');
 }
 
+function testHighlightsEditor() {
+  // The editor's draft: moved as a block, stepped past unselected neighbours, matched as the site matches
+  const editor = { items: [] };
+  const context = vm.createContext({ areaExplorerHighlightsEditor: () => editor });
+  for (const name of ['moveAreaExplorerHighlights', 'stepAreaExplorerHighlights', 'areaExplorerHighlightIndex']) vm.runInContext(functionSource(name), context);
+  const reset = selected => { editor.items = ['A', 'B', 'C', 'D', 'E'].map((name, id) => ({ id, name, match: 'exact', selected: selected.includes(name) })); };
+  const names = () => editor.items.map(item => item.name).join('');
+  reset(['B', 'D']);
+  context.moveAreaExplorerHighlights(new Set([1, 3]), 0);
+  assert.equal(names(), 'BDACE', 'the selected to the top, in their order');
+  reset(['B', 'D']);
+  context.moveAreaExplorerHighlights(new Set([1, 3]), Infinity);
+  assert.equal(names(), 'ACEBD', 'and to the bottom');
+  reset(['A', 'C']);
+  context.stepAreaExplorerHighlights(-1);
+  assert.equal(names(), 'ACBDE', 'the first stays put, the next goes up one');
+  reset(['D', 'E']);
+  context.stepAreaExplorerHighlights(1);
+  assert.equal(names(), 'ABCDE', 'nothing to pass at the bottom');
+  reset(['A']);
+  context.stepAreaExplorerHighlights(1);
+  assert.equal(names(), 'BACDE');
+  const list = [{ name: 'Elytra', match: 'exact' }, { name: 'Shulker Box', match: 'contains' }, { name: ' ', match: 'contains' }];
+  assert.equal(context.areaExplorerHighlightIndex(list, 'elytra'), 0);
+  assert.equal(context.areaExplorerHighlightIndex(list, 'Pink Shulker Box'), 1);
+  assert.equal(context.areaExplorerHighlightIndex(list, 'Dirt'), -1, 'a blank entry matches nothing');
+  // Wiring: administrators only, saved as a whole, Escape and the bulk tools
+  assert.match(indexHtml, /id="areaExplorerHighlightsEdit" class="[^"]*admin-only[^"]*"/);
+  for (const action of ['top', 'up', 'down', 'bottom', 'delete']) assert.match(indexHtml, new RegExp(`data-hl-bulk="${action}"`));
+  assert.match(functionSource('saveAreaExplorerHighlights'), /putJson\('\/api\/area-explorer\/highlights'/);
+  assert.match(source, /Escape' && !\$\('#areaExplorerHighlightsModal'\)\?\.hidden\) \{\s+closeAreaExplorerHighlights\(\)/);
+}
+
 (async () => {
   testSectorGrid();
   await testLoadingSkeletons();
@@ -779,5 +813,6 @@ function testSectorGrid() {
   testPlayerSigns();
   testMenuHeight();
   testClusters();
+  testHighlightsEditor();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

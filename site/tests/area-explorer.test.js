@@ -10,7 +10,9 @@ const {
   cleanFindName,
   createAreaExplorerService,
   dedupeKey,
-  lootValue,
+  DEFAULT_HIGHLIGHTS,
+  highlightIndex,
+  normalizeHighlights,
   normalizeCoverage,
   normalizeEvent,
   normalizeFind,
@@ -87,11 +89,18 @@ function testNormalization() {
 }
 
 function testLootValue() {
-  assert.ok(lootValue('Elytra') > lootValue('Netherite Chestplate'));
-  assert.ok(lootValue('Netherite Chestplate') > lootValue('Diamond Chestplate'));
-  assert.equal(lootValue('Red Shulker Box'), lootValue('Shulker Box'), 'every colour of shulker box alike');
-  assert.ok(lootValue('Written Book') > 0 && lootValue('Map') > 0 && lootValue('Enchanted Book') > 0);
-  assert.equal(lootValue('Cobblestone'), 0, 'not worth listing');
+  const rank = name => highlightIndex(DEFAULT_HIGHLIGHTS, name);
+  assert.ok(rank('Elytra') < rank('Netherite Chestplate'), 'the built-in list puts Elytra first');
+  assert.ok(rank('Netherite Chestplate') < rank('Diamond Chestplate'));
+  assert.equal(rank('Red Shulker Box'), rank('Shulker Box'), 'every colour of shulker box alike');
+  assert.ok(rank('Written Book') >= 0 && rank('Map') >= 0 && rank('Enchanted Book') >= 0);
+  assert.equal(rank('Cobblestone'), -1, 'not worth listing');
+  assert.equal(rank('elytra'), rank('Elytra'), 'any case');
+  // A list from the site: trimmed, no two alike, the order kept, anything else refused
+  assert.deepEqual(normalizeHighlights([' Elytra ', { name: 'Shulker Box', match: 'contains' }, { name: 'elytra' }, { name: '' }, { name: 'Map', match: 'weird' }]),
+    [{ name: 'Elytra', match: 'exact' }, { name: 'Shulker Box', match: 'contains' }, { name: 'Map', match: 'exact' }]);
+  assert.throws(() => normalizeHighlights('Elytra'), /must be a list/);
+  assert.throws(() => normalizeHighlights(Array.from({ length: 301 }, (_, i) => `Item ${i}`)), /At most/);
 }
 
 function testStatusOnline() {
@@ -215,7 +224,7 @@ async function testIngestAndQueries() {
     const basesByScore = await service.getFinds(url('kind=base&dimension=overworld&sort=score'));
     assert.deepEqual(basesByScore.finds.map(find => find.name), ['Base #1', 'Base #3']);
     const summaryScope = (await service.getSummary()).scopes.find(scope => scope.dimension === 'overworld');
-    assert.deepEqual(summaryScope.valuableItems, [{ name: 'Elytra', count: 1, items: 1, value: 95 }], 'the most valuable loot');
+    assert.deepEqual(summaryScope.valuableItems, [{ name: 'Elytra', match: 'exact', count: 1, items: 1, rank: 2 }], 'the most valuable loot');
     assert.ok(summaryScope.latest?.name, 'and the latest find');
 
     // Loot picked up in game comes off the site, and the mod sending it again doesn't bring it back
@@ -239,7 +248,7 @@ async function testIngestAndQueries() {
     const box = (name, x) => ({ kind: 'ITEM', x, y: 64, z: 900, foundAt: NOW, name, count: 1 });
     await service.ingest(token, { server: 'oldfrog.org', dimension: 'the_end', finds: [box('Shulker Box', 1), box('Pink Shulker Box', 2), box('White Shulker Box', 3)] }, NOW);
     const end = (await service.getSummary()).scopes.find(scope => scope.dimension === 'the_end');
-    assert.deepEqual(end.valuableItems, [{ name: 'Shulker Box', count: 3, items: 3, value: 75 }]);
+    assert.deepEqual(end.valuableItems, [{ name: 'Shulker Box', match: 'contains', count: 3, items: 3, rank: 17 }]);
     assert.equal((await service.getFinds(url('dimension=the_end&kind=ITEM&q=Shulker%20Box'))).total, 3);
     const sentAgain = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [batch.finds[2]] }, NOW);
     assert.equal(sentAgain.added, 0, 'the mod sending it again does not bring it back');
@@ -1029,12 +1038,68 @@ async function testModFavorites() {
   }
 }
 
+/** Administrators change what Highlights looks for and its order; everyone sees it; reset brings the built-in list back. */
+async function testHighlightsEditing() {
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '084_area_explorer_favorites.sql',
+      '089_area_explorer_marker_color.sql', '095_area_explorer_settings.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const published = [];
+    const logs = [];
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true,
+      publish: (type, payload) => published.push({ type, payload }), recordSystemLog: async entry => logs.push(entry)
+    });
+    const token = (await db.query(`INSERT INTO area_explorer_tokens (name, token_hash, token_hint) VALUES ('PC', 'h', 'h') RETURNING id, name`)).rows[0];
+    const item = (name, x, count = 1) => ({ kind: 'ITEM', x, y: 64, z: 0, foundAt: NOW, name, count });
+    await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [
+      item('Elytra', 1), item('Diamond', 2, 5), item('Red Shulker Box', 3), item('Blue Shulker Box', 4), item('Cobblestone', 5, 64)
+    ] }, NOW);
+    const scope = async () => (await service.getSummary()).scopes.find(item => item.dimension === 'overworld');
+    assert.deepEqual((await scope()).valuableItems.map(item => item.name), ['Elytra', 'Shulker Box', 'Diamond'], 'the built-in list first');
+
+    const route = (method, user, body = {}) => service.handleApi({ method }, user, new URL('http://x/api/area-explorer/highlights'), {
+      assertAdmin(current) { if (current.role !== 'admin') throw Object.assign(new Error('Admin access required.'), { statusCode: 403 }); },
+      readBody: async () => body
+    });
+    const admin = { username: 'admin', role: 'admin' };
+    const viewer = { username: 'viewer', role: 'user' };
+    const before = (await route('GET', viewer)).payload;
+    assert.equal(before.custom, false);
+    assert.equal(before.items.length, DEFAULT_HIGHLIGHTS.length);
+    assert.equal(before.foundNames[0].name, 'Blue Shulker Box', 'the loot found so far, for picking new entries');
+    await assert.rejects(route('PUT', viewer, { items: ['Cobblestone'] }), /Admin access required/, 'only administrators change it');
+
+    // A new order, Cobblestone looked for, Elytra and the rest left out
+    const saved = (await route('PUT', admin, { items: [{ name: 'Cobblestone' }, { name: 'shulker', match: 'contains' }, { name: 'Diamond' }] })).payload;
+    assert.equal(saved.custom, true);
+    assert.equal(saved.updatedBy, 'admin');
+    assert.deepEqual(saved.items.map(item => item.name), ['Cobblestone', 'shulker', 'Diamond']);
+    assert.ok(published.some(event => event.payload.highlights), 'open pages hear of it');
+    assert.ok(logs.some(entry => /highlights changed: 3 items/.test(entry.message)));
+    assert.deepEqual((await scope()).valuableItems.map(item => [item.name, item.count, item.items, item.rank]),
+      [['Cobblestone', 1, 64, 1], ['shulker', 2, 2, 2], ['Diamond', 1, 5, 3]], 'in the new order; Elytra off the list');
+
+    // An empty list shows no loot; reset brings the built-in one back
+    await route('PUT', admin, { items: [] });
+    assert.deepEqual((await scope()).valuableItems, []);
+    const reset = (await route('PUT', admin, { reset: true })).payload;
+    assert.equal(reset.custom, false);
+    assert.equal((await scope()).valuableItems[0].name, 'Elytra');
+  } finally {
+    await db.close();
+  }
+}
+
 (async () => {
   testNormalization();
   testEventNormalization();
   testStatusOnline();
   testLootValue();
   await testIngestAndQueries();
+  await testHighlightsEditing();
   await testMarkers();
   await testRunLog();
   await testCoverage();

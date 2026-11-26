@@ -7306,6 +7306,358 @@ function renderAreaExplorerHighlights(scope) {
   container.innerHTML = sections.length ? sections.join('') : '<p class="area-explorer-empty">Nothing found here yet.</p>';
 }
 
+// The Highlights editor (administrators): the loot the panel looks for, in order of importance. The
+// list is edited as a draft and goes to the site as a whole on Save.
+
+/** Where a loot name goes in a highlights list (as the site works it out), or -1. */
+function areaExplorerHighlightIndex(items, itemName) {
+  const name = String(itemName || '').toLowerCase();
+  return items.findIndex(entry => {
+    const wanted = String(entry.name || '').trim().toLowerCase();
+    if (!wanted) return false;
+    return entry.match === 'contains' ? name.includes(wanted) : name === wanted;
+  });
+}
+
+function areaExplorerHighlightsEditor() {
+  const ae = areaExplorerState();
+  if (!ae.hlEditor) ae.hlEditor = { items: [], saved: '', nextId: 1, filter: '', foundNames: [], defaults: [], dragId: null };
+  return ae.hlEditor;
+}
+
+function areaExplorerHighlightsSnapshot(items) {
+  return JSON.stringify(items.map(entry => [entry.name.trim().toLowerCase(), entry.match]));
+}
+
+function areaExplorerHighlightsDirty() {
+  const editor = areaExplorerHighlightsEditor();
+  return areaExplorerHighlightsSnapshot(editor.items) !== editor.saved;
+}
+
+function setAreaExplorerHighlightsDraft(items, { saved = false } = {}) {
+  const editor = areaExplorerHighlightsEditor();
+  editor.items = items.map(entry => ({ id: editor.nextId++, name: entry.name, match: entry.match === 'contains' ? 'contains' : 'exact', selected: false }));
+  if (saved) editor.saved = areaExplorerHighlightsSnapshot(editor.items);
+}
+
+async function openAreaExplorerHighlights() {
+  const editor = areaExplorerHighlightsEditor();
+  const button = $('#areaExplorerHighlightsEdit');
+  button.disabled = true;
+  try {
+    const data = await fetchJson('/api/area-explorer/highlights');
+    editor.foundNames = data.foundNames || [];
+    editor.defaults = data.defaults || [];
+    editor.custom = data.custom;
+    editor.updatedBy = data.updatedBy;
+    editor.updatedAt = data.updatedAt;
+    editor.filter = '';
+    setAreaExplorerHighlightsDraft(data.items || [], { saved: true });
+  } catch (error) {
+    setBanner(`Could not load the highlights: ${error.message}`);
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  $('#areaExplorerHighlightsFilter').value = '';
+  $('#areaExplorerHighlightsNew').value = '';
+  $('#areaExplorerHighlightsError').hidden = true;
+  const origin = editor.custom
+    ? `Set by ${editor.updatedBy || 'an administrator'}${editor.updatedAt ? `, ${formatFullDateTime(editor.updatedAt)}` : ''}.`
+    : 'This is the built-in list.';
+  $('#areaExplorerHighlightsNote').textContent = `Most important first. A find counts for the first entry it matches; drag rows, use the arrows or type a position to reorder. ${origin}`;
+  renderAreaExplorerHighlightsNames();
+  renderAreaExplorerHighlightsEditor();
+  $('#areaExplorerHighlightsModal').hidden = false;
+  document.body.classList.add('modal-open');
+  $('#areaExplorerHighlightsNew').focus();
+}
+
+function closeAreaExplorerHighlights({ force = false } = {}) {
+  if (!force && areaExplorerHighlightsDirty() && !window.confirm('Close without saving the changes to the highlights?')) return;
+  $('#areaExplorerHighlightsModal').hidden = true;
+  document.body.classList.remove('modal-open');
+}
+
+/** Suggestions for a new entry: the loot found so far, then the built-in entries not on the list. */
+function renderAreaExplorerHighlightsNames() {
+  const editor = areaExplorerHighlightsEditor();
+  const options = new Map();
+  for (const item of editor.foundNames) options.set(item.name.toLowerCase(), { name: item.name, label: `found ${formatNumber(item.count)}` });
+  for (const item of editor.defaults) if (!options.has(item.name.toLowerCase())) options.set(item.name.toLowerCase(), { name: item.name, label: 'built-in' });
+  $('#areaExplorerHighlightsNames').innerHTML = [...options.values()]
+    .map(option => `<option value="${escapeHtml(option.name)}" label="${escapeHtml(option.label)}"></option>`).join('');
+}
+
+/** How many finds each entry would get with the list as it is now (over every server). */
+function areaExplorerHighlightsCounts(items) {
+  const counts = new Map(items.map(entry => [entry.id, 0]));
+  for (const item of areaExplorerHighlightsEditor().foundNames) {
+    const index = areaExplorerHighlightIndex(items, item.name);
+    if (index >= 0) counts.set(items[index].id, counts.get(items[index].id) + item.count);
+  }
+  return counts;
+}
+
+function areaExplorerHighlightsShown() {
+  const editor = areaExplorerHighlightsEditor();
+  const filter = editor.filter.trim().toLowerCase();
+  return filter ? editor.items.filter(entry => entry.name.toLowerCase().includes(filter)) : editor.items;
+}
+
+function renderAreaExplorerHighlightsEditor() {
+  const editor = areaExplorerHighlightsEditor();
+  const list = $('#areaExplorerHighlightsList');
+  const counts = areaExplorerHighlightsCounts(editor.items);
+  const shown = areaExplorerHighlightsShown();
+  const last = editor.items.length;
+  list.innerHTML = shown.length ? shown.map(entry => {
+    const position = editor.items.indexOf(entry) + 1;
+    const count = counts.get(entry.id) || 0;
+    return `<li class="area-explorer-hl-row${entry.selected ? ' is-selected' : ''}" data-hl-id="${entry.id}">
+      <span class="area-explorer-hl-handle" aria-hidden="true" title="Drag to reorder">⋮⋮</span>
+      <input class="area-explorer-hl-check" type="checkbox" data-hl-select${entry.selected ? ' checked' : ''} aria-label="Select ${escapeHtml(entry.name)}">
+      <input class="area-explorer-hl-position" type="number" min="1" max="${last}" step="1" value="${position}" data-hl-position aria-label="Position of ${escapeHtml(entry.name)}">
+      <input class="area-explorer-hl-name" value="${escapeHtml(entry.name)}" maxlength="128" data-hl-name aria-label="Item name" placeholder="Item name">
+      <select class="area-explorer-hl-match" data-hl-match aria-label="How the name matches">
+        <option value="exact"${entry.match === 'exact' ? ' selected' : ''}>Exact</option>
+        <option value="contains"${entry.match === 'contains' ? ' selected' : ''}>Contains</option>
+      </select>
+      <span class="area-explorer-hl-count${count ? '' : ' is-none'}" title="Finds it gets with this list, over every server">${count ? `×${formatNumber(count)}` : '-'}</span>
+      <span class="area-explorer-hl-row-actions">
+        <button class="ghost-button" type="button" data-hl-move="-1" aria-label="Move up" title="Up"${position === 1 ? ' disabled' : ''}>↑</button>
+        <button class="ghost-button" type="button" data-hl-move="1" aria-label="Move down" title="Down"${position === last ? ' disabled' : ''}>↓</button>
+        <button class="ghost-button is-danger" type="button" data-hl-delete aria-label="Delete ${escapeHtml(entry.name)}" title="Delete">&times;</button>
+      </span>
+    </li>`;
+  }).join('') : `<li class="area-explorer-empty">${editor.items.length ? 'Nothing matches the filter.' : 'The list is empty: Highlights shows no loot. Add an item above.'}</li>`;
+  renderAreaExplorerHighlightsToolbar();
+}
+
+function renderAreaExplorerHighlightsToolbar() {
+  const editor = areaExplorerHighlightsEditor();
+  const shown = areaExplorerHighlightsShown();
+  const selected = editor.items.filter(entry => entry.selected).length;
+  $('#areaExplorerHighlightsSelected').textContent = `${formatNumber(selected)} of ${formatNumber(editor.items.length)} selected`;
+  const all = $('#areaExplorerHighlightsSelectAll');
+  const shownSelected = shown.filter(entry => entry.selected).length;
+  all.checked = shown.length > 0 && shownSelected === shown.length;
+  all.indeterminate = shownSelected > 0 && shownSelected < shown.length;
+  $$('[data-hl-bulk]').forEach(button => { button.disabled = !selected; });
+  $('#areaExplorerHighlightsSave').disabled = !areaExplorerHighlightsDirty();
+}
+
+/** Moves the given entries, in their order, so the first of them lands at {@code index} of the rest. */
+function moveAreaExplorerHighlights(ids, index) {
+  const editor = areaExplorerHighlightsEditor();
+  const moving = editor.items.filter(entry => ids.has(entry.id));
+  const rest = editor.items.filter(entry => !ids.has(entry.id));
+  const at = Math.max(0, Math.min(index, rest.length));
+  editor.items = [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+}
+
+/** The selected move a step up or down, each past its neighbour that isn't selected. */
+function stepAreaExplorerHighlights(direction) {
+  const items = areaExplorerHighlightsEditor().items;
+  const order = direction < 0 ? items.map((_, i) => i) : items.map((_, i) => items.length - 1 - i);
+  for (const i of order) {
+    const j = i + direction;
+    if (!items[i].selected || j < 0 || j >= items.length || items[j].selected) continue;
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+}
+
+function addAreaExplorerHighlight() {
+  const editor = areaExplorerHighlightsEditor();
+  const input = $('#areaExplorerHighlightsNew');
+  const name = input.value.trim();
+  const match = $('#areaExplorerHighlightsNewMatch').value === 'contains' ? 'contains' : 'exact';
+  const error = $('#areaExplorerHighlightsError');
+  if (!name) { input.focus(); return; }
+  const existing = editor.items.find(entry => entry.name.trim().toLowerCase() === name.toLowerCase() && entry.match === match);
+  if (existing) {
+    error.textContent = `"${existing.name}" is on the list already, at ${editor.items.indexOf(existing) + 1}.`;
+    error.hidden = false;
+    return;
+  }
+  error.hidden = true;
+  // A new entry goes at the bottom: least important until it's moved up
+  editor.items.push({ id: editor.nextId++, name, match, selected: false });
+  input.value = '';
+  editor.filter = '';
+  $('#areaExplorerHighlightsFilter').value = '';
+  renderAreaExplorerHighlightsEditor();
+  $('#areaExplorerHighlightsList').lastElementChild?.scrollIntoView({ block: 'nearest' });
+  input.focus();
+}
+
+async function saveAreaExplorerHighlights(event) {
+  event?.preventDefault();
+  const editor = areaExplorerHighlightsEditor();
+  const error = $('#areaExplorerHighlightsError');
+  const blank = editor.items.findIndex(entry => !entry.name.trim());
+  if (blank >= 0) {
+    error.textContent = `Entry ${blank + 1} has no name: give it one or delete it.`;
+    error.hidden = false;
+    return;
+  }
+  const button = $('#areaExplorerHighlightsSave');
+  button.disabled = true;
+  error.hidden = true;
+  try {
+    const data = await putJson('/api/area-explorer/highlights', { items: editor.items.map(entry => ({ name: entry.name.trim(), match: entry.match })) });
+    setAreaExplorerHighlightsDraft(data.items, { saved: true });
+    closeAreaExplorerHighlights({ force: true });
+    showAreaExplorerNote(`Highlights saved: ${formatNumber(data.items.length)} ${data.items.length === 1 ? 'item' : 'items'}`);
+    loadAreaExplorer({ full: false }).catch(() => {});
+  } catch (err) {
+    error.textContent = `Could not save: ${err.message}`;
+    error.hidden = false;
+    button.disabled = false;
+  }
+}
+
+/** Back to the built-in list: in the draft only, until Save. */
+function resetAreaExplorerHighlights() {
+  const editor = areaExplorerHighlightsEditor();
+  if (!window.confirm('Replace the list with the built-in one? Nothing is saved until you press Save.')) return;
+  setAreaExplorerHighlightsDraft(editor.defaults);
+  editor.filter = '';
+  $('#areaExplorerHighlightsFilter').value = '';
+  renderAreaExplorerHighlightsEditor();
+}
+
+function bindAreaExplorerHighlightsEditor() {
+  const editor = areaExplorerHighlightsEditor();
+  const list = $('#areaExplorerHighlightsList');
+  const entryOf = element => {
+    const id = Number(element.closest('[data-hl-id]')?.dataset.hlId);
+    return editor.items.find(entry => entry.id === id) || null;
+  };
+  $('#areaExplorerHighlightsEdit')?.addEventListener('click', () => openAreaExplorerHighlights());
+  $('#areaExplorerHighlightsForm').addEventListener('submit', saveAreaExplorerHighlights);
+  $('#areaExplorerHighlightsClose').addEventListener('click', () => closeAreaExplorerHighlights());
+  $('#areaExplorerHighlightsCancel').addEventListener('click', () => closeAreaExplorerHighlights());
+  $('#areaExplorerHighlightsModal').addEventListener('click', event => { if (event.target.id === 'areaExplorerHighlightsModal') closeAreaExplorerHighlights(); });
+  $('#areaExplorerHighlightsReset').addEventListener('click', resetAreaExplorerHighlights);
+  $('#areaExplorerHighlightsAdd').addEventListener('click', addAreaExplorerHighlight);
+  $('#areaExplorerHighlightsNew').addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    addAreaExplorerHighlight();
+  });
+  $('#areaExplorerHighlightsFilter').addEventListener('input', event => {
+    editor.filter = event.target.value;
+    renderAreaExplorerHighlightsEditor();
+  });
+  // Enter in a row's field doesn't save the whole list
+  list.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && event.target.matches('input')) {
+      event.preventDefault();
+      event.target.blur();
+    }
+  });
+  $('#areaExplorerHighlightsSelectAll').addEventListener('change', event => {
+    const shown = new Set(areaExplorerHighlightsShown().map(entry => entry.id));
+    editor.items.forEach(entry => { if (shown.has(entry.id)) entry.selected = event.target.checked; });
+    renderAreaExplorerHighlightsEditor();
+  });
+  $$('[data-hl-bulk]').forEach(button => button.addEventListener('click', () => {
+    const ids = new Set(editor.items.filter(entry => entry.selected).map(entry => entry.id));
+    if (!ids.size) return;
+    const action = button.dataset.hlBulk;
+    if (action === 'delete') {
+      if (!window.confirm(`Delete ${ids.size} ${ids.size === 1 ? 'entry' : 'entries'} from the list?`)) return;
+      editor.items = editor.items.filter(entry => !ids.has(entry.id));
+    } else if (action === 'top') moveAreaExplorerHighlights(ids, 0);
+    else if (action === 'bottom') moveAreaExplorerHighlights(ids, Infinity);
+    else stepAreaExplorerHighlights(action === 'up' ? -1 : 1);
+    renderAreaExplorerHighlightsEditor();
+  }));
+  // Typing in a row changes the draft as it goes; the list is redrawn when the field is left
+  list.addEventListener('input', event => {
+    const entry = entryOf(event.target);
+    if (!entry) return;
+    if (event.target.matches('[data-hl-name]')) {
+      entry.name = event.target.value;
+      renderAreaExplorerHighlightsToolbar();
+    }
+  });
+  list.addEventListener('change', event => {
+    const entry = entryOf(event.target);
+    if (!entry) return;
+    if (event.target.matches('[data-hl-select]')) {
+      entry.selected = event.target.checked;
+      event.target.closest('li').classList.toggle('is-selected', entry.selected);
+      renderAreaExplorerHighlightsToolbar();
+      return;
+    }
+    if (event.target.matches('[data-hl-match]')) entry.match = event.target.value === 'contains' ? 'contains' : 'exact';
+    if (event.target.matches('[data-hl-position]')) {
+      const position = Number.parseInt(event.target.value, 10);
+      if (Number.isFinite(position)) moveAreaExplorerHighlights(new Set([entry.id]), position - 1);
+    }
+    renderAreaExplorerHighlightsEditor();
+  });
+  list.addEventListener('click', event => {
+    const entry = entryOf(event.target);
+    if (!entry) return;
+    const move = event.target.closest('[data-hl-move]');
+    if (move) {
+      const index = editor.items.indexOf(entry) + Number(move.dataset.hlMove);
+      if (index < 0 || index >= editor.items.length) return;
+      moveAreaExplorerHighlights(new Set([entry.id]), index);
+      renderAreaExplorerHighlightsEditor();
+      return;
+    }
+    if (event.target.closest('[data-hl-delete]')) {
+      editor.items = editor.items.filter(item => item !== entry);
+      renderAreaExplorerHighlightsEditor();
+    }
+  });
+  // Dragging a row by its handle - and every selected one with it, when it's one of them - to
+  // another place; elsewhere the row's fields keep their text selection
+  list.addEventListener('pointerdown', event => {
+    const row = event.target.closest('[data-hl-id]');
+    if (row) row.draggable = Boolean(event.target.closest('.area-explorer-hl-handle'));
+  });
+  list.addEventListener('dragstart', event => {
+    const entry = entryOf(event.target);
+    if (!entry || !event.target.closest('li')?.draggable) return;
+    editor.dragId = entry.id;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', entry.name);
+    event.target.closest('li').classList.add('is-dragging');
+  });
+  list.addEventListener('dragover', event => {
+    if (editor.dragId === null) return;
+    const row = event.target.closest('[data-hl-id]');
+    if (!row) return;
+    event.preventDefault();
+    const after = event.clientY > row.getBoundingClientRect().top + row.offsetHeight / 2;
+    list.querySelectorAll('.drop-before, .drop-after').forEach(item => item.classList.remove('drop-before', 'drop-after'));
+    row.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+  list.addEventListener('drop', event => {
+    if (editor.dragId === null) return;
+    event.preventDefault();
+    const row = event.target.closest('[data-hl-id]');
+    const target = row && entryOf(row);
+    const dragged = editor.items.find(entry => entry.id === editor.dragId);
+    if (!target || !dragged) return;
+    const ids = new Set(dragged.selected ? editor.items.filter(entry => entry.selected).map(entry => entry.id) : [dragged.id]);
+    if (ids.has(target.id)) return;
+    const after = row.classList.contains('drop-after');
+    const rest = editor.items.filter(entry => !ids.has(entry.id));
+    moveAreaExplorerHighlights(ids, rest.indexOf(target) + (after ? 1 : 0));
+    renderAreaExplorerHighlightsEditor();
+  });
+  list.addEventListener('dragend', () => {
+    editor.dragId = null;
+    list.querySelectorAll('.is-dragging, .drop-before, .drop-after').forEach(item => item.classList.remove('is-dragging', 'drop-before', 'drop-after'));
+  });
+}
+
 /** With Markers picked: which of them to show - Shulker Boxes, Spawners... - most found first. End Portals have their own tab. */
 function renderAreaExplorerMarkerNames(scope) {
   const ae = areaExplorerState();
@@ -15601,6 +15953,7 @@ for (const axis of ['X', 'Y', 'Z']) {
     renderAdminPlayerPearlChamber();
   });
 }
+if ($('#areaExplorerHighlightsForm')) bindAreaExplorerHighlightsEditor();
 $('#areaExplorerWaypointForm')?.addEventListener('submit', sendAreaExplorerWaypoint);
 $('#areaExplorerWaypointClose')?.addEventListener('click', closeAreaExplorerWaypoint);
 $('#areaExplorerWaypointCancel')?.addEventListener('click', closeAreaExplorerWaypoint);
@@ -16005,6 +16358,10 @@ document.addEventListener('keydown', event => {
   }
   if (event.key === 'Escape' && !$('#adminPlayerDeleteModal')?.hidden) {
     closeAdminPlayerDelete();
+    return;
+  }
+  if (event.key === 'Escape' && !$('#areaExplorerHighlightsModal')?.hidden) {
+    closeAreaExplorerHighlights();
     return;
   }
   if (event.key === 'Escape' && !$('#areaExplorerWaypointModal')?.hidden) {
