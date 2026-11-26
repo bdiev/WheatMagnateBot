@@ -1115,14 +1115,19 @@ async function testRunTimeline() {
       event('0003', 120, 'start', 'Started a 100x100 chunk area'), event('0004', 90, 'pause', 'Paused at 20%'), event('0005', 85, 'resume', 'Resumed'),
       event('0006', 60, 'disconnect', 'Disconnected from oldfrog.org: Timed out', 'error'), event('0007', 59, 'rejoin', 'Back on the server', 'success'),
       event('0008', 30, 'totem', 'Totem used', 'error')
-    ], finds: [item('Elytra', 200, 1), item('Diamond', 45, 2), item('Golden Apple', 10, 3)] }, NOW);
+    ], finds: [item('Elytra', 200, 1), item('Diamond', 45, 2), item('Golden Apple', 10, 3),
+      ...[11, 12, 13].map(x => ({ kind: 'SIGN', x, y: 64, z: 0, foundAt: NOW - 40 * 60_000, name: 'Oak Sign', details: `sign ${x}` }))] }, NOW);
     await service.ingest(other, { server: 'oldfrog.org', dimension: 'overworld', events: [event('0009', 20, 'start', 'Laptop run')], finds: [item('Map', 5, 4)] }, NOW);
 
     const run = await service.getRun(new URL(`http://x/api/area-explorer/run?token=${token.id}`), NOW);
     assert.equal(new Date(run.startedAt).getTime(), NOW - 120 * 60_000, 'from its last start');
     assert.deepEqual(run.events.map(e => e.type), ['start', 'pause', 'resume', 'disconnect', 'rejoin', 'totem'], 'oldest first, the older run left out');
     assert.equal(run.events[0].tokenId, String(token.id), 'each event says which mod it is');
-    assert.deepEqual(run.finds.map(f => f.name), ['Diamond', 'Golden Apple'], 'its finds since the start, not the other mod\'s');
+    assert.deepEqual(run.finds.map(f => f.name), ['Diamond', 'Golden Apple'], 'its loot since the start, not the other mod\'s, and no signs');
+    // What it found, ten minutes at a time: signs counted there
+    assert.equal(run.activityMinutes, 10);
+    assert.deepEqual(run.activity.map(([, bases, items, signs]) => [bases, items, signs]), [[0, 1, 0], [0, 0, 3], [0, 1, 0]]);
+    assert.equal(run.activity.every(([time], i, all) => time % 600_000 === 0 && (!i || time > all[i - 1][0])), true, 'whole stretches, in order');
     const routed = await service.handleApi({ method: 'GET' }, { username: 'viewer', role: 'user' }, new URL(`http://x/api/area-explorer/run?token=${other.id}`), { assertAdmin() {}, readBody: async () => ({}) });
     assert.deepEqual(routed.payload.finds.map(f => f.name), ['Map']);
     await assert.rejects(service.getRun(new URL('http://x/api/area-explorer/run?token=abc')), /Invalid token id/);

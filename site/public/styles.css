@@ -18124,7 +18124,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   background: color-mix(in srgb, var(--danger) 10%, var(--panel)); font-size: 13px; font-weight: 600; overflow-wrap: anywhere;
 }
 .area-explorer-tl-alert .area-explorer-dot { flex: 0 0 auto; }
-.area-explorer-tl { position: relative; height: 34px; }
+.area-explorer-tl { position: relative; height: 27px; }
 .area-explorer-tl-rail { position: absolute; left: 0; right: 0; top: 11px; height: 12px; border: 2px solid var(--line); border-radius: 2px; background: var(--panel); overflow: hidden; }
 .area-explorer-tl-rail i { position: absolute; top: 0; bottom: 0; left: 0; }
 .area-explorer-tl-done { background: repeating-linear-gradient(90deg, var(--accent) 0 8px, color-mix(in srgb, var(--accent) 78%, #000) 8px 10px); transition: width 400ms ease; }
@@ -18139,9 +18139,15 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 .area-explorer-tl-mark.is-back, .area-explorer-tl-key.is-back { background: var(--annotation-settings); }
 .area-explorer-tl-mark.is-ok, .area-explorer-tl-key.is-ok { background: var(--accent); }
 .area-explorer-tl-mark.is-muted, .area-explorer-tl-key.is-muted { background: var(--muted); }
-.area-explorer-tl-find { position: absolute; bottom: 0; width: 7px; height: 7px; margin-left: -3px; border-radius: 50%; background: var(--accent-strong); opacity: .8; }
-.area-explorer-tl-find.is-base, .area-explorer-tl-key.is-base { width: 10px; height: 10px; margin-left: -5px; border-radius: 2px; background: var(--annotation-pickaxe); opacity: 1; }
-.area-explorer-tl-find.is-sign { background: var(--gold-text); opacity: .6; }
+.area-explorer-tl-mark.is-many { width: 13px; height: 13px; margin-left: -6px; top: -1px; box-shadow: 0 0 0 2px var(--line); }
+.area-explorer-tl-key.is-base { border-radius: 2px; background: var(--annotation-pickaxe); }
+/* What the run found, a bar per stretch under the timeline: loot and bases, a base marked on top */
+.area-explorer-tl-activity { position: relative; height: 18px; margin-top: -2px; border-bottom: 1px solid var(--line-soft); }
+.area-explorer-tl-activity i { position: absolute; bottom: 0; box-sizing: border-box; border-right: 1px solid var(--panel-soft); background: color-mix(in srgb, var(--accent) 70%, var(--panel-soft)); }
+.area-explorer-tl-activity i.has-base { border-top: 3px solid var(--annotation-pickaxe); }
+.area-explorer-tl-activity i.is-signs { background: color-mix(in srgb, var(--muted) 35%, var(--panel-soft)); }
+.area-explorer-tl-activity i:hover { background: var(--accent-strong); }
+.area-explorer-tl-times { color: var(--muted); font-weight: 700; }
 .area-explorer-tl-scale { display: flex; justify-content: space-between; gap: 8px; margin-top: -2px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .area-explorer-tl-scale b { color: var(--text); }
 .area-explorer-tl-scale > span:nth-child(2) { text-align: center; }

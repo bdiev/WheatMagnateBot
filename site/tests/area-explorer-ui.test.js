@@ -841,6 +841,16 @@ function testRunTimeline() {
     'a pause ends when it resumes, or when the mod loses the server');
   assert.equal(JSON.stringify(gaps.map(g => [g.from, g.to, !!g.open])), JSON.stringify([[Date.parse(at(20)), Date.parse(at(22)), false], [Date.parse(at(50)), now, true]]),
     'off the server until it is back; still off: up to now');
+  // Marks of a kind close together are one; another kind between them stays apart
+  const clusters = vm.createContext({ formatNumber: value => String(value) });
+  vm.runInContext(source.slice(source.indexOf('const AREA_EXPLORER_RUN_CLUSTER '), source.indexOf('const AREA_EXPLORER_RUN_ACTIVITY_BARS')), clusters);
+  vm.runInContext(functionSource('areaExplorerRunClusters') + functionSource('areaExplorerRunClusterTitle'), clusters);
+  const groups = clusters.areaExplorerRunClusters([
+    { pos: 10, mark: 'is-warn', text: 'a' }, { pos: 11, mark: 'is-warn', text: 'b' }, { pos: 11.2, mark: 'is-bad', text: 'kick' },
+    { pos: 12.4, mark: 'is-warn', text: 'c' }, { pos: 40, mark: 'is-warn', text: 'd' }
+  ]);
+  assert.equal(JSON.stringify(groups.map(group => [group.mark, group.items.length])), JSON.stringify([['is-warn', 3], ['is-bad', 1], ['is-warn', 1]]));
+  assert.equal(clusters.areaExplorerRunClusterTitle(groups[0]), '3 events:\na\nb\nc');
   // Wired: a run going is a timeline, live events land on it, finds bring it afresh
   assert.match(functionSource('renderAreaExplorerStatus'), /const timed = statuses\.filter\(status => areaExplorerRunTimed\(status, now\)\)/);
   assert.match(functionSource('applyAreaExplorerEvents'), /addAreaExplorerRunEvents\(events\);/);

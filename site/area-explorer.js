@@ -67,9 +67,11 @@ const MAX_EVENT_PAGE = 200;
 // What the log's "Connection" filter shows: losing and getting back the server
 const CONNECTION_EVENT_TYPES = Object.freeze(['disconnect', 'reconnect', 'rejoin', 'totem', 'leave']);
 const EVENT_RETENTION_DAYS = 90;
-// A run's timeline: its events and finds since it started, the newest this many of each
+// A run's timeline: its events since it started (the newest this many), its newest loot and bases,
+// and how much it found in each stretch of this many minutes
 const MAX_RUN_EVENTS = 400;
-const MAX_RUN_FINDS = 600;
+const MAX_RUN_FINDS = 30;
+const RUN_ACTIVITY_MINUTES = 10;
 // No start in the log (an older mod): the last day of it
 const RUN_FALLBACK_MS = 86_400_000;
 const EVENT_PRUNE_INTERVAL_MS = 60 * 60_000;
@@ -981,20 +983,30 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       `SELECT occurred_at FROM area_explorer_events WHERE token_id = $1 AND type = 'start' ORDER BY occurred_at DESC, id DESC LIMIT 1`, [tokenId]
     )).rows[0];
     const since = start ? new Date(start.occurred_at) : new Date(now - RUN_FALLBACK_MS);
-    const [events, finds] = await Promise.all([
+    const [events, finds, activity] = await Promise.all([
       pool.query(
         `SELECT e.*, t.name AS token_name FROM area_explorer_events e LEFT JOIN area_explorer_tokens t ON t.id = e.token_id
          WHERE e.token_id = $1 AND e.occurred_at >= $2 ORDER BY e.occurred_at DESC, e.id DESC LIMIT $3`, [tokenId, since, MAX_RUN_EVENTS]),
+      // Signs come by the thousand in a town: counted below, not listed
       pool.query(
         `SELECT id, kind, name, item_count, found_at FROM area_explorer_finds
-         WHERE token_id = $1 AND found_at >= $2 AND removed_at IS NULL AND kind IN ('BASE', 'ITEM', 'SIGN')
-         ORDER BY found_at DESC, id DESC LIMIT $3`, [tokenId, since, MAX_RUN_FINDS])
+         WHERE token_id = $1 AND found_at >= $2 AND removed_at IS NULL AND kind IN ('BASE', 'ITEM')
+         ORDER BY found_at DESC, id DESC LIMIT $3`, [tokenId, since, MAX_RUN_FINDS]),
+      pool.query(
+        `SELECT floor(extract(epoch FROM found_at) / $3)::bigint * $3 AS bin,
+           COUNT(*) FILTER (WHERE kind = 'BASE')::int AS bases, COUNT(*) FILTER (WHERE kind = 'ITEM')::int AS items,
+           COUNT(*) FILTER (WHERE kind = 'SIGN')::int AS signs
+         FROM area_explorer_finds WHERE token_id = $1 AND found_at >= $2 AND removed_at IS NULL AND kind IN ('BASE', 'ITEM', 'SIGN')
+         GROUP BY 1 ORDER BY 1`, [tokenId, since, RUN_ACTIVITY_MINUTES * 60])
     ]);
     return {
       tokenId,
       startedAt: start ? start.occurred_at : null,
       events: events.rows.reverse().map(row => publicEvent(row)),
-      finds: finds.rows.reverse().map(row => ({ id: String(row.id), kind: row.kind, name: row.name, count: row.item_count, foundAt: row.found_at }))
+      finds: finds.rows.reverse().map(row => ({ id: String(row.id), kind: row.kind, name: row.name, count: row.item_count, foundAt: row.found_at })),
+      // What it found, a stretch at a time: [start of the stretch (ms), bases, loot, signs]
+      activity: activity.rows.map(row => [Number(row.bin) * 1000, row.bases, row.items, row.signs]),
+      activityMinutes: RUN_ACTIVITY_MINUTES
     };
   }
 

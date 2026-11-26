@@ -8248,6 +8248,64 @@ function areaExplorerRunFindText(find) {
   return `Found ${find.name}${find.count > 1 ? ` ×${formatNumber(find.count)}` : ''}`;
 }
 
+/** Marks this close (in % of the timeline) and of one kind are drawn as one. */
+const AREA_EXPLORER_RUN_CLUSTER = 1.5;
+/** Bars of the finds' activity under the timeline. */
+const AREA_EXPLORER_RUN_ACTIVITY_BARS = 72;
+
+/** Marks ({pos, mark, text}) grouped: one kind within a step of each other is one, at their middle. */
+function areaExplorerRunClusters(marks) {
+  const groups = [];
+  for (const item of [...marks].sort((a, b) => a.pos - b.pos)) {
+    const group = groups.findLast(other => other.mark === item.mark);
+    if (group && item.pos - group.last <= AREA_EXPLORER_RUN_CLUSTER) {
+      group.items.push(item);
+      group.last = item.pos;
+      group.pos = (group.first + item.pos) / 2;
+    } else {
+      groups.push({ mark: item.mark, first: item.pos, last: item.pos, pos: item.pos, items: [item] });
+    }
+  }
+  return groups;
+}
+
+function areaExplorerRunClusterTitle(group) {
+  if (group.items.length === 1) return group.items[0].text;
+  const shown = group.items.slice(-6).map(item => item.text);
+  const more = group.items.length - shown.length;
+  return `${formatNumber(group.items.length)} events:\n${shown.join('\n')}${more ? `\n…and ${formatNumber(more)} more` : ''}`;
+}
+
+/**
+ * How much the run found along its timeline: a bar per stretch, as high as the loot and bases found
+ * then (signs counted in the tooltip only - a town has thousands), with bases marked on top.
+ */
+function renderAreaExplorerRunActivity(data, pct, now) {
+  if (!data?.activity?.length) return '';
+  const half = (data.activityMinutes || 10) * 30_000;
+  const bars = Array.from({ length: AREA_EXPLORER_RUN_ACTIVITY_BARS }, () => ({ bases: 0, items: 0, signs: 0, from: Infinity, to: 0 }));
+  for (const [time, bases, items, signs] of data.activity) {
+    const index = Math.min(AREA_EXPLORER_RUN_ACTIVITY_BARS - 1, Math.floor(pct(time + half) / 100 * AREA_EXPLORER_RUN_ACTIVITY_BARS));
+    const bar = bars[index];
+    bar.bases += bases;
+    bar.items += items;
+    bar.signs += signs;
+    bar.from = Math.min(bar.from, time);
+    bar.to = Math.max(bar.to, time + half * 2);
+  }
+  const most = Math.max(1, ...bars.map(bar => bar.items + bar.bases));
+  const width = 100 / AREA_EXPLORER_RUN_ACTIVITY_BARS;
+  const html = bars.map((bar, index) => {
+    if (!bar.items && !bar.bases && !bar.signs) return '';
+    const height = bar.items + bar.bases ? Math.max(12, Math.sqrt((bar.items + bar.bases) / most) * 100) : 6;
+    const title = `${areaExplorerRunClock(bar.from, now)}–${areaExplorerRunClock(Math.min(bar.to, now), now)}: ${[
+      bar.bases && `${formatNumber(bar.bases)} ${bar.bases === 1 ? 'base' : 'bases'}`, bar.items && `${formatNumber(bar.items)} loot`, bar.signs && `${formatNumber(bar.signs)} signs`
+    ].filter(Boolean).join(', ')}`;
+    return `<i class="${bar.items + bar.bases ? '' : 'is-signs'}${bar.bases ? ' has-base' : ''}" style="left:${(index * width).toFixed(3)}%;width:${width.toFixed(3)}%;height:${height.toFixed(0)}%" title="${escapeHtml(title)}"></i>`;
+  }).join('');
+  return `<div class="area-explorer-tl-activity" aria-hidden="true">${html}</div>`;
+}
+
 function renderAreaExplorerRunCard(status, now, sectorsGrid, openSectors) {
   const ae = areaExplorerState();
   const token = String(status.tokenId);
@@ -8277,15 +8335,29 @@ function renderAreaExplorerRunCard(status, now, sectorsGrid, openSectors) {
   const phaseName = status.paused ? 'Paused' : (AREA_EXPLORER_PHASES[status.phase] || status.phase);
   const phase = offServer ? 'Off the server' : rescan ? `Rescan · ${phaseName}` : phaseName;
   const runState = offServer ? 'kicked' : status.paused ? 'paused' : 'online';
-  const marks = events.filter(event => AREA_EXPLORER_RUN_MARKS[event.type] && !['phase', 'progress', 'pause', 'resume', 'start', 'reconnect'].includes(event.type))
-    .map(event => `<span class="area-explorer-tl-mark ${AREA_EXPLORER_RUN_MARKS[event.type]}" style="left:${at(Date.parse(event.occurredAt))}" title="${escapeHtml(`${areaExplorerRunClock(event.occurredAt, now)} · ${event.message}`)}"></span>`);
-  const findMarks = finds.map(find => `<span class="area-explorer-tl-find is-${find.kind.toLowerCase()}" style="left:${at(Date.parse(find.foundAt))}" title="${escapeHtml(`${areaExplorerRunClock(find.foundAt, now)} · ${areaExplorerRunFindText(find)}`)}"></span>`);
+  const pct = time => Math.min(Math.max((time - started) / span, 0), 1) * 100;
+  // Kicks, totems, warnings: those of a kind close together are one mark, all of them in its tooltip
+  const marks = areaExplorerRunClusters(events
+    .filter(event => AREA_EXPLORER_RUN_MARKS[event.type] && !['phase', 'progress', 'pause', 'resume', 'start', 'reconnect'].includes(event.type))
+    .map(event => ({ pos: pct(Date.parse(event.occurredAt)), mark: AREA_EXPLORER_RUN_MARKS[event.type], text: `${areaExplorerRunClock(event.occurredAt, now)} · ${event.message}` })))
+    .map(group => `<span class="area-explorer-tl-mark ${group.mark}${group.items.length > 1 ? ' is-many' : ''}" style="left:${group.pos.toFixed(2)}%" title="${escapeHtml(areaExplorerRunClusterTitle(group))}"></span>`);
+  const activity = renderAreaExplorerRunActivity(data, pct, now);
 
-  // What happened last: events and finds together, newest first; the ones not seen before light up
-  const recent = [
-    ...events.filter(event => event.type !== 'progress').map(event => ({ key: `e${event.id}`, time: Date.parse(event.occurredAt), text: event.message, mark: AREA_EXPLORER_RUN_MARKS[event.type] || 'is-muted' })),
+  // What happened last: events and finds together, newest first, the same line again counted
+  // (signs aren't listed: a town has thousands). Of the phase messages only the newest - they
+  // say where the run is. The ones not seen before light up
+  const lastPhase = events.filter(event => event.type === 'phase').at(-1);
+  const recent = [];
+  for (const item of [
+    ...events.filter(event => event.type !== 'progress' && (event.type !== 'phase' || event === lastPhase))
+      .map(event => ({ key: `e${event.id}`, time: Date.parse(event.occurredAt), text: event.message, mark: AREA_EXPLORER_RUN_MARKS[event.type] || 'is-muted' })),
     ...finds.map(find => ({ key: `f${find.id}`, time: Date.parse(find.foundAt), text: areaExplorerRunFindText(find), mark: `is-find is-${find.kind.toLowerCase()}` }))
-  ].sort((a, b) => b.time - a.time).slice(0, AREA_EXPLORER_RUN_RECENT);
+  ].sort((a, b) => b.time - a.time)) {
+    const last = recent.at(-1);
+    if (last && last.text === item.text) last.times++;
+    else if (recent.length < AREA_EXPLORER_RUN_RECENT) recent.push({ ...item, times: 1 });
+    else break;
+  }
   const seen = ae.runSeen ||= new Map();
   const lastSeen = seen.get(token);
   const fresh = new Set(lastSeen === undefined ? [] : recent.filter(item => item.time > lastSeen).map(item => item.key));
@@ -8318,9 +8390,10 @@ function renderAreaExplorerRunCard(status, now, sectorsGrid, openSectors) {
         ${pauses.map(item => `<i class="area-explorer-tl-pause" style="left:${at(item.from)};width:${width(item.from, item.to)}" title="${escapeHtml(`Paused ${areaExplorerRunClock(item.from, now)} for ${formatDurationMs(item.to - item.from)}`)}"></i>`).join('')}
         ${gaps.map(item => `<i class="area-explorer-tl-gap" style="left:${at(item.from)};width:${width(item.from, item.to)}" title="${escapeHtml(`Off the server ${areaExplorerRunClock(item.from, now)} for ${formatDurationMs(item.to - item.from)}`)}"></i>`).join('')}
       </div>
-      ${marks.join('')}${findMarks.join('')}
+      ${marks.join('')}
       <span class="area-explorer-tl-now" style="left:${at(now)}"></span>
     </div>
+    ${activity}
     <div class="area-explorer-tl-scale">
       <span>started <b>${estimated ? '≈' : ''}${escapeHtml(areaExplorerRunClock(started, now))}</b></span>
       <span>now · ${escapeHtml(phase)}</span>
@@ -8328,7 +8401,7 @@ function renderAreaExplorerRunCard(status, now, sectorsGrid, openSectors) {
     </div>
     <div class="area-explorer-tl-counts">${counter('bases', 'bases')}${counter('items', 'loot')}${counter('signs', 'signs')}<span class="area-explorer-tl-counts-note">this run</span></div>
     ${recent.length ? `<div class="area-explorer-tl-recent"><span class="area-explorer-tl-label">What happened</span><ul>
-      ${recent.map(item => `<li${fresh.has(item.key) ? ' class="is-fresh"' : ''}><time datetime="${escapeHtml(new Date(item.time).toISOString())}" title="${escapeHtml(formatFullDateTime(item.time))}">${escapeHtml(areaExplorerRunClock(item.time, now))}</time><span class="area-explorer-tl-key ${item.mark}" aria-hidden="true"></span><span>${escapeHtml(item.text)}</span></li>`).join('')}
+      ${recent.map(item => `<li${fresh.has(item.key) ? ' class="is-fresh"' : ''}><time datetime="${escapeHtml(new Date(item.time).toISOString())}" title="${escapeHtml(formatFullDateTime(item.time))}">${escapeHtml(areaExplorerRunClock(item.time, now))}</time><span class="area-explorer-tl-key ${item.mark}" aria-hidden="true"></span><span>${escapeHtml(item.text)}${item.times > 1 ? ` <b class="area-explorer-tl-times">×${formatNumber(item.times)}</b>` : ''}</span></li>`).join('')}
     </ul></div>` : ''}
     <p class="area-explorer-tl-meta">${[position, `${escapeHtml(status.server || '-')} · ${escapeHtml(prettyDimension(status.dimension))}`, `report ${escapeHtml(formatDurationMs(now - Date.parse(status.updatedAt)))} ago`].filter(Boolean).map(part => `<span>${part}</span>`).join('')}</p>
     ${sectors && status.online ? `<details class="area-explorer-tl-sectors" data-area-sectors-for="${escapeHtml(token)}"${openSectors.has(token) ? ' open' : ''}><summary>${escapeHtml(sectorsText)}</summary>${sectorsGrid(status)}</details>` : ''}
