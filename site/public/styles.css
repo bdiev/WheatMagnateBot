@@ -18110,7 +18110,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 .area-explorer-tl-run { gap: 8px; }
 .area-explorer-tl-head { gap: 4px 8px; }
 .area-explorer-tl-head strong { font-size: 15px; }
-.area-explorer-tl-percent { font-family: var(--font-pixel); font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
+.area-explorer-tl-percent { color: var(--accent-strong); font-family: var(--font-pixel); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .area-explorer-tl-end { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
 .area-explorer-tl-end b { color: var(--text); }
 .area-explorer-run.is-kicked { border-color: var(--danger); }
@@ -18169,7 +18169,12 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 .area-explorer-tl-key.is-find.is-base { width: 9px; height: 9px; margin: 0; }
 .area-explorer-tl-key.is-find.is-sign { background: var(--gold-text); }
 .area-explorer-tl-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 0; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.area-explorer-tl-sectors summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+.area-explorer-tl-sectors summary { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; cursor: pointer; list-style: none; }
+.area-explorer-tl-sectors summary::-webkit-details-marker { display: none; }
+.area-explorer-tl-sectors-toggle { margin-left: auto; color: var(--accent-strong); font-weight: 700; white-space: nowrap; }
+.area-explorer-tl-sectors-toggle::after { content: "Show grid ▾"; }
+.area-explorer-tl-sectors[open] .area-explorer-tl-sectors-toggle::after { content: "Hide grid ▴"; }
+.area-explorer-tl-sectors summary:hover .area-explorer-tl-sectors-toggle { text-decoration: underline; }
 .area-explorer-tl-sectors[open] summary { margin-bottom: 4px; }
 .area-explorer-tl-sectors .area-explorer-sectors-summary { display: none; }
 /* Mods not running: a line each */

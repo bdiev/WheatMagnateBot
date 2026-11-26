@@ -841,6 +841,15 @@ function testRunTimeline() {
     'a pause ends when it resumes, or when the mod loses the server');
   assert.equal(JSON.stringify(gaps.map(g => [g.from, g.to, !!g.open])), JSON.stringify([[Date.parse(at(20)), Date.parse(at(22)), false], [Date.parse(at(50)), now, true]]),
     'off the server until it is back; still off: up to now');
+  // The filled part is the percent explored: the time so far spread over it, the time left over the rest
+  vm.runInContext(functionSource('areaExplorerRunPosition'), context);
+  const run = { started: 0, now: 100, end: 300, percent: 77 };
+  assert.equal(context.areaExplorerRunPosition(100, run), 77, 'now sits at the percent');
+  assert.equal(context.areaExplorerRunPosition(50, run), 38.5, 'halfway through the time so far, halfway along the filled part');
+  assert.equal(context.areaExplorerRunPosition(200, run), 88.5, 'halfway through the time left, halfway along the rest');
+  assert.equal(context.areaExplorerRunPosition(-5, run), 0);
+  assert.equal(context.areaExplorerRunPosition(400, run), 100);
+  assert.equal(context.areaExplorerRunPosition(100, { started: 0, now: 100, end: 100_000, percent: null }), 0.1, 'no percent: time alone');
   // Marks of a kind close together are one; another kind between them stays apart
   const clusters = vm.createContext({ formatNumber: value => String(value) });
   vm.runInContext(source.slice(source.indexOf('const AREA_EXPLORER_RUN_CLUSTER '), source.indexOf('const AREA_EXPLORER_RUN_ACTIVITY_BARS')), clusters);

@@ -8306,6 +8306,21 @@ function renderAreaExplorerRunActivity(data, pct, now) {
   return `<div class="area-explorer-tl-activity" aria-hidden="true">${html}</div>`;
 }
 
+/**
+ * Where a moment sits along the timeline, in %: the filled part is how much is explored (its percent),
+ * the time so far spread over it, the time left over the rest - so the bar reads as the run's
+ * progress, and what happened still sits in the order and at the pace it happened. A run with no
+ * percent or nothing left: time alone.
+ */
+function areaExplorerRunPosition(time, { started, now, end, percent }) {
+  const clamp = value => Math.min(Math.max(value, 0), 100);
+  const done = percent === null || percent === undefined || end <= now
+    ? clamp((now - started) / Math.max(60_000, end - started) * 100)
+    : clamp(percent);
+  if (time <= now) return clamp((time - started) / Math.max(1, now - started) * done);
+  return clamp(done + (time - now) / Math.max(1, end - now) * (100 - done));
+}
+
 function renderAreaExplorerRunCard(status, now, sectorsGrid, openSectors) {
   const ae = areaExplorerState();
   const token = String(status.tokenId);
@@ -8328,14 +8343,13 @@ function renderAreaExplorerRunCard(status, now, sectorsGrid, openSectors) {
   }
   if (!started) started = events.length ? Date.parse(events[0].occurredAt) : now - 60_000;
   const end = eta === null ? now : now + eta;
-  const span = Math.max(60_000, end - started);
-  const at = time => `${(Math.min(Math.max((time - started) / span, 0), 1) * 100).toFixed(2)}%`;
+  const pct = time => areaExplorerRunPosition(time, { started, now, end, percent });
+  const at = time => `${pct(time).toFixed(2)}%`;
   const width = (from, to) => `max(3px, calc(${at(to)} - ${at(from)}))`;
 
   const phaseName = status.paused ? 'Paused' : (AREA_EXPLORER_PHASES[status.phase] || status.phase);
   const phase = offServer ? 'Off the server' : rescan ? `Rescan · ${phaseName}` : phaseName;
   const runState = offServer ? 'kicked' : status.paused ? 'paused' : 'online';
-  const pct = time => Math.min(Math.max((time - started) / span, 0), 1) * 100;
   // Kicks, totems, warnings: those of a kind close together are one mark, all of them in its tooltip
   const marks = areaExplorerRunClusters(events
     .filter(event => AREA_EXPLORER_RUN_MARKS[event.type] && !['phase', 'progress', 'pause', 'resume', 'start', 'reconnect'].includes(event.type))
@@ -8404,7 +8418,7 @@ function renderAreaExplorerRunCard(status, now, sectorsGrid, openSectors) {
       ${recent.map(item => `<li${fresh.has(item.key) ? ' class="is-fresh"' : ''}><time datetime="${escapeHtml(new Date(item.time).toISOString())}" title="${escapeHtml(formatFullDateTime(item.time))}">${escapeHtml(areaExplorerRunClock(item.time, now))}</time><span class="area-explorer-tl-key ${item.mark}" aria-hidden="true"></span><span>${escapeHtml(item.text)}${item.times > 1 ? ` <b class="area-explorer-tl-times">×${formatNumber(item.times)}</b>` : ''}</span></li>`).join('')}
     </ul></div>` : ''}
     <p class="area-explorer-tl-meta">${[position, `${escapeHtml(status.server || '-')} · ${escapeHtml(prettyDimension(status.dimension))}`, `report ${escapeHtml(formatDurationMs(now - Date.parse(status.updatedAt)))} ago`].filter(Boolean).map(part => `<span>${part}</span>`).join('')}</p>
-    ${sectors && status.online ? `<details class="area-explorer-tl-sectors" data-area-sectors-for="${escapeHtml(token)}"${openSectors.has(token) ? ' open' : ''}><summary>${escapeHtml(sectorsText)}</summary>${sectorsGrid(status)}</details>` : ''}
+    ${sectors && status.online ? `<details class="area-explorer-tl-sectors" data-area-sectors-for="${escapeHtml(token)}"${openSectors.has(token) ? ' open' : ''}><summary><span>${escapeHtml(sectorsText)}</span><span class="area-explorer-tl-sectors-toggle" aria-hidden="true"></span></summary>${sectorsGrid(status)}</details>` : ''}
   </article>`;
 }
 
