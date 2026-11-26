@@ -38,6 +38,7 @@ function pearlLoaderOnlyModules() {
     },
     stoneMiner: {
       attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, stop:stoneMinerStatus,
+      pause:async () => false, resume:stoneMinerStatus,
       start:() => restricted('Stone Miner'), setLearning:enabled => enabled ? restricted('Stone Miner') : stoneMinerStatus(),
       clearBlocks:stoneMinerStatus, getStatus:stoneMinerStatus
     },

@@ -3324,32 +3324,59 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function getNearestPlayerEntity(maxDistance = 300) {
-  if (!bot?.entity) return null;
-  return Object.values(bot.entities || {})
+function getNearestPlayerEntity(maxDistance = 300, sourceBot = bot) {
+  if (!sourceBot?.entity) return null;
+  return Object.values(sourceBot.entities || {})
     .filter(entity =>
       entity &&
       entity.type === 'player' &&
       entity.username &&
-      entity.username !== bot.username &&
+      entity.username !== sourceBot.username &&
       entity.position
     )
     .map(entity => ({
       entity,
-      distance: bot.entity.position.distanceTo(entity.position)
+      distance: sourceBot.entity.position.distanceTo(entity.position)
     }))
     .filter(entry => entry.distance <= maxDistance)
     .sort((a, b) => a.distance - b.distance)[0]?.entity || null;
 }
 
-async function lookAtNearestPlayerForDrop() {
-  const nearest = getNearestPlayerEntity();
+async function lookAtNearestPlayerForDrop(sourceBot = bot) {
+  const nearest = getNearestPlayerEntity(300, sourceBot);
   if (!nearest) throw new Error('No nearby player visible to drop the item to.');
   const lookPosition = typeof nearest.position.offset === 'function'
     ? nearest.position.offset(0, 1.4, 0)
     : nearest.position;
-  await bot.lookAt(lookPosition, true);
+  await sourceBot.lookAt(lookPosition, true);
   return nearest.username;
+}
+
+// Turns to the nearest player and throws the stack; no open container window
+// may be left, or the server ignores the throw
+async function tossStackToNearestPlayer(sourceBot, item) {
+  try { if (sourceBot.currentWindow) sourceBot.closeWindow(sourceBot.currentWindow); } catch {}
+  try { sourceBot.stopDigging?.(); } catch {}
+  const targetUsername = await lookAtNearestPlayerForDrop(sourceBot);
+  await sleep(250);
+  if (typeof sourceBot.tossStack === 'function') {
+    await sourceBot.tossStack(item);
+  } else {
+    await sourceBot.toss(item.type, item.metadata || null, item.count);
+  }
+  await sleep(1_250);
+  return targetUsername;
+}
+
+function findInventoryItemForDrop(sourceBot, payload) {
+  const slot = Number(payload.slot);
+  const name = String(payload.name || '').trim();
+  const allSlots = (sourceBot.inventory?.slots || []).filter(Boolean);
+  const item = payload.slot != null && Number.isFinite(slot)
+    ? allSlots.find(entry => entry.slot === slot)
+    : allSlots.find(entry => name && entry.name === name);
+  if (!item) throw new Error('Item not found in inventory.');
+  return item;
 }
 
 async function dropItemToNearestPlayer(item) {
@@ -3357,6 +3384,7 @@ async function dropItemToNearestPlayer(item) {
   const farmWasDesired = obsidianStats.desiredEnabled;
   const followStatus = followFeature.getStatus();
   const followTarget = followStatus.enabled ? followStatus.targetUsername : null;
+  let minerWasRunning = false;
   let targetUsername = null;
 
   try {
@@ -3364,19 +3392,13 @@ async function dropItemToNearestPlayer(item) {
     // re-equip items or turn the bot while the stack is being dropped.
     await farm.suspend();
     if (followStatus.enabled) followFeature.stop();
+    // The Stone Miner digs, turns the bot and holds the hopper open
+    minerWasRunning = await stoneMiner.pause();
     await sleep(350);
 
-    targetUsername = await lookAtNearestPlayerForDrop();
-    await sleep(250);
-
-    if (typeof bot.tossStack === 'function') {
-      await bot.tossStack(item);
-    } else {
-      await bot.toss(item.type, item.metadata || null, item.count);
-    }
-
-    await sleep(1_250);
+    targetUsername = await tossStackToNearestPlayer(bot, item);
   } finally {
+    if (minerWasRunning) stoneMiner.resume();
     if (bot?.entity) {
       if (followTarget) {
         followFeature.start(bot, followTarget);
@@ -7204,13 +7226,7 @@ async function executeBotCommand(command) {
 
   if (type === 'drop_item') {
     if (!bot?.entity) throw new Error('Minecraft bot is offline.');
-    const slot = Number(payload.slot);
-    const name = String(payload.name || '').trim();
-    const allSlots = (bot.inventory?.slots || []).filter(Boolean);
-    const item = Number.isFinite(slot)
-      ? allSlots.find(entry => entry.slot === slot)
-      : allSlots.find(entry => name && entry.name === name);
-    if (!item) throw new Error('Item not found in inventory.');
+    const item = findInventoryItemForDrop(bot, payload);
 
     const targetUsername = await dropItemToNearestPlayer(item);
     await writeBotStatusSnapshot().catch(() => {});
@@ -7864,6 +7880,11 @@ async function executeManagedAccountCommand(command) {
   }
   if (type === 'inventory_move') {
     const result = await moveInventorySlot(runtime.bot, payload);
+    await persistManagedRuntimeStatus(runtime.getStatus());
+    return result;
+  }
+  if (type === 'drop_item') {
+    const result = await runtime.dropItem(payload, tossStackToNearestPlayer, findInventoryItemForDrop);
     await persistManagedRuntimeStatus(runtime.getStatus());
     return result;
   }

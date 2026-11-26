@@ -877,7 +877,32 @@ async function testFailedOpenDoesNotLeakListeners() {
   }
 }
 
+async function testPausesForADropAndResumes() {
+  fs.rmSync(stateFile, { force: true });
+  const pickaxe = item('iron_pickaxe', 36, { maxDurability: 250, durabilityUsed: 0 });
+  const { bot } = fakeBot({ inventory: [pickaxe, item('bread', 37)], chest: [item('bread', 0)] });
+  const miner = createStoneMiner({ stateFile: null });
+  miner.attachBot(bot);
+  miner.setLearning(true);
+  bot.setBlock(1, 65, 0, 'cobblestone');
+  bot.setBlock(1, 65, 0, 'air');
+  await until(() => miner.getStatus().phase === 'waiting', 'the miner waits for stone');
+
+  assert.equal(await miner.pause(), true, 'a running miner pauses');
+  assert.equal(miner.getStatus().running, false);
+  assert.equal(miner.getStatus().enabled, true, 'pausing keeps the miner switched on');
+  bot.setBlock(1, 65, 0, 'stone');
+  await wait(100);
+  assert.equal(bot.dug.length, 0, 'nothing is mined while paused');
+  assert.equal(await miner.pause(), false, 'a paused miner reports it was not running');
+
+  miner.resume();
+  await until(() => bot.dug.length === 1, 'mining goes on after resume');
+  miner.dispose();
+}
+
 (async () => {
+  await testPausesForADropAndResumes();
   await testOpensSideOfHopperUnderStone();
   await testBreaksBlockOnTopOfAHopperThatDoesNotOpen();
   await testContainerRayReachesBeyondOneBlock();

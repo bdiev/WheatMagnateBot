@@ -187,6 +187,7 @@ function createStoneMiner({
   let phase = 'idle';
   let lastErrorMessage = null;
   let loopGeneration = 0;
+  let loopDone = null;
   let lastSavedAt = 0;
   let regrowWaiters = [];
   const openingCancels = new Set();
@@ -459,12 +460,29 @@ function createStoneMiner({
     detachBot();
   }
 
+  // Holds the bot still for a moment (an item drop) without turning the miner
+  // off: the loop stops, the digging and an open hopper or barrel are left,
+  // and resume() starts mining again. Waits for the step in progress to end
+  async function pause(timeoutMs = 5_000) {
+    if (!running) return false;
+    const finished = loopDone;
+    haltLoop();
+    if (finished) await Promise.race([finished, sleep(timeoutMs)]);
+    return true;
+  }
+
+  function resume() {
+    if (desired.enabled && bot?.entity && !running) startLoop();
+    return getStatus();
+  }
+
   function haltLoop() {
     loopGeneration += 1;
     for (const cancel of openingCancels) cancel();
     if (running) {
       try { bot?.stopDigging?.(); } catch {}
       try { bot?.closeWindow?.(bot.currentWindow); } catch {}
+      try { bot?.pathfinder?.setGoal?.(null); } catch {}
     }
     running = false;
     wakeRegrowWaiters();
@@ -483,7 +501,7 @@ function createStoneMiner({
     lineCheckDue = true;
     emptySince.clear();
     log('[Stone Miner] Started.');
-    loop(generation).catch(error => log(`[Stone Miner] Loop crashed: ${error.message}`));
+    loopDone = loop(generation).catch(error => log(`[Stone Miner] Loop crashed: ${error.message}`));
   }
 
   function isCurrent(generation, current) {
@@ -1032,6 +1050,8 @@ function createStoneMiner({
     clearBlocks,
     start,
     stop,
+    pause,
+    resume,
     dispose,
     getStatus
   };

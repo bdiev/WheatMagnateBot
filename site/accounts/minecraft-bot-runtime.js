@@ -704,6 +704,35 @@ class MinecraftBotRuntime extends BotContext {
     this.emit('status', this.getStatus());
     return status;
   }
+  // Drop: the tasks that move or turn the bot hold still while the stack is
+  // thrown to the nearest player, then carry on as before
+  async dropItem(payload, tossToNearestPlayer, findItem) {
+    const bot = this.bot;
+    if (!bot?.entity) throw new Error('Account is not connected.');
+    const item = findItem(bot, payload);
+    const farmWasEnabled = Boolean(this.obsidianFarm?.getStatus?.().enabled);
+    const followStatus = this.follow?.getStatus?.() || {};
+    const followTarget = followStatus.enabled ? followStatus.targetUsername : null;
+    let minerWasRunning = false;
+    let targetUsername = null;
+    try {
+      // Stops the farm loop but keeps its Start intent, so it resumes after
+      if (farmWasEnabled) await this.obsidianFarm.pauseForServerRestart?.();
+      if (followTarget) this.follow.stop();
+      minerWasRunning = Boolean(await this.stoneMiner?.pause?.());
+      await new Promise(resolve => setTimeout(resolve, 350));
+      targetUsername = await tossToNearestPlayer(bot, item);
+    } finally {
+      if (this.bot === bot && bot.entity) {
+        if (minerWasRunning) this.stoneMiner.resume();
+        if (followTarget) {
+          try { this.follow.start(followTarget); } catch {}
+        }
+        if (farmWasEnabled) this.retryDesiredObsidian(bot).catch(() => {});
+      }
+    }
+    return { item: item.name, count: item.count, targetUsername };
+  }
   clearStoneMinerBlocks() {
     if (!this.stoneMiner) throw new Error('Stone Miner is unavailable for this runtime.');
     const status = this.stoneMiner.clearBlocks();
