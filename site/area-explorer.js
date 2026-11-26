@@ -67,6 +67,11 @@ const MAX_EVENT_PAGE = 200;
 // What the log's "Connection" filter shows: losing and getting back the server
 const CONNECTION_EVENT_TYPES = Object.freeze(['disconnect', 'reconnect', 'rejoin', 'totem', 'leave']);
 const EVENT_RETENTION_DAYS = 90;
+// A run's timeline: its events and finds since it started, the newest this many of each
+const MAX_RUN_EVENTS = 400;
+const MAX_RUN_FINDS = 600;
+// No start in the log (an older mod): the last day of it
+const RUN_FALLBACK_MS = 86_400_000;
 const EVENT_PRUNE_INTERVAL_MS = 60 * 60_000;
 
 // The loot the Highlights panel looks for, most important first, until an administrator changes it on
@@ -305,6 +310,7 @@ function publicEvent(row, tokenName = row.token_name) {
     y: row.y,
     z: row.z,
     occurredAt: row.occurred_at,
+    tokenId: row.token_id === null || row.token_id === undefined ? null : String(row.token_id),
     tokenName: tokenName || null
   };
 }
@@ -964,6 +970,34 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return { statuses: result.rows.map(row => publicStatus(row)), versions: versions.rows[0] };
   }
 
+  /**
+   * GET /api/area-explorer/run?token=: one mod's run for the Live Run timeline - when it started
+   * (its last start in the log), then its events and finds since, oldest first.
+   */
+  async function getRun(url, now = Date.now()) {
+    const tokenId = String(url.searchParams.get('token') || '');
+    if (!/^\d{1,18}$/.test(tokenId)) throw httpError(400, 'Invalid token id.');
+    const start = (await pool.query(
+      `SELECT occurred_at FROM area_explorer_events WHERE token_id = $1 AND type = 'start' ORDER BY occurred_at DESC, id DESC LIMIT 1`, [tokenId]
+    )).rows[0];
+    const since = start ? new Date(start.occurred_at) : new Date(now - RUN_FALLBACK_MS);
+    const [events, finds] = await Promise.all([
+      pool.query(
+        `SELECT e.*, t.name AS token_name FROM area_explorer_events e LEFT JOIN area_explorer_tokens t ON t.id = e.token_id
+         WHERE e.token_id = $1 AND e.occurred_at >= $2 ORDER BY e.occurred_at DESC, e.id DESC LIMIT $3`, [tokenId, since, MAX_RUN_EVENTS]),
+      pool.query(
+        `SELECT id, kind, name, item_count, found_at FROM area_explorer_finds
+         WHERE token_id = $1 AND found_at >= $2 AND removed_at IS NULL AND kind IN ('BASE', 'ITEM', 'SIGN')
+         ORDER BY found_at DESC, id DESC LIMIT $3`, [tokenId, since, MAX_RUN_FINDS])
+    ]);
+    return {
+      tokenId,
+      startedAt: start ? start.occurred_at : null,
+      events: events.rows.reverse().map(row => publicEvent(row)),
+      finds: finds.rows.reverse().map(row => ({ id: String(row.id), kind: row.kind, name: row.name, count: row.item_count, foundAt: row.found_at }))
+    };
+  }
+
   /** The ground a run has flown over: the grid the mod last sent, for the map. */
   async function getCoverage(url) {
     const tokenId = String(url.searchParams.get('token') || '');
@@ -1346,6 +1380,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (path === '/api/area-explorer/map' && req.method === 'GET') return { statusCode: 200, payload: await getMapPoints(url) };
     if (path === '/api/area-explorer/events' && req.method === 'GET') return { statusCode: 200, payload: await getEvents(url) };
     if (path === '/api/area-explorer/coverage' && req.method === 'GET') return { statusCode: 200, payload: await getCoverage(url) };
+    if (path === '/api/area-explorer/run' && req.method === 'GET') return { statusCode: 200, payload: await getRun(url) };
     if (path === '/api/area-explorer/signs' && req.method === 'GET') return { statusCode: 200, payload: await getPlayerSigns(url) };
     // Sending a mod off to explore: administrators only - it flies someone's game
     if (path === '/api/area-explorer/commands' && req.method === 'GET') {
@@ -1392,7 +1427,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleFavorites, modFavorites, handleApi, getSummary, getHighlights, setHighlights, getEvents, getCoverage, createCommand, createWaypoint, listCommands, getFinds, getMapPoints, getFind, setFavorite, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleFavorites, modFavorites, handleApi, getSummary, getHighlights, setHighlights, getEvents, getCoverage, getRun, createCommand, createWaypoint, listCommands, getFinds, getMapPoints, getFind, setFavorite, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {

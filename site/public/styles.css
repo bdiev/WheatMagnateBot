@@ -18105,3 +18105,79 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 @media (pointer: coarse) {
   .area-explorer-hl-x { width: 28px; min-width: 28px; height: 28px; min-height: 28px; }
 }
+
+/* Live Run as a timeline: start on the left, the end on the right, what happened along it */
+.area-explorer-tl-run { gap: 8px; }
+.area-explorer-tl-head { gap: 4px 8px; }
+.area-explorer-tl-head strong { font-size: 15px; }
+.area-explorer-tl-percent { font-family: var(--font-pixel); font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
+.area-explorer-tl-end { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
+.area-explorer-tl-end b { color: var(--text); }
+.area-explorer-run.is-kicked { border-color: var(--danger); }
+.area-explorer-run.is-kicked .area-explorer-dot,
+.area-explorer-tl-alert .area-explorer-dot { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 25%, transparent); }
+.area-explorer-run.is-online .area-explorer-dot,
+.area-explorer-run.is-kicked .area-explorer-dot { animation: area-explorer-tl-pulse 1.6s ease-in-out infinite; }
+@keyframes area-explorer-tl-pulse { 50% { box-shadow: 0 0 0 6px transparent; } }
+.area-explorer-tl-alert {
+  display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 8px; border: 2px solid var(--danger); border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel)); font-size: 13px; font-weight: 600; overflow-wrap: anywhere;
+}
+.area-explorer-tl-alert .area-explorer-dot { flex: 0 0 auto; }
+.area-explorer-tl { position: relative; height: 34px; }
+.area-explorer-tl-rail { position: absolute; left: 0; right: 0; top: 11px; height: 12px; border: 2px solid var(--line); border-radius: 2px; background: var(--panel); overflow: hidden; }
+.area-explorer-tl-rail i { position: absolute; top: 0; bottom: 0; left: 0; }
+.area-explorer-tl-done { background: repeating-linear-gradient(90deg, var(--accent) 0 8px, color-mix(in srgb, var(--accent) 78%, #000) 8px 10px); transition: width 400ms ease; }
+.area-explorer-tl-pause { background: var(--warn); }
+.area-explorer-tl-gap { background: var(--danger); }
+.area-explorer-tl-now { position: absolute; top: 3px; bottom: 3px; width: 3px; margin-left: -1px; border-radius: 2px; background: var(--text); transition: left 400ms ease; }
+/* Kicks, totems, warnings above the rail; finds below it */
+.area-explorer-tl-mark { position: absolute; top: 0; width: 11px; height: 11px; margin-left: -5px; border: 2px solid var(--panel-soft); border-radius: 50%; background: var(--muted); }
+.area-explorer-tl-mark.is-bad, .area-explorer-tl-key.is-bad { background: var(--danger); }
+.area-explorer-tl-mark.is-gold, .area-explorer-tl-key.is-gold { background: var(--gold); }
+.area-explorer-tl-mark.is-warn, .area-explorer-tl-key.is-warn { background: var(--warn); }
+.area-explorer-tl-mark.is-back, .area-explorer-tl-key.is-back { background: var(--annotation-settings); }
+.area-explorer-tl-mark.is-ok, .area-explorer-tl-key.is-ok { background: var(--accent); }
+.area-explorer-tl-mark.is-muted, .area-explorer-tl-key.is-muted { background: var(--muted); }
+.area-explorer-tl-find { position: absolute; bottom: 0; width: 7px; height: 7px; margin-left: -3px; border-radius: 50%; background: var(--accent-strong); opacity: .8; }
+.area-explorer-tl-find.is-base, .area-explorer-tl-key.is-base { width: 10px; height: 10px; margin-left: -5px; border-radius: 2px; background: var(--annotation-pickaxe); opacity: 1; }
+.area-explorer-tl-find.is-sign { background: var(--gold-text); opacity: .6; }
+.area-explorer-tl-scale { display: flex; justify-content: space-between; gap: 8px; margin-top: -2px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.area-explorer-tl-scale b { color: var(--text); }
+.area-explorer-tl-scale > span:nth-child(2) { text-align: center; }
+.area-explorer-tl-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.area-explorer-tl-count { display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 8px; border: 2px solid var(--line-soft); border-radius: var(--card-radius); background: var(--panel); font-size: 12px; }
+.area-explorer-tl-count b { font-family: var(--font-pixel); font-size: 15px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.area-explorer-tl-count.is-bump { animation: area-explorer-tl-bump 900ms ease; }
+@keyframes area-explorer-tl-bump { from { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 30%, var(--panel)); } }
+.area-explorer-tl-counts-note { color: var(--muted); font-size: 11px; }
+.area-explorer-tl-label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.area-explorer-tl-recent ul { display: grid; margin: 4px 0 0; padding: 0; list-style: none; }
+.area-explorer-tl-recent li { display: grid; grid-template-columns: auto 10px minmax(0, 1fr); align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--line-soft); font-size: 12px; }
+.area-explorer-tl-recent li:last-child { border-bottom: 0; }
+.area-explorer-tl-recent li > span:last-child { overflow-wrap: anywhere; }
+.area-explorer-tl-recent time { min-width: 42px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.area-explorer-tl-recent li.is-fresh { animation: area-explorer-tl-bump 900ms ease; }
+.area-explorer-tl-key { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.area-explorer-tl-key.is-find { background: var(--accent-strong); }
+.area-explorer-tl-key.is-find.is-base { width: 9px; height: 9px; margin: 0; }
+.area-explorer-tl-key.is-find.is-sign { background: var(--gold-text); }
+.area-explorer-tl-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 0; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.area-explorer-tl-sectors summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+.area-explorer-tl-sectors[open] summary { margin-bottom: 4px; }
+.area-explorer-tl-sectors .area-explorer-sectors-summary { display: none; }
+/* Mods not running: a line each */
+.area-explorer-run-others { display: grid; gap: 6px; }
+.area-explorer-run-line {
+  display: grid; grid-template-columns: 10px auto minmax(0, 1fr); align-items: center; gap: 2px 8px; padding: 7px 10px;
+  border: 2px solid var(--line-soft); border-radius: var(--card-radius); font-size: 12px;
+}
+.area-explorer-run-line strong { font-size: 13px; }
+.area-explorer-run-line-where { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.area-explorer-run-line-state { grid-column: 2 / -1; color: var(--muted); }
+.area-explorer-run-line.is-ready .area-explorer-dot { background: color-mix(in srgb, var(--accent) 55%, var(--muted)); }
+.area-explorer-run-line.is-offline { opacity: .75; }
+@media (prefers-reduced-motion: reduce) {
+  .area-explorer-run .area-explorer-dot, .area-explorer-tl-count.is-bump, .area-explorer-tl-recent li.is-fresh { animation: none !important; }
+  .area-explorer-tl-done, .area-explorer-tl-now { transition: none; }
+}

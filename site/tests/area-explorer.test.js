@@ -1093,6 +1093,44 @@ async function testHighlightsEditing() {
   }
 }
 
+/** A run's timeline: its last start, then its events and finds since - one mod's only. */
+async function testRunTimeline() {
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
+      '073_area_explorer_events.sql', '084_area_explorer_favorites.sql', '089_area_explorer_marker_color.sql', '096_area_explorer_run_timeline.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
+      enforceRateLimit: () => true, publish() {}, recordSystemLog: async () => {}
+    });
+    const admin = { username: 'admin', role: 'admin' };
+    const token = await service.authenticate({ headers: { authorization: `Bearer ${(await service.createToken(admin, { name: 'Gaming PC' })).token}` } });
+    const other = await service.authenticate({ headers: { authorization: `Bearer ${(await service.createToken(admin, { name: 'Laptop' })).token}` } });
+    const event = (id, minutesAgo, type, message, level = 'info') => ({ id: `run-event-${id}`, at: NOW - minutesAgo * 60_000, level, type, message, player: 'Steve' });
+    const item = (name, minutesAgo, x) => ({ kind: 'ITEM', x, y: 64, z: 0, foundAt: NOW - minutesAgo * 60_000, name, count: 1 });
+    await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', events: [
+      event('0001', 300, 'start', 'An older run'), event('0002', 250, 'finish', 'Done', 'success'),
+      event('0003', 120, 'start', 'Started a 100x100 chunk area'), event('0004', 90, 'pause', 'Paused at 20%'), event('0005', 85, 'resume', 'Resumed'),
+      event('0006', 60, 'disconnect', 'Disconnected from oldfrog.org: Timed out', 'error'), event('0007', 59, 'rejoin', 'Back on the server', 'success'),
+      event('0008', 30, 'totem', 'Totem used', 'error')
+    ], finds: [item('Elytra', 200, 1), item('Diamond', 45, 2), item('Golden Apple', 10, 3)] }, NOW);
+    await service.ingest(other, { server: 'oldfrog.org', dimension: 'overworld', events: [event('0009', 20, 'start', 'Laptop run')], finds: [item('Map', 5, 4)] }, NOW);
+
+    const run = await service.getRun(new URL(`http://x/api/area-explorer/run?token=${token.id}`), NOW);
+    assert.equal(new Date(run.startedAt).getTime(), NOW - 120 * 60_000, 'from its last start');
+    assert.deepEqual(run.events.map(e => e.type), ['start', 'pause', 'resume', 'disconnect', 'rejoin', 'totem'], 'oldest first, the older run left out');
+    assert.equal(run.events[0].tokenId, String(token.id), 'each event says which mod it is');
+    assert.deepEqual(run.finds.map(f => f.name), ['Diamond', 'Golden Apple'], 'its finds since the start, not the other mod\'s');
+    const routed = await service.handleApi({ method: 'GET' }, { username: 'viewer', role: 'user' }, new URL(`http://x/api/area-explorer/run?token=${other.id}`), { assertAdmin() {}, readBody: async () => ({}) });
+    assert.deepEqual(routed.payload.finds.map(f => f.name), ['Map']);
+    await assert.rejects(service.getRun(new URL('http://x/api/area-explorer/run?token=abc')), /Invalid token id/);
+  } finally {
+    await db.close();
+  }
+}
+
 (async () => {
   testNormalization();
   testEventNormalization();
@@ -1102,6 +1140,7 @@ async function testHighlightsEditing() {
   await testHighlightsEditing();
   await testMarkers();
   await testRunLog();
+  await testRunTimeline();
   await testCoverage();
   await testCleanNames();
   await testCommands();

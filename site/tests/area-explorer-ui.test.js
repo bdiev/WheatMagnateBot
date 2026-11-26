@@ -824,6 +824,31 @@ function testHighlightsEditor() {
   assert.match(source, /Escape' && \$\('#areaExplorerHighlightsMenu'\) && !\$\('#areaExplorerHighlightsMenu'\)\.hidden\) \{\s+closeAreaExplorerHighlightMenu\(\)/);
 }
 
+function testRunTimeline() {
+  // Paused stretches and time off the server, from a run's events; open ones run to now
+  const context = vm.createContext({});
+  vm.runInContext(source.slice(source.indexOf('const AREA_EXPLORER_RUN_BACK'), source.indexOf('const AREA_EXPLORER_RUN_MARKS')), context);
+  vm.runInContext(functionSource('areaExplorerRunStretches'), context);
+  const at = minutes => new Date(Date.UTC(2026, 10, 26, 12, minutes)).toISOString();
+  const now = Date.UTC(2026, 10, 26, 13, 0);
+  const events = [
+    { type: 'start', occurredAt: at(0) }, { type: 'pause', occurredAt: at(5) }, { type: 'resume', occurredAt: at(8) },
+    { type: 'disconnect', occurredAt: at(20) }, { type: 'reconnect', occurredAt: at(21) }, { type: 'rejoin', occurredAt: at(22) },
+    { type: 'pause', occurredAt: at(40) }, { type: 'disconnect', occurredAt: at(50) }
+  ];
+  const { pauses, gaps } = context.areaExplorerRunStretches(events, now);
+  assert.equal(JSON.stringify(pauses.map(p => [p.from, p.to, !!p.open])), JSON.stringify([[Date.parse(at(5)), Date.parse(at(8)), false], [Date.parse(at(40)), Date.parse(at(50)), false]]),
+    'a pause ends when it resumes, or when the mod loses the server');
+  assert.equal(JSON.stringify(gaps.map(g => [g.from, g.to, !!g.open])), JSON.stringify([[Date.parse(at(20)), Date.parse(at(22)), false], [Date.parse(at(50)), now, true]]),
+    'off the server until it is back; still off: up to now');
+  // Wired: a run going is a timeline, live events land on it, finds bring it afresh
+  assert.match(functionSource('renderAreaExplorerStatus'), /const timed = statuses\.filter\(status => areaExplorerRunTimed\(status, now\)\)/);
+  assert.match(functionSource('applyAreaExplorerEvents'), /addAreaExplorerRunEvents\(events\);/);
+  assert.match(functionSource('noteAreaExplorerUpdate'), /if \(payload\.added\) ae\.runTimelinesDirty = true;/);
+  assert.match(functionSource('loadAreaExplorerRunTimeline'), /\/api\/area-explorer\/run\?token=/);
+  assert.match(functionSource('renderAreaExplorerRunCard'), /done at <b>/);
+}
+
 (async () => {
   testSectorGrid();
   await testLoadingSkeletons();
@@ -850,5 +875,6 @@ function testHighlightsEditor() {
   testMenuHeight();
   testClusters();
   testHighlightsEditor();
+  testRunTimeline();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -7074,6 +7074,9 @@ async function loadAreaExplorerData(full) {
   }
   if (state.currentUser.role === 'admin' && full) work.push(loadAreaExplorerCommands());
   if (full || ae.logServer !== areaExplorerLogServer()) work.push(loadAreaExplorerLog());
+  // The runs' timelines: afresh on the page's load and when the mods sent finds
+  loadAreaExplorerRunTimelines({ force: full || ae.runTimelinesDirty });
+  ae.runTimelinesDirty = false;
   await Promise.all(work);
 }
 
@@ -7133,6 +7136,7 @@ async function loadAreaExplorerLog({ older = false } = {}) {
 /** New events from the mod, straight from the live update: added on top if the log shows them. */
 function applyAreaExplorerEvents(events) {
   const ae = areaExplorerState();
+  addAreaExplorerRunEvents(events);
   if (ae.logServer === null) return;
   const known = new Set(ae.logEvents.map(event => event.id));
   const fresh = events.filter(event => !known.has(event.id) && areaExplorerLogMatches(event));
@@ -8099,6 +8103,7 @@ function renderAreaExplorerStatus() {
     container.innerHTML = '<p class="area-explorer-empty">No mod has reported in yet.</p>';
     return;
   }
+  const now = Date.now();
   // A Sectors run's grid (up to thousands of cells) only changes when a sector is done, while the
   // card is redrawn with every position: the grid already on the page is kept and moved back in
   const keptGrids = new Map();
@@ -8111,36 +8116,237 @@ function renderAreaExplorerStatus() {
     gridKeys.set(token, key);
     return `<div class="area-explorer-sectors-box" data-area-sectors-token="${escapeHtml(token)}">${renderAreaExplorerSectors(status.area.sectors)}</div>`;
   };
-  container.innerHTML = statuses.map(status => {
-    const percent = status.percent === null ? null : Math.round(status.percent * 10) / 10;
-    const rescan = status.mode === 'Rescan';
-    const phaseName = status.paused ? 'Paused' : (AREA_EXPLORER_PHASES[status.phase] || status.phase);
-    const phase = rescan ? `Rescan · ${phaseName}` : phaseName;
-    const checkingIn = Date.now() - new Date(status.updatedAt).getTime() < 20_000;
-    const runState = status.online ? (status.paused ? 'paused' : 'online') : checkingIn ? 'ready' : 'offline';
-    const found = status.runFinds
-      ? `${formatNumber(status.runFinds.bases)} bases · ${formatNumber(status.runFinds.items)} loot · ${formatNumber(status.runFinds.signs)} signs this run`
-      : '';
-    const position = status.x === null ? '' : `X ${status.x}${status.y === null || status.y === undefined ? '' : ` · Y ${status.y}`} · Z ${status.z}`;
-    return `<article class="area-explorer-run is-${runState}">
-      <header>
-        <span class="area-explorer-dot" aria-hidden="true"></span>
-        <strong>${escapeHtml(status.player || status.tokenName || 'Explorer')}</strong>
-        <span class="area-explorer-run-state">${status.online ? escapeHtml(phase) : checkingIn ? (status.phase === 'MENU' ? 'Ready - in the main menu' : 'Ready - not exploring') : 'Offline'}</span>
-        <span class="area-explorer-run-where">${escapeHtml(status.server || '-')} · ${escapeHtml(prettyDimension(status.dimension))}</span>
-      </header>
-      ${percent === null ? '' : `<div class="area-explorer-progress" role="progressbar" aria-label="Explored" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>`}
-      <dl>
-        ${percent === null ? '' : `<div><dt>${rescan ? 'Rescanned' : 'Explored'}</dt><dd>${percent}%</dd></div>`}
-        ${status.etaSeconds === null || !status.online ? '' : `<div><dt>Time left</dt><dd>${escapeHtml(formatDurationMs(status.etaSeconds * 1000))}</dd></div>`}
-        ${position ? `<div class="area-explorer-run-position"><dt>Position</dt><dd>${escapeHtml(position)}</dd></div>` : ''}
-        <div><dt>Last report</dt><dd>${escapeHtml(formatDurationMs(Date.now() - new Date(status.updatedAt).getTime()))} ago</dd></div>
-      </dl>
-      ${status.online && status.area?.sectors ? sectorsGrid(status) : ''}
-      ${found ? `<p class="area-explorer-run-finds">${escapeHtml(found)}</p>` : ''}
-    </article>`;
-  }).join('');
+  // The sectors' grid stays open or closed across redraws
+  const openSectors = new Set([...container.querySelectorAll('details[data-area-sectors-for][open]')].map(node => node.dataset.areaSectorsFor));
+  // Runs going (or reconnecting) first, as a timeline; the rest - ready in a menu, offline - a line each
+  const timed = statuses.filter(status => areaExplorerRunTimed(status, now));
+  const rest = statuses.filter(status => !timed.includes(status));
+  for (const status of statuses) {
+    if (status.online || areaExplorerRunInterrupted(status, now)) ensureAreaExplorerRunTimeline(status.tokenId);
+  }
+  container.innerHTML = timed.map(status => renderAreaExplorerRunCard(status, now, sectorsGrid, openSectors)).join('')
+    + (rest.length ? `<div class="area-explorer-run-others">${rest.map(status => renderAreaExplorerRunLine(status, now)).join('')}</div>` : '');
   container.querySelectorAll('[data-area-sectors-reuse]').forEach(slot => slot.replaceWith(keptGrids.get(slot.dataset.areaSectorsReuse)));
+}
+
+// The Live Run timeline: a run from its start (left) to when it ends (right) - paused stretches,
+// time off the server, kicks, totems and finds along it - then what happened last.
+
+/** Refetched at most this often while a run goes on (new events also come in the live update). */
+const AREA_EXPLORER_RUN_REFRESH_MS = 20_000;
+const AREA_EXPLORER_RUN_RECENT = 5;
+// Events that close a stretch of time off the server, or a pause
+const AREA_EXPLORER_RUN_BACK = Object.freeze(['rejoin', 'start', 'stop', 'finish', 'leave']);
+const AREA_EXPLORER_RUN_UNPAUSE = Object.freeze(['resume', 'start', 'stop', 'finish', 'disconnect']);
+// What each kind of event looks like along the timeline and in the list
+const AREA_EXPLORER_RUN_MARKS = Object.freeze({
+  disconnect: 'is-bad', reconnect: 'is-bad', totem: 'is-gold', error: 'is-bad', warning: 'is-warn', rejoin: 'is-back',
+  pause: 'is-warn', resume: 'is-ok', start: 'is-ok', finish: 'is-ok', stop: 'is-muted', leave: 'is-muted', phase: 'is-muted', progress: 'is-muted'
+});
+
+function areaExplorerRunTimelines() {
+  const ae = areaExplorerState();
+  return ae.runTimelines ||= new Map();
+}
+
+/**
+ * A mod that went quiet in the middle of a run within the hour: kicked and reconnecting, perhaps -
+ * its timeline tells (a mod off the server sends no status).
+ */
+function areaExplorerRunInterrupted(status, now = Date.now()) {
+  return !status.online && status.phase !== 'IDLE' && status.phase !== 'MENU' && now - Date.parse(status.updatedAt) < 3_600_000;
+}
+
+/** A run shown as a timeline: going, or off the server mid-run (kicked and reconnecting) for under an hour. */
+function areaExplorerRunTimed(status, now = Date.now()) {
+  if (status.online) return true;
+  if (!areaExplorerRunInterrupted(status, now)) return false;
+  const data = areaExplorerRunTimelines().get(String(status.tokenId))?.data;
+  const gap = data && areaExplorerRunStretches(data.events, now).gaps.at(-1);
+  return Boolean(gap?.open && now - gap.from < 3_600_000);
+}
+
+/** Loads a run's timeline when it has none yet, or it's older than the refresh. */
+function ensureAreaExplorerRunTimeline(tokenId, { force = false } = {}) {
+  const entry = areaExplorerRunTimelines().get(String(tokenId));
+  if (entry?.loading || (!force && entry && Date.now() - entry.loadedAt < AREA_EXPLORER_RUN_REFRESH_MS)) return;
+  loadAreaExplorerRunTimeline(tokenId).catch(() => {});
+}
+
+async function loadAreaExplorerRunTimeline(tokenId) {
+  const timelines = areaExplorerRunTimelines();
+  const key = String(tokenId);
+  const entry = timelines.get(key) || { data: null, loadedAt: 0 };
+  entry.loading = true;
+  timelines.set(key, entry);
+  try {
+    entry.data = await fetchJson(`/api/area-explorer/run?token=${encodeURIComponent(key)}`);
+    entry.loadedAt = Date.now();
+  } finally {
+    entry.loading = false;
+  }
+  if (state.activeTab === 'area-explorer') renderAreaExplorerStatus();
+}
+
+/** Every run going: its timeline loaded afresh (on the page's load, and when the mod sent finds). */
+function loadAreaExplorerRunTimelines({ force = false } = {}) {
+  const ae = areaExplorerState();
+  const now = Date.now();
+  for (const status of ae.summary?.statuses || []) {
+    if (status.online || areaExplorerRunInterrupted(status, now)) ensureAreaExplorerRunTimeline(status.tokenId, { force });
+  }
+}
+
+/** New events from the live update go straight onto their run's timeline. */
+function addAreaExplorerRunEvents(events) {
+  const timelines = areaExplorerRunTimelines();
+  let changed = false;
+  for (const event of events) {
+    const data = event.tokenId && timelines.get(String(event.tokenId))?.data;
+    if (!data || data.events.some(item => item.id === event.id)) continue;
+    // A new start begins a new run: the old one's events go
+    if (event.type === 'start') {
+      data.startedAt = event.occurredAt;
+      data.events = [];
+      data.finds = [];
+    }
+    data.events.push(event);
+    data.events.sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt) || Number(a.id) - Number(b.id));
+    changed = true;
+  }
+  if (changed) renderAreaExplorerStatus();
+}
+
+/** Paused stretches and time off the server, from the run's events: [{from, to, open}]. */
+function areaExplorerRunStretches(events, now = Date.now()) {
+  const pauses = [];
+  const gaps = [];
+  let pause = null;
+  let gap = null;
+  for (const event of events) {
+    const time = Date.parse(event.occurredAt);
+    if (event.type === 'pause' && !pause) pause = { from: time };
+    else if (pause && AREA_EXPLORER_RUN_UNPAUSE.includes(event.type)) { pauses.push({ ...pause, to: time }); pause = null; }
+    if (event.type === 'disconnect' && !gap) gap = { from: time };
+    else if (gap && AREA_EXPLORER_RUN_BACK.includes(event.type)) { gaps.push({ ...gap, to: time }); gap = null; }
+  }
+  if (pause) pauses.push({ ...pause, to: now, open: true });
+  if (gap) gaps.push({ ...gap, to: now, open: true });
+  return { pauses, gaps };
+}
+
+/** A time on the timeline: the clock today, the weekday and clock on another day. */
+function areaExplorerRunClock(time, now = Date.now()) {
+  const day = value => new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: state.accountTimezone }).format(new Date(value));
+  if (day(time) === day(now)) return formatChatTime(time);
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: state.accountTimezone }).format(new Date(time));
+}
+
+function areaExplorerRunFindText(find) {
+  if (find.kind === 'BASE') return `Found a base: ${find.name}`;
+  if (find.kind === 'SIGN') return `Found a sign (${find.name})`;
+  return `Found ${find.name}${find.count > 1 ? ` ×${formatNumber(find.count)}` : ''}`;
+}
+
+function renderAreaExplorerRunCard(status, now, sectorsGrid, openSectors) {
+  const ae = areaExplorerState();
+  const token = String(status.tokenId);
+  const data = areaExplorerRunTimelines().get(token)?.data || null;
+  const events = data?.events || [];
+  const finds = data?.finds || [];
+  const { pauses, gaps } = areaExplorerRunStretches(events, now);
+  const offServer = gaps.at(-1)?.open ? gaps.at(-1) : null;
+  const percent = status.percent === null ? null : Math.round(status.percent * 10) / 10;
+  const rescan = status.mode === 'Rescan';
+  // Time left counts down between reports
+  const eta = status.etaSeconds === null || !status.online ? null
+    : Math.max(0, status.etaSeconds * 1000 - Math.max(0, now - Date.parse(status.updatedAt)));
+  // When it began: its start in the log; without one, worked out from how far it is and how long is left
+  let started = data?.startedAt ? Date.parse(data.startedAt) : null;
+  let estimated = false;
+  if (!started && percent > 0 && percent < 100 && eta) {
+    started = now - eta * percent / (100 - percent);
+    estimated = true;
+  }
+  if (!started) started = events.length ? Date.parse(events[0].occurredAt) : now - 60_000;
+  const end = eta === null ? now : now + eta;
+  const span = Math.max(60_000, end - started);
+  const at = time => `${(Math.min(Math.max((time - started) / span, 0), 1) * 100).toFixed(2)}%`;
+  const width = (from, to) => `max(3px, calc(${at(to)} - ${at(from)}))`;
+
+  const phaseName = status.paused ? 'Paused' : (AREA_EXPLORER_PHASES[status.phase] || status.phase);
+  const phase = offServer ? 'Off the server' : rescan ? `Rescan · ${phaseName}` : phaseName;
+  const runState = offServer ? 'kicked' : status.paused ? 'paused' : 'online';
+  const marks = events.filter(event => AREA_EXPLORER_RUN_MARKS[event.type] && !['phase', 'progress', 'pause', 'resume', 'start', 'reconnect'].includes(event.type))
+    .map(event => `<span class="area-explorer-tl-mark ${AREA_EXPLORER_RUN_MARKS[event.type]}" style="left:${at(Date.parse(event.occurredAt))}" title="${escapeHtml(`${areaExplorerRunClock(event.occurredAt, now)} · ${event.message}`)}"></span>`);
+  const findMarks = finds.map(find => `<span class="area-explorer-tl-find is-${find.kind.toLowerCase()}" style="left:${at(Date.parse(find.foundAt))}" title="${escapeHtml(`${areaExplorerRunClock(find.foundAt, now)} · ${areaExplorerRunFindText(find)}`)}"></span>`);
+
+  // What happened last: events and finds together, newest first; the ones not seen before light up
+  const recent = [
+    ...events.filter(event => event.type !== 'progress').map(event => ({ key: `e${event.id}`, time: Date.parse(event.occurredAt), text: event.message, mark: AREA_EXPLORER_RUN_MARKS[event.type] || 'is-muted' })),
+    ...finds.map(find => ({ key: `f${find.id}`, time: Date.parse(find.foundAt), text: areaExplorerRunFindText(find), mark: `is-find is-${find.kind.toLowerCase()}` }))
+  ].sort((a, b) => b.time - a.time).slice(0, AREA_EXPLORER_RUN_RECENT);
+  const seen = ae.runSeen ||= new Map();
+  const lastSeen = seen.get(token);
+  const fresh = new Set(lastSeen === undefined ? [] : recent.filter(item => item.time > lastSeen).map(item => item.key));
+  if (recent.length) seen.set(token, Math.max(lastSeen ?? 0, recent[0].time));
+
+  // The finds counters: one that went up flashes
+  const counts = status.runFinds || { bases: 0, items: 0, signs: 0 };
+  const previous = (ae.runCounts ||= new Map()).get(token);
+  ae.runCounts.set(token, { ...counts });
+  const counter = (key, label) => `<span class="area-explorer-tl-count${previous && counts[key] > previous[key] ? ' is-bump' : ''}"><b>${formatNumber(counts[key] || 0)}</b> ${label}</span>`;
+
+  const position = status.x === null ? '' : `X ${status.x}${status.y === null || status.y === undefined ? '' : ` · Y ${status.y}`} · Z ${status.z}`;
+  const sectors = status.area?.sectors;
+  const sectorsText = sectors ? [`${formatNumber(Math.min(sectors.done + 1, sectors.count))} / ${formatNumber(sectors.count)} sectors`,
+    sectors.deferred ? `${formatNumber(sectors.deferred)} deferred` : '', sectors.skipped ? `${formatNumber(sectors.skipped)} skipped` : ''].filter(Boolean).join(' · ') : '';
+  const right = offServer ? `off for ${escapeHtml(formatDurationMs(now - offServer.from))}`
+    : eta === null ? escapeHtml(phase)
+      : `done at <b>${escapeHtml(areaExplorerRunClock(end, now))}</b> · ${escapeHtml(formatDurationMs(eta))} left`;
+  return `<article class="area-explorer-run area-explorer-tl-run is-${runState}">
+    <header class="area-explorer-tl-head">
+      <span class="area-explorer-dot" aria-hidden="true"></span>
+      <strong>${escapeHtml(status.player || status.tokenName || 'Explorer')}</strong>
+      ${percent === null ? '' : `<span class="area-explorer-tl-percent">${percent}%</span>`}
+      <span class="area-explorer-tl-end">${right}</span>
+    </header>
+    ${offServer ? `<p class="area-explorer-tl-alert"><span class="area-explorer-dot" aria-hidden="true"></span>${escapeHtml(events.filter(event => event.type === 'disconnect').at(-1)?.message || 'Disconnected')} - reconnecting</p>` : ''}
+    <div class="area-explorer-tl" role="img" aria-label="${escapeHtml(`${percent === null ? '' : `${percent}% explored. `}Started ${areaExplorerRunClock(started, now)}${eta === null ? '' : `, done at ${areaExplorerRunClock(end, now)}`}`)}">
+      <div class="area-explorer-tl-rail">
+        <i class="area-explorer-tl-done" style="width:${at(now)}"></i>
+        ${pauses.map(item => `<i class="area-explorer-tl-pause" style="left:${at(item.from)};width:${width(item.from, item.to)}" title="${escapeHtml(`Paused ${areaExplorerRunClock(item.from, now)} for ${formatDurationMs(item.to - item.from)}`)}"></i>`).join('')}
+        ${gaps.map(item => `<i class="area-explorer-tl-gap" style="left:${at(item.from)};width:${width(item.from, item.to)}" title="${escapeHtml(`Off the server ${areaExplorerRunClock(item.from, now)} for ${formatDurationMs(item.to - item.from)}`)}"></i>`).join('')}
+      </div>
+      ${marks.join('')}${findMarks.join('')}
+      <span class="area-explorer-tl-now" style="left:${at(now)}"></span>
+    </div>
+    <div class="area-explorer-tl-scale">
+      <span>started <b>${estimated ? '≈' : ''}${escapeHtml(areaExplorerRunClock(started, now))}</b></span>
+      <span>now · ${escapeHtml(phase)}</span>
+      <span>${eta === null ? '' : `<b>${escapeHtml(areaExplorerRunClock(end, now))}</b>`}</span>
+    </div>
+    <div class="area-explorer-tl-counts">${counter('bases', 'bases')}${counter('items', 'loot')}${counter('signs', 'signs')}<span class="area-explorer-tl-counts-note">this run</span></div>
+    ${recent.length ? `<div class="area-explorer-tl-recent"><span class="area-explorer-tl-label">What happened</span><ul>
+      ${recent.map(item => `<li${fresh.has(item.key) ? ' class="is-fresh"' : ''}><time datetime="${escapeHtml(new Date(item.time).toISOString())}" title="${escapeHtml(formatFullDateTime(item.time))}">${escapeHtml(areaExplorerRunClock(item.time, now))}</time><span class="area-explorer-tl-key ${item.mark}" aria-hidden="true"></span><span>${escapeHtml(item.text)}</span></li>`).join('')}
+    </ul></div>` : ''}
+    <p class="area-explorer-tl-meta">${[position, `${escapeHtml(status.server || '-')} · ${escapeHtml(prettyDimension(status.dimension))}`, `report ${escapeHtml(formatDurationMs(now - Date.parse(status.updatedAt)))} ago`].filter(Boolean).map(part => `<span>${part}</span>`).join('')}</p>
+    ${sectors && status.online ? `<details class="area-explorer-tl-sectors" data-area-sectors-for="${escapeHtml(token)}"${openSectors.has(token) ? ' open' : ''}><summary>${escapeHtml(sectorsText)}</summary>${sectorsGrid(status)}</details>` : ''}
+  </article>`;
+}
+
+/** A mod not running: ready in a menu (an area can be sent to it), or offline - one line. */
+function renderAreaExplorerRunLine(status, now) {
+  const checkingIn = now - Date.parse(status.updatedAt) < 20_000;
+  const runState = checkingIn ? 'ready' : 'offline';
+  const label = checkingIn ? (status.phase === 'MENU' ? 'Ready · main menu' : 'Ready · not exploring') : `Offline · ${formatDurationMs(now - Date.parse(status.updatedAt))} ago`;
+  const percent = status.percent === null || checkingIn ? '' : ` · last run ${Math.round(status.percent)}%`;
+  return `<div class="area-explorer-run-line is-${runState}">
+    <span class="area-explorer-dot" aria-hidden="true"></span>
+    <strong>${escapeHtml(status.player || status.tokenName || 'Explorer')}</strong>
+    <span class="area-explorer-run-line-where">${escapeHtml(status.server || '-')} · ${escapeHtml(prettyDimension(status.dimension))}</span>
+    <span class="area-explorer-run-line-state">${escapeHtml(label + percent)}</span>
+  </div>`;
 }
 
 async function loadAreaExplorerFinds() {
@@ -10214,6 +10420,7 @@ function setupAreaExplorer() {
 function noteAreaExplorerUpdate(payload) {
   const ae = areaExplorerState();
   if (payload.added || payload.removed) ae.findsDirty = true;
+  if (payload.added) ae.runTimelinesDirty = true;
   if (payload.tokenRevoked) ae.tokensDirty = true;
 }
 
