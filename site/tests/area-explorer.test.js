@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { PGlite } = require('@electric-sql/pglite');
+const { splitStatements } = require('../migrations');
 const {
   bearerToken,
   cleanFindName,
@@ -1122,7 +1123,10 @@ async function testRunTimeline() {
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
       '073_area_explorer_events.sql', '084_area_explorer_favorites.sql', '089_area_explorer_marker_color.sql', '096_area_explorer_run_timeline.sql']) {
-      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+      const sql = fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8');
+      // A no-transaction migration (096 builds its indexes concurrently) runs a statement at a time, as the runner does.
+      if (sql.startsWith('-- wheatmagnate:no-transaction')) for (const statement of splitStatements(sql)) await db.exec(statement);
+      else await db.exec(sql);
     }
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
