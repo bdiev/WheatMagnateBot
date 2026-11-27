@@ -28,7 +28,7 @@ assert.match(server, /url\.pathname === '\/api\/stone-miner' && req\.method === 
 assert.match(server, /NAVIGATION_SECTION_ORDER = Object\.freeze\(\[[^\]]*'obsidian', 'stone-miner'/);
 
 // Rate is the last 60 minutes from the stored hours, not a session average
-const lastHourSource = server.match(/function stoneMinerLastHour[\s\S]*?\n}\n/)[0];
+const lastHourSource = server.match(/function stoneMinerLastHour[\s\S]*?\r?\n}\r?\n/)[0];
 const toInt = value => Number.parseInt(value, 10) || 0;
 const stoneMinerLastHour = new Function('toInt', `${lastHourSource}; return stoneMinerLastHour;`)(toInt);
 const hourStart = Date.parse('2026-11-02T12:00:00Z');

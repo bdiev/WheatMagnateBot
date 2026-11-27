@@ -94,7 +94,7 @@ assert.match(botSource, /if \(allowMentions && !isBridgeMessage && !isBotPlayer 
   'Minecraft bots and server notices must never trigger mention keywords');
 assert.doesNotMatch(botSource, /Automated player/,
   'tagged bot messages must not add an Automated player caption');
-assert.match(botSource, /if \(isSummary\) \{\s*return await publishFloodSummary\(channel, \{ username, createdAt, summaryCount, summaryReasons \}\);/,
+assert.match(botSource, /if \(isSummary\) \{\s*return await publishFloodSummary\(channel, \{\s*username, createdAt, summaryCount, summaryReasons,\s*attachFiles: [^\n]*PermissionsBitField\.Flags\.AttachFiles[^\n]*\s*\}\);/,
   'flood summaries must go through the compact, edit-in-place summary publisher');
 assert.doesNotMatch(botSource, /Flood protection activated/,
   'the old large flood-summary title must not remain');
@@ -134,8 +134,11 @@ assert.ok(
   playerProfileSource.includes("AND message !~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\\\.$'"),
   'player history must exclude synthetic flood notices'
 );
+const playerHistoryQuery = playerProfileSource.match(/SELECT id, message, created_at, is_visible[\s\S]*?LIMIT \$4/)?.[0] || '';
+assert.match(playerHistoryQuery, /AND \(\$\{publicOnly \? 'is_visible = TRUE' : 'TRUE'\}\)/,
+  'only the public player page may hide archived messages that are hidden from public chat');
 assert.doesNotMatch(
-  playerProfileSource.match(/SELECT id, message, created_at, is_visible[\s\S]*?LIMIT \$4/)?.[0] || '',
+  playerHistoryQuery.replace(/\$\{publicOnly \? 'is_visible = TRUE' : 'TRUE'\}/g, ''),
   /is_visible = TRUE/,
   'player history must include hidden messages from ignored players'
 );
@@ -226,7 +229,7 @@ assert.match(appSource, /playerIdentity\(username, 28, \{ uuid: message\.playerU
   'chat avatars must use the recorded player UUID when available');
 assert.match(serverSource, /playerUuid: row\.player_uuid \|\| null/,
   'chat API must expose the recorded player UUID for stable skin resolution');
-assert.match(serverSource, /const cacheKey = `v5:\$\{avatarIdentity\.toLowerCase\(\)\}:\$\{textureHash \|\| 'unknown'\}`/,
+assert.match(fs.readFileSync(path.join(root, 'site', 'minecraft-avatar.js'), 'utf8'), /const cacheKey = `v\d+:\$\{identity\}:\$\{textureHash \|\| 'unknown'\}`/,
   'avatar cache must not reuse an image after the player skin texture changes');
 assert.match(appSource, /function chatMessageUsernameKey\(message\) \{\s*if \(message\.type === 'activity' \|\| message\.type === 'flood' \|\| message\.type === 'server'\) return null;[\s\S]*?previousChatUsername = chatMessageUsernameKey\(message\)/,
   'join, leave, flood, and server notices must end the current player message group');
@@ -286,7 +289,7 @@ assert.doesNotMatch(
 );
 assert.match(
   botSource,
-  /const handleMinecraftPlayerChat = async[\s\S]*bot\.on\('chat', handleMinecraftPlayerChat\)/,
+  /const handleMinecraftPlayerChat = async[\s\S]*(?:bot\.|\b)on\('chat', handleMinecraftPlayerChat\)/,
   'standard chat and component-only GreenChat must share one player-message handler'
 );
 assert.match(

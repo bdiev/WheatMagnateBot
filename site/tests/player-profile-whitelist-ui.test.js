@@ -26,12 +26,12 @@ assert.match(
 );
 assert.match(
   appSource,
-  /data-player-refresh-command="!pt"[\s\S]*data-player-refresh-command="!jd"[\s\S]*data-player-refresh-command="!seen"/,
+  /function renderPlayerProfileRefreshButton\(command,[\s\S]*data-player-refresh-command="\$\{command\}"[\s\S]*renderPlayerProfileRefreshButton\('!pt'[\s\S]*renderPlayerProfileRefreshButton\('!jd'[\s\S]*profile\.isOnline \|\| profile\.lastSeen \? '' : renderPlayerProfileRefreshButton\('!seen'/,
   'playtime, registration, and empty Last Seen metrics must expose refresh actions'
 );
 assert.match(
   appSource,
-  /messageRefreshRequested = state\.playerProfileMessageRefreshes\.has[\s\S]*<span>Chat Messages<\/span>[\s\S]*messageRefreshRequested \? ''[\s\S]*data-player-refresh-command="!messages"[\s\S]*formatNumber\(profile\.chat\?\.totalMessages\)/,
+  /messageRefreshRequested = state\.playerProfileMessageRefreshes\.has[\s\S]*<dt>Chat messages<\/dt>[\s\S]*formatNumber\(profile\.chat\?\.totalMessages\)[\s\S]*messageRefreshRequested \? '' : renderPlayerProfileRefreshButton\('!messages'/,
   'the Chat Messages metric must expose a refresh action'
 );
 assert.match(
@@ -56,7 +56,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /storedAdminTags[\s\S]*toLowerCase\(\) !== 'new player'[\s\S]*profile\.isNewPlayer[\s\S]*New Player[\s\S]*adminTagMarkup \|\| 'None'/,
+  /storedAdminTags[\s\S]*toLowerCase\(\) !== 'new player'[\s\S]*profile\.isNewPlayer[\s\S]*New Player[\s\S]*adminTagMarkup \? `<div class="player-profile-tags">\$\{adminTagMarkup\}<\/div>`/,
   'Admin metadata must show New Player as a computed tag and hide a stale stored copy'
 );
 assert.match(
