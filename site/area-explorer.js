@@ -170,11 +170,27 @@ function normalizeFind(raw, now = Date.now()) {
   const name = kind === 'MARKER' && cleanName === 'Shulker Box' ? PLACED_SHULKER : cleanName;
   if (x === null || y === null || z === null || !foundAt || !name) return null;
   const count = kind === 'ITEM' ? Math.min(Math.max(normalizeInteger(raw.count, 1_000_000) ?? 1, 1), 1_000_000) : 0;
-  return {
+  const find = {
     kind, x, y, z, foundAt, name, count,
     label: normalizeText(raw.label, 512, { keepNewlines: kind === 'SIGN' }),
     details: normalizeText(raw.details, 2000, { keepNewlines: kind === 'SIGN' })
   };
+  return isIglooSign(find) ? null : find;
+}
+
+/** A sign side's text without its blank lines and the spaces around each line. */
+function signLines(text) {
+  return String(text || '').split('\n').map(line => line.trim()).filter(Boolean).join('\n');
+}
+
+/**
+ * The sign every igloo's basement comes with ("<----" over "---->", the other side blank): the
+ * world wrote it, not a player, so it isn't kept. Migration 097 dropped the ones stored before.
+ */
+function isIglooSign(find) {
+  if (find.kind !== 'SIGN') return false;
+  const sides = [signLines(find.details), signLines(find.label)].filter(Boolean);
+  return sides.length === 1 && sides[0] === '<----\n---->';
 }
 
 /** What makes two finds the same: a sign's block; an item's block, kind, count and name; a marker's block and what it marks (and a named pet's name). Bases are told apart by distance. */

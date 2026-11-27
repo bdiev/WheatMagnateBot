@@ -4634,6 +4634,7 @@ public class AreaExplorer extends Module {
             if (savedSigns.contains(pos.asLong())) continue;
             String front = signText(sign.getFrontText()), back = signText(sign.getBackText());
             if (front.isEmpty() && back.isEmpty()) continue;
+            if (isIglooSign(front, back)) continue;
             savedSigns.add(pos.asLong());
 
             String kind = sign.getCachedState().getBlock().getName().getString();
@@ -4904,6 +4905,12 @@ public class AreaExplorer extends Module {
      */
     static String cleanName(String name) {
         return FindNames.clean(name);
+    }
+
+    /** The sign every igloo's basement comes with: "<----" over "---->", the other side blank. The world wrote it, not a player. */
+    private static boolean isIglooSign(String front, String back) {
+        String igloo = "<----\n---->";
+        return front.isEmpty() ? back.equals(igloo) : back.isEmpty() && front.equals(igloo);
     }
 
     /** The sign's non-blank lines, one per line, or empty. */

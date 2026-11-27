@@ -48,6 +48,11 @@ function testNormalization() {
   assert.equal(sign.name, 'Oak Sign');
   assert.equal(sign.details, 'Hello\nworld', 'sign text keeps its lines, loses control characters');
   assert.equal(sign.count, 0);
+  const igloo = { kind: 'SIGN', x: 1, y: 50, z: 1, foundAt: NOW, name: 'Oak Sign' };
+  assert.equal(normalizeFind({ ...igloo, details: '<----\n---->' }, NOW), null, "an igloo's basement sign isn't kept");
+  assert.equal(normalizeFind({ ...igloo, label: ' <---- \r\n\n---->' }, NOW), null, 'on its back either');
+  assert.ok(normalizeFind({ ...igloo, details: '<----\n---->', label: 'Steve' }, NOW), 'a player wrote on the other side');
+  assert.ok(normalizeFind({ ...igloo, details: '<----\nhome\n---->' }, NOW), 'a player changed it');
 
   const item = normalizeFind({ kind: 'ITEM', x: 1, y: 2, z: 3, foundAt: '2026-10-05T10:00:00Z', name: 'Elytra', count: 0 }, NOW);
   assert.equal(item.count, 1, 'an item counts at least one');
@@ -1093,6 +1098,24 @@ async function testHighlightsEditing() {
   }
 }
 
+/** Migration 097 drops the igloo basement signs already stored and keeps every other sign. */
+async function testIglooSignMigration() {
+  const db = new PGlite();
+  try {
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/067_area_explorer.sql'), 'utf8'));
+    const signs = [['igloo', '', '<----\n---->'], ['back', '<----\n---->', ''], ['written', 'Steve', '<----\n---->'], ['changed', '', '<----\nhome\n---->'], ['other', '', 'Hello']];
+    for (const [key, label, details] of signs) {
+      await db.query(`INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, label, details, dedupe_key)
+        VALUES ('s', 'overworld', 'SIGN', 0, 0, 0, NOW(), 'Oak Sign', $1, $2, $3)`, [label, details, key]);
+    }
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/097_area_explorer_drop_igloo_signs.sql'), 'utf8'));
+    const { rows } = await db.query('SELECT dedupe_key FROM area_explorer_finds ORDER BY id');
+    assert.deepEqual(rows.map(row => row.dedupe_key), ['written', 'changed', 'other']);
+  } finally {
+    await db.close();
+  }
+}
+
 /** A run's timeline: its last start, then its events and finds since - one mod's only. */
 async function testRunTimeline() {
   const db = new PGlite();
@@ -1146,6 +1169,7 @@ async function testRunTimeline() {
   await testMarkers();
   await testRunLog();
   await testRunTimeline();
+  await testIglooSignMigration();
   await testCoverage();
   await testCleanNames();
   await testCommands();
