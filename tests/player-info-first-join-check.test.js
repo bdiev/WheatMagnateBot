@@ -22,6 +22,11 @@ assert.match(
   /on\('playerJoined'[\s\S]*playerInfoFirstJoinCheck\?\.playerJoined\(player\.username\)[\s\S]*on\('playerLeft'[\s\S]*playerInfoFirstJoinCheck\?\.playerLeft\(player\.username\)/,
   'first-join checks must pause on join and resume only after leave'
 );
+assert.match(
+  botSource,
+  /onBelowThreshold:[\s\S]*?metric !== 'joinDate' && metric !== 'playtime'[\s\S]*?reconcileObservedMessages\(targetUsername, 0,/,
+  'a below-threshold playtime or join date must start the message count at zero instead of queuing a !messages lookup'
+);
 
 function createClock() {
   let currentTime = 1_000_000;

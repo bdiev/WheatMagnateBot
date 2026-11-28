@@ -4441,7 +4441,11 @@ playerInfoFirstJoinCheck = createPlayerInfoFirstJoinCheck({
     return playerInfoObservation.requestLookup(metric, username, 'first-join');
   },
   onBelowThreshold: ({ metric, targetUsername, firstObservedAt }) => {
-    if (metric !== 'joinDate') return;
+    // A brand-new account (young join date) or one with almost no playtime
+    // before this visit has no meaningful chat history elsewhere: start its
+    // message count at zero from the first join and let our own archive count
+    // it, instead of leaving a missing value that queues a !messages lookup.
+    if (metric !== 'joinDate' && metric !== 'playtime') return;
     enqueueObservedPlayerInfoWrite(
       () => reconcileObservedMessages(targetUsername, 0, {
         observedAt: firstObservedAt,
