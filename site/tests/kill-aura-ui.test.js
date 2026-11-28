@@ -44,10 +44,10 @@ assert.match(appSource, /modal\.classList\.remove\('is-open'\)/);
 assert.doesNotMatch(appSource, /setKillAuraMobDropdownOpen/, 'removed dropdown helpers must not break navigation');
 assert.match(appSource, /setKillAuraTargetModalOpen\(false, \{ restoreSelection: true, restoreFocus: false \}\)/, 'tab navigation must close the target dialog safely');
 assert.doesNotMatch(indexSource, /<details class="panel admin-command-panel kill-aura-control-panel"/);
-assert.doesNotMatch(indexSource, /<h2>Combat Mode<\/h2>/, 'the static Combat Mode card must be replaced');
+assert.doesNotMatch(indexSource, /<h2[^>]*>Combat Mode<\/h2>/, 'the static Combat Mode card must be replaced');
 assert.match(
   indexSource,
-  /<h2>Attack Range<\/h2>[\s\S]*?id="killAuraAttackRange" type="range" min="0\.5" max="3" step="0\.1"/,
+  /<h2[^>]*>Attack Range<\/h2>[\s\S]*?id="killAuraAttackRange" type="range" min="0\.5" max="3" step="0\.1"/,
   'Kill Aura must expose an accessible 0.5-3.0 block range slider'
 );
 assert.match(appSource, /commandType:\s*'kill_aura_range'[\s\S]*?payload:\s*\{ value \}/, 'range changes must be persisted through the bot command queue');
@@ -95,7 +95,7 @@ assert.match(
 );
 assert.match(
   indexSource,
-  /class="split-grid kill-aura-data-grid"[\s\S]*?<h2>Kill Statistics<\/h2>[\s\S]*?<h2>Combat Details<\/h2>/,
+  /class="split-grid kill-aura-data-grid"[\s\S]*?<h2[^>]*>Kill Statistics<\/h2>[\s\S]*?<h2[^>]*>Combat Details<\/h2>/,
   'Kill Aura data panels must reuse the Obsidian Farm split layout'
 );
 assert.match(
@@ -115,7 +115,7 @@ assert.match(
 );
 assert.match(
   indexSource,
-  /<h2>Kills Over Time<\/h2>[\s\S]*data-chart-controls="killAuraKillsChart"[\s\S]*data-chart-range="hours"[\s\S]*data-chart-range="days"[\s\S]*data-chart-range="months"[\s\S]*id="killAuraKillsChart"/,
+  /<h2[^>]*>Kills Over Time<\/h2>[\s\S]*data-chart-controls="killAuraKillsChart"[\s\S]*data-chart-range="hours"[\s\S]*data-chart-range="days"[\s\S]*data-chart-range="months"[\s\S]*id="killAuraKillsChart"/,
   'Kill Aura must expose an hourly, daily, and monthly history chart'
 );
 assert.match(

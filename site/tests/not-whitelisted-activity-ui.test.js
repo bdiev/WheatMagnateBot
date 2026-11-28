@@ -43,7 +43,7 @@ assert.match(
 );
 assert.match(
   indexSource,
-  /<h2>Average Server Online<\/h2>[\s\S]*Average online across all players\./,
+  /<h2[^>]*>Average Server Online<\/h2>[\s\S]*Average online across all players\./,
   'the card must describe the combined average-online metric'
 );
 assert.match(

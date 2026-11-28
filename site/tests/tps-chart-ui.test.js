@@ -9,7 +9,7 @@ const appSource = fs.readFileSync(path.join(publicDirectory, 'app.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(publicDirectory, 'index.html'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), 'utf8');
 
-assert.match(indexSource, /<h2>TPS History<\/h2>[\s\S]*id="tpsChartCoverage"/,
+assert.match(indexSource, /<h2[^>]*>TPS History<\/h2>[\s\S]*id="tpsChartCoverage"/,
   'TPS card must explain that it is a history view and expose its coverage');
 assert.match(indexSource, /data-chart-range="hours">Hourly<[\s\S]*data-chart-range="days">Daily<[\s\S]*data-chart-range="months">Monthly</,
   'TPS range controls must name their aggregation clearly');

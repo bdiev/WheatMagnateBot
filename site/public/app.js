@@ -2029,6 +2029,9 @@ function updateNavLabel(tab) {
   const clone = activeButton.cloneNode(true);
   clone.querySelectorAll('.notification-badge').forEach(badge => badge.remove());
   label.textContent = clone.textContent.trim();
+  // Show the open section's item icon beside its name on the menu button.
+  const icon = $('.nav-menu-current-icon');
+  if (icon) icon.style.setProperty('--nav-icon', getComputedStyle(activeButton).getPropertyValue('--nav-icon').trim() || 'none');
 }
 
 function navigationVisibilityStorageKey() {
@@ -6086,6 +6089,24 @@ function planChatListUpdate(previousIds, nextIds) {
   return null;
 }
 
+// The first row of each calendar day carries a "Today" / "Yesterday" / date
+// divider drawn by CSS, so the incremental list updates never see extra nodes.
+function markChatDayStarts(list) {
+  let previousDayKey = '';
+  for (const row of list.children) {
+    const dayKey = row.dataset?.createdAt ? playerProfileDayKey(row.dataset.createdAt) : '';
+    const startsDay = Boolean(dayKey) && dayKey !== previousDayKey;
+    row.classList.toggle('chat-day-start', startsDay);
+    if (startsDay) {
+      const label = playerProfileDayLabel(row.dataset.createdAt);
+      if (row.dataset.dayLabel !== label) row.dataset.dayLabel = label;
+    } else if (row.dataset?.dayLabel) {
+      delete row.dataset.dayLabel;
+    }
+    if (dayKey) previousDayKey = dayKey;
+  }
+}
+
 function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
   const list = $('#chatList');
   if (!list) return;
@@ -6159,6 +6180,7 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
   }
   state.chatRenderedIds = nextIds;
   state.renderSignatures['#chatList'] = renderKey;
+  markChatDayStarts(list);
 
   requestAnimationFrame(() => {
     if (scrollMode === 'prepend') {
@@ -16963,6 +16985,39 @@ function scheduleViewportRedraw({ force = false } = {}) {
 }
 
 window.addEventListener('resize', scheduleViewportRedraw, { passive: true });
+
+// On phones the on-screen keyboard only shrinks the visual viewport, so fixed
+// panels (private messages) would keep their input hidden under it. Mirror the
+// visible area into CSS variables and flag the page while a keyboard is open.
+(function trackOnScreenKeyboard() {
+  const viewport = window.visualViewport;
+  if (!viewport) return;
+  const root = document.documentElement;
+  let frame = null;
+  let wasOpen = false;
+  const isTextField = element => Boolean(element?.matches?.('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]), textarea, [contenteditable="true"]'));
+  const update = () => {
+    frame = null;
+    const keyboardOpen = isTextField(document.activeElement)
+      && window.innerHeight - viewport.height > 120;
+    root.style.setProperty('--vv-height', `${Math.round(viewport.height)}px`);
+    root.style.setProperty('--vv-top', `${Math.round(viewport.offsetTop)}px`);
+    root.classList.toggle('keyboard-open', keyboardOpen);
+    if (keyboardOpen && !wasOpen) {
+      const form = document.activeElement.closest('#gameChatForm, #whisperForm');
+      if (form) requestAnimationFrame(() => form.scrollIntoView({ block: 'nearest' }));
+    }
+    wasOpen = keyboardOpen;
+  };
+  const schedule = () => {
+    if (frame === null) frame = requestAnimationFrame(update);
+  };
+  viewport.addEventListener('resize', schedule, { passive: true });
+  viewport.addEventListener('scroll', schedule, { passive: true });
+  document.addEventListener('focusin', schedule);
+  document.addEventListener('focusout', () => setTimeout(schedule, 60));
+  update();
+})();
 window.addEventListener('pageshow', event => {
   if (publicPlayerUsername) return;
   // Standalone mobile PWAs may restore transient body classes from BFCache

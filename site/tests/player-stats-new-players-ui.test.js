@@ -35,7 +35,7 @@ assert.doesNotMatch(
 );
 assert.match(
   htmlSource,
-  /player-new-panel[\s\S]*<h2>New Players<\/h2>[\s\S]*id="newPlayersList"/,
+  /player-new-panel[\s\S]*<h2[^>]*>New Players<\/h2>[\s\S]*id="newPlayersList"/,
   'Player Stats must contain a New Players card'
 );
 assert.match(

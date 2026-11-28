@@ -18197,3 +18197,92 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   .area-explorer-run .area-explorer-dot, .area-explorer-tl-count.is-bump, .area-explorer-tl-recent li.is-fresh { animation: none !important; }
   .area-explorer-tl-done, .area-explorer-tl-now { transition: none; }
 }
+
+/* Day dividers in the game chat: the first message of each day is marked
+   by markChatDayStarts() and draws a "Today" / "Yesterday" / date rule. */
+#chatList > .chat-message.chat-day-start {
+  position: relative;
+  margin-top: 30px;
+}
+
+#chatList > .chat-message.chat-day-start:first-child {
+  margin-top: 26px;
+}
+
+.chat-message.chat-day-start::before {
+  content: attr(data-day-label);
+  position: absolute;
+  top: -24px;
+  left: 50%;
+  z-index: 1;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  border: 1px solid var(--hud-line);
+  border-radius: var(--card-radius);
+  padding: 4px 10px;
+  color: var(--hud-muted);
+  background: var(--hud-bg-soft);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.chat-message.chat-day-start::after {
+  content: "";
+  position: absolute;
+  top: -15px;
+  right: 6px;
+  left: 6px;
+  z-index: 0;
+  height: 1px;
+  background: var(--hud-line);
+  pointer-events: none;
+}
+
+/* While the phone keyboard is open, keep the private-messages panel inside
+   the visible area so its input stays above the keyboard. */
+@media (max-width: 700px) {
+  html.keyboard-open .whisper-panel .whisper-popover {
+    top: calc(var(--vv-top, 0px) + 8px);
+    min-height: 0;
+    max-height: calc(var(--vv-height, 100dvh) - 16px);
+  }
+
+  html.keyboard-open .whisper-panel.has-dialog .whisper-dialog {
+    height: calc(var(--vv-height, 100dvh) - 32px);
+  }
+}
+
+/* Item icons: the open section on the menu button and panel headings. */
+.nav-menu-current-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-right: -4px;
+  background: var(--nav-icon, none) center / contain no-repeat;
+  image-rendering: pixelated;
+}
+
+.nav-menu-current-icon:not([style*="url"]) { display: none; }
+
+.panel-head h2.heading-icon {
+  display: flex;
+  align-items: center;
+  gap: .45em;
+}
+
+.panel-head h2.heading-icon::before {
+  content: "";
+  flex: none;
+  width: 1.05em;
+  height: 1.05em;
+  background: var(--heading-icon, none) center / contain no-repeat;
+  image-rendering: pixelated;
+  filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, .25));
+}
