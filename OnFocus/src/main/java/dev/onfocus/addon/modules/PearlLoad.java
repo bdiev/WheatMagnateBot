@@ -43,12 +43,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Two-press Pearl Loader request. The first press (turning the module on) whispers
- * "load" to the WheatMagnate bot and waits. When the loader account whispers that it
- * is at the pearl (its ready prompts all ask for a "/r ..." answer), a sound plays and
- * the second press (turning the module off) whispers "yes" to the loader. Pressing again before the
- * loader is ready only stops waiting. The module also turns itself off when the loader
- * or WheatMagnate reports that the request ended.
+ * Pearl Loader request driven by one bind. The module follows the request's stage from the
+ * whispers it gets, even while it is off, so a "/w WheatMagnate load" typed by hand counts too:
+ * <ul>
+ *   <li>No request: a press whispers "load" to the WheatMagnate bot and waits.</li>
+ *   <li>Waiting (queued, or the loader is on its way): a press only turns waiting on or off;
+ *       "load" is not sent again.</li>
+ *   <li>Ready (the loader whispered one of its "/r ..." prompts; a sound plays): a press
+ *       whispers "yes" to the loader, whether the module was on or off.</li>
+ * </ul>
+ * The stage is dropped when the loader or WheatMagnate reports that the request ended, on
+ * leaving the server, or once the loader can no longer be waiting for the answer.
  * <p>
  * After the "yes", a listener that runs with the module off waits for the teleport, takes one
  * ender pearl from the nearest chest or barrel that has some, puts it in the hotbar and selects it.
@@ -92,7 +97,16 @@ public class PearlLoad extends Module {
         .build()
     );
 
-    private boolean ready;
+    /** Where the current request is, followed from whispers whether the module is on or off. */
+    private enum Request { NONE, WAITING, READY }
+
+    /** The loader waits two minutes for the answer: past that a "yes" would reach no one. */
+    private static final long READY_TTL_MS = 2 * 60_000L;
+    /** A queue place is held for 15 minutes; the walk to the pearl comes on top. */
+    private static final long WAITING_TTL_MS = 25 * 60_000L;
+
+    private Request request = Request.NONE;
+    private long requestAt;
     // Set when the module turns itself off, so that turning off sends nothing
     private boolean finished;
 
@@ -120,63 +134,95 @@ public class PearlLoad extends Module {
 
     @Override
     public void onActivate() {
-        ready = false;
         finished = false;
-        // A new request drops what was left of the last one
-        setPhase(Phase.IDLE);
         if (mc.player == null || mc.getNetworkHandler() == null) {
             error("Not connected to a server.");
             finish();
             return;
         }
-        ChatUtils.sendPlayerMsg("/w " + botName.get().trim() + " load");
+        expireStaleRequest();
+        switch (request) {
+            case READY -> {
+                // The loader is already waiting for the answer (also for a "load" typed by hand)
+                sendYes();
+                finish();
+            }
+            case WAITING -> info("Already waiting for the Pearl Loader; press again once it is ready.");
+            default -> {
+                // A new request drops what was left of the last one
+                setPhase(Phase.IDLE);
+                ChatUtils.sendPlayerMsg("/w " + botName.get().trim() + " load");
+                setRequest(Request.WAITING);
+            }
+        }
     }
 
     @Override
     public void onDeactivate() {
         if (finished) return;
-        if (ready && mc.player != null && mc.getNetworkHandler() != null) {
-            // Whispered by name rather than /r, so a whisper from someone else in between can't take the "yes"
-            String reply = "/w " + loaderName.get().trim() + " yes";
-            ChatUtils.sendPlayerMsg(reply);
-            if (takePearl.get()) {
-                prevSelected = mc.player.getInventory().selectedSlot;
-                lastPos = mc.player.getPos();
-                lastWorld = mc.world;
-                setPhase(Phase.AWAIT_TELEPORT);
-            }
-        }
-        ready = false;
+        expireStaleRequest();
+        if (request == Request.READY && mc.player != null && mc.getNetworkHandler() != null) sendYes();
+        // Turned off while waiting: the request goes on, and a press once the loader is ready still answers it
     }
 
-    @EventHandler
-    private void onReceiveMessage(ReceiveMessageEvent event) {
-        if (mc.player == null) return;
+    /** Whispers "yes" to the loader and gets ready to hand out the pearl after the teleport. */
+    private void sendYes() {
+        // Whispered by name rather than /r, so a whisper from someone else in between can't take the "yes"
+        ChatUtils.sendPlayerMsg("/w " + loaderName.get().trim() + " yes");
+        setRequest(Request.NONE);
+        if (takePearl.get()) {
+            prevSelected = mc.player.getInventory().selectedSlot;
+            lastPos = mc.player.getPos();
+            lastWorld = mc.world;
+            setPhase(Phase.AWAIT_TELEPORT);
+        }
+    }
 
-        Matcher whisper = WHISPER_PATTERN.matcher(event.getMessage().getString());
-        if (!whisper.matches()) return;
-        String sender = whisper.group(1);
-        String text = whisper.group(2).trim();
+    private void setRequest(Request next) {
+        request = next;
+        requestAt = System.currentTimeMillis();
+    }
+
+    private void expireStaleRequest() {
+        long age = System.currentTimeMillis() - requestAt;
+        if ((request == Request.READY && age > READY_TTL_MS) || (request == Request.WAITING && age > WAITING_TTL_MS)) {
+            setRequest(Request.NONE);
+        }
+    }
+
+    /** Follows the request from the bots' whispers; subscribed while the module is off too. */
+    private void handleWhisper(String sender, String text) {
         String lower = text.toLowerCase(Locale.ROOT);
-
         if (sender.equalsIgnoreCase(loaderName.get().trim())) {
-            if (!ready && READY_PROMPT.matcher(text).find()) {
-                ready = true;
-                mc.world.playSoundFromEntity(mc.player, mc.player, SoundEvents.UI_TOAST_IN, SoundCategory.MASTER, 1f, 1f);
+            if (READY_PROMPT.matcher(text).find()) {
+                if (request != Request.READY) {
+                    mc.world.playSoundFromEntity(mc.player, mc.player, SoundEvents.UI_TOAST_IN, SoundCategory.MASTER, 1f, 1f);
+                    if (!isActive()) info("Pearl Loader is ready: press the Pearl Load bind to confirm.");
+                }
+                setRequest(Request.READY);
             } else if (lower.contains("not set") || lower.contains("leaving")) {
-                finish();
+                endRequest();
             }
         } else if (sender.equalsIgnoreCase(botName.get().trim())) {
             if (lower.contains("not configured") || lower.contains("unavailable") || lower.contains("queue is full")
-                || lower.contains("expired") || lower.contains("not set")) {
-                finish();
+                || lower.contains("expired") || lower.contains("not set") || lower.contains("cancelled")
+                || lower.contains("left the pearl loader queue")) {
+                endRequest();
+            } else if (request == Request.NONE && (lower.contains("in the pearl loader queue") || lower.contains("in the queue")
+                || lower.contains("on its way to your pearl") || lower.contains("already in progress"))) {
+                // A request made by hand: waiting from now on, so a press won't ask again
+                setRequest(Request.WAITING);
             }
         }
+    }
+
+    private void endRequest() {
+        setRequest(Request.NONE);
+        finish();
     }
 
     private void finish() {
         finished = true;
-        ready = false;
         if (isActive()) toggle();
     }
 
@@ -189,11 +235,23 @@ public class PearlLoad extends Module {
         }
     }
 
-    /** Runs with the module off: the pearl hand-out happens after the "yes" turned it off. */
+    /**
+     * Runs with the module off too: it follows the request's whispers, and the pearl hand-out
+     * happens after the "yes" turned the module off.
+     */
     private class AfterLoadListener {
         @EventHandler
         private void onGameLeft(GameLeftEvent event) {
             setPhase(Phase.IDLE);
+            setRequest(Request.NONE);
+        }
+
+        @EventHandler
+        private void onReceiveMessage(ReceiveMessageEvent event) {
+            if (mc.player == null || mc.world == null) return;
+            Matcher whisper = WHISPER_PATTERN.matcher(event.getMessage().getString());
+            if (!whisper.matches()) return;
+            handleWhisper(whisper.group(1), whisper.group(2).trim());
         }
 
         @EventHandler
