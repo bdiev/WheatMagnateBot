@@ -225,6 +225,9 @@ async function testIngestAndQueries() {
     const nearest = await service.getFinds(url('dimension=overworld&sort=nearest&nearX=1090&nearZ=1000'));
     assert.equal(nearest.finds[0].name, 'Base #3', 'the closest to the spot first');
     assert.equal(nearest.finds.at(-1).name, 'Oak Sign');
+    const farthest = await service.getFinds(url('dimension=overworld&sort=farthest'));
+    const spawnDistance = find => find.x * find.x + find.z * find.z;
+    assert.deepEqual(farthest.finds.map(spawnDistance), [...farthest.finds.map(spawnDistance)].sort((a, b) => b - a), 'the farthest from spawn first');
     const byScore = await service.getFinds(url('dimension=overworld&sort=score'));
     assert.deepEqual(byScore.finds.slice(0, 2).map(find => find.name), ['Base #1', 'Base #3'], 'the highest scoring base first, the finds without a score after');
     const basesByScore = await service.getFinds(url('kind=base&dimension=overworld&sort=score'));
@@ -259,7 +262,11 @@ async function testIngestAndQueries() {
     const sentAgain = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [batch.finds[2]] }, NOW);
     assert.equal(sentAgain.added, 0, 'the mod sending it again does not bring it back');
     await assert.rejects(service.removeFind(admin, elytra.id), /removed already/);
-    await assert.rejects(service.removeFind(admin, sign.id), /removed already/, 'signs are not taken off');
+    // A sign comes off too, and the mod sending it again doesn't bring it back
+    const signRemoved = await service.removeFind(admin, sign.id);
+    assert.equal(signRemoved.removed.kind, 'SIGN');
+    assert.equal((await service.getFinds(url('dimension=overworld&kind=SIGN'))).total, 0);
+    await assert.rejects(service.removeFind(admin, sign.id), /removed already/);
 
     const routed = await service.handleApi({ method: 'GET' }, { username: 'viewer', role: 'user' },
       new URL('http://x/api/area-explorer/summary'), { assertAdmin() { throw new Error('not for viewers'); }, readBody: async () => ({}) });

@@ -6777,7 +6777,7 @@ function areaExplorerState() {
       logFilter: '', logEvents: [], logHasMore: false, logServer: null, logRequestId: 0,
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       visibleKinds: readAreaExplorerMarkerKinds(),
-      sort: ['newest', 'nearest', 'name', 'score'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
+      sort: ['newest', 'nearest', 'farthest', 'name', 'score'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
       extent: readAreaExplorerExtent()
     };
   }
@@ -8616,10 +8616,11 @@ function renderAreaExplorerFind(find, { selected = false, showScope = false } = 
   const name = escapeHtml(find.name);
   const label = (find.kind === 'ITEM' || find.kind === 'MARKER') && find.label ? ` <span class="area-explorer-find-label">“${escapeHtml(find.label)}”</span>` : '';
   const count = find.kind === 'ITEM' && find.count > 1 ? `<span class="area-explorer-find-count">${formatNumber(find.count)}</span>` : '';
-  // Sorted by nearness: how far each is from the middle of the map
-  const view = areaExplorerState().sort === 'nearest' ? areaExplorerState().view : null;
-  const away = view ? Math.round(Math.hypot(find.x - view.cx, find.z - view.cz)) : null;
-  const distance = away === null ? '' : `<span class="area-explorer-find-distance">${away >= 1000 ? `${(away / 1000).toFixed(1)}k` : away} blocks away</span>`;
+  // Sorted by nearness: how far each is from the middle of the map; by farness: from spawn
+  const sort = areaExplorerState().sort;
+  const view = sort === 'nearest' ? areaExplorerState().view : null;
+  const away = view ? Math.round(Math.hypot(find.x - view.cx, find.z - view.cz)) : sort === 'farthest' ? Math.round(Math.hypot(find.x, find.z)) : null;
+  const distance = away === null ? '' : `<span class="area-explorer-find-distance">${away >= 1000 ? `${(away / 1000).toFixed(1)}k` : away} blocks ${sort === 'farthest' ? 'from spawn' : 'away'}</span>`;
   // Loot picked up in game, or a marker that's wrong or gone, comes off the site (administrators)
   const removable = find.kind === 'ITEM' || find.kind === 'BASE' || (find.kind === 'MARKER' && !AREA_EXPLORER_PERMANENT_MARKERS.includes(find.name));
   const pickup = removable && state.currentUser?.role === 'admin'
@@ -8641,6 +8642,65 @@ function renderAreaExplorerFind(find, { selected = false, showScope = false } = 
       </div>
     </div>
   </li>`;
+}
+
+/** Takes a find off the site (administrators): off the list, the map and the highlights. */
+async function removeAreaExplorerFind(id) {
+  const ae = areaExplorerState();
+  await deleteJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
+  $$(`#tab-area-explorer [data-find-id="${CSS.escape(id)}"]`).forEach(item => item.remove());
+  if (ae.selectedId === id) selectAreaExplorerFind(null);
+  ae.points = ae.points.filter(point => point.id !== id);
+  queueAreaExplorerMapDraw();
+  ae.findsDirty = true;
+  await loadAreaExplorer({ full: false });
+}
+
+const AREA_EXPLORER_SIGN_HOLD_MS = 800;
+
+/**
+ * A hidden way for administrators to take a sign off the site: hold its icon (in the list or the
+ * details sheet) for a moment. Nothing on the page hints at it.
+ */
+function bindAreaExplorerSignRemoval() {
+  const root = $('#tab-area-explorer');
+  const signIcon = target => target.closest?.('.area-explorer-find.kind-sign .area-explorer-find-icon');
+  let hold = null;
+  const cancel = () => {
+    if (!hold) return;
+    clearTimeout(hold.timer);
+    hold.icon.classList.remove('is-holding');
+    hold = null;
+  };
+  root.addEventListener('pointerdown', event => {
+    cancel();
+    if (state.currentUser?.role !== 'admin' || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    const icon = signIcon(event.target);
+    const item = icon?.closest('[data-find-id]');
+    if (!item) return;
+    const id = item.dataset.findId;
+    hold = { icon, x: event.clientX, y: event.clientY, timer: null };
+    icon.classList.add('is-holding');
+    hold.timer = setTimeout(async () => {
+      cancel();
+      const name = item.querySelector('.area-explorer-find-name')?.textContent.trim() || 'this sign';
+      if (!confirm(`Delete the sign "${name}" from the site? The mod finding it again won't bring it back.`)) return;
+      try {
+        await removeAreaExplorerFind(id);
+      } catch (error) {
+        setBanner(`Could not delete the sign: ${error.message}`);
+      }
+    }, AREA_EXPLORER_SIGN_HOLD_MS);
+  });
+  root.addEventListener('pointermove', event => {
+    if (hold && Math.hypot(event.clientX - hold.x, event.clientY - hold.y) > 10) cancel();
+  });
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave']) root.addEventListener(type, cancel);
+  root.addEventListener('scroll', cancel, { capture: true, passive: true });
+  // No long-press menu over a sign's icon while holding it
+  root.addEventListener('contextmenu', event => {
+    if (state.currentUser?.role === 'admin' && signIcon(event.target)) event.preventDefault();
+  });
 }
 
 /** The star that keeps a find in the user's Favorites tab. */
@@ -10407,6 +10467,7 @@ function setupAreaExplorer() {
     event.preventDefault();
     stepAreaExplorerNearby(event.key === 'ArrowLeft' ? -1 : 1);
   });
+  bindAreaExplorerSignRemoval();
   $('#tab-area-explorer').addEventListener('click', async event => {
     const coords = event.target.closest('[data-copy-coords]');
     if (coords) {
@@ -10454,13 +10515,7 @@ function setupAreaExplorer() {
         : `Remove the ${pickup.dataset.areaPickupName} marker from the site and from the game? The mod finding it again won't bring it back.`)) return;
       pickup.disabled = true;
       try {
-        await deleteJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
-        $$(`#tab-area-explorer [data-find-id="${CSS.escape(id)}"]`).forEach(item => item.remove());
-        if (ae.selectedId === id) selectAreaExplorerFind(null);
-        ae.points = ae.points.filter(point => point.id !== id);
-        queueAreaExplorerMapDraw();
-        ae.findsDirty = true;
-        await loadAreaExplorer({ full: false });
+        await removeAreaExplorerFind(id);
       } catch (error) {
         pickup.disabled = false;
         setBanner(`Could not take ${loot ? 'the loot' : 'the marker'} off: ${error.message}`);

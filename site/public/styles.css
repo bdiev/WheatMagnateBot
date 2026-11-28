@@ -14168,6 +14168,10 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   box-shadow: inset 2px 2px 0 var(--bevel-dark), inset -2px -2px 0 var(--bevel-light);
 }
 .area-explorer-find-icon img { width: 32px; height: 32px; image-rendering: pixelated; object-fit: contain; }
+/* A sign's icon held down (administrators delete it so): no callout or selection, and a slow press-in */
+.area-explorer-find.kind-sign .area-explorer-find-icon { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+.area-explorer-find.kind-sign .area-explorer-find-icon img { -webkit-user-drag: none; }
+.area-explorer-find-icon.is-holding { transform: scale(.88); transition: transform .8s ease-in; }
 /* The stack size, bottom right of the slot as in the game */
 .area-explorer-find-count {
   position: absolute;

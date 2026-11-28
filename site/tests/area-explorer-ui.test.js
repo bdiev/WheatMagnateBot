@@ -385,7 +385,7 @@ function testFullscreenEscapePriority() {
   const context = vm.createContext({
     areaExplorerState: () => ae, $: node, $$: () => [],
     document: { addEventListener: (name, handler) => { if (name === 'keydown') handlers.push(handler); } },
-    setAreaExplorerFindsVisible() {}, renderAreaExplorerExtent() {}, bindAreaExplorerVisibility() {}, focusAreaExplorerPlayer() {},
+    setAreaExplorerFindsVisible() {}, renderAreaExplorerExtent() {}, bindAreaExplorerVisibility() {}, bindAreaExplorerSignRemoval() {}, focusAreaExplorerPlayer() {},
     setAreaExplorerFullscreen: on => { context.fullscreen = on; }
   });
   vm.runInContext(functionSource('setupAreaExplorer'), context);

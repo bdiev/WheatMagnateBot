@@ -1160,7 +1160,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit'), 10) || 50, 1), MAX_PAGE_SIZE);
     const offset = Math.min(Math.max(Number.parseInt(url.searchParams.get('offset'), 10) || 0, 0), 1_000_000);
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    // Newest first, by name, highest base score, or nearest a spot (the middle of the map in view)
+    // Newest first, by name, highest base score, nearest a spot (the middle of the map in view), or farthest from spawn
     const sort = url.searchParams.get('sort');
     const nearX = normalizeInteger(url.searchParams.get('nearX'), MAX_COORDINATE);
     const nearZ = normalizeInteger(url.searchParams.get('nearZ'), MAX_COORDINATE);
@@ -1173,7 +1173,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       orderParams.push(nearX, nearZ);
       const ax = `$${orderParams.length - 1}`, az = `$${orderParams.length}`;
       orderSql = `ORDER BY (x - ${ax}::bigint) * (x - ${ax}::bigint) + (z - ${az}::bigint) * (z - ${az}::bigint), id DESC`;
-    }
+    } else if (sort === 'farthest') orderSql = 'ORDER BY x::bigint * x::bigint + z::bigint * z::bigint DESC, id DESC';
     const favorite = favoriteColumn(orderParams, currentUser);
     const [rows, total] = await Promise.all([
       pool.query(`SELECT *, ${favorite} FROM area_explorer_finds ${whereSql} ${orderSql} LIMIT ${limit} OFFSET ${offset}`, orderParams),
@@ -1253,8 +1253,8 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   /**
-   * Takes loot off the site once it's been picked up in game, a base, or a marker that's wrong or no
-   * longer there (a shulker box taken, a portal broken). It stays in the table, marked, so the mod
+   * Takes loot off the site once it's been picked up in game, a base, a sign, or a marker that's wrong
+   * or no longer there (a shulker box taken, a portal broken). It stays in the table, marked, so the mod
    * sending it again (it's in its all-finds file for good) doesn't bring it back. Its waypoint goes
    * out of the game of the mod that found it ({@link #unmark}).
    */
@@ -1263,13 +1263,15 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const row = (await pool.query(
       `UPDATE area_explorer_finds SET removed_at = NOW(), removed_by = $2
        WHERE id = $1 AND removed_at IS NULL
-         AND (kind IN ('ITEM', 'BASE') OR (kind = 'MARKER' AND name <> ALL($3::text[])))
+         AND (kind IN ('ITEM', 'BASE', 'SIGN') OR (kind = 'MARKER' AND name <> ALL($3::text[])))
        RETURNING *`,
       [id, currentUser.username, PERMANENT_MARKERS]
     )).rows[0];
-    if (!row) throw httpError(404, 'No loot, base or removable marker like that on the site (removed already?).');
-    await unmark(currentUser, row);
-    const what = row.kind === 'ITEM' ? `Loot picked up: ${row.name} ×${row.item_count}` : row.kind === 'BASE' ? `Base removed: ${row.name}` : `Marker removed: ${row.name}`;
+    if (!row) throw httpError(404, 'No loot, base, sign or removable marker like that on the site (removed already?).');
+    // A sign has no waypoint in the game to take out
+    if (row.kind !== 'SIGN') await unmark(currentUser, row);
+    const what = row.kind === 'ITEM' ? `Loot picked up: ${row.name} ×${row.item_count}` : row.kind === 'BASE' ? `Base removed: ${row.name}`
+      : row.kind === 'SIGN' ? `Sign removed: ${row.name}${row.details ? ` "${row.details.replace(/\s*\n\s*/g, ' / ').slice(0, 200)}"` : ''}` : `Marker removed: ${row.name}`;
     await recordSystemLog({
       category: 'area_explorer', actor: currentUser.username,
       message: `${what} at ${row.x} ${row.y} ${row.z} (${row.server}, ${row.dimension}).`
