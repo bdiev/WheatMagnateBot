@@ -8454,7 +8454,6 @@ async function loadAreaExplorerFinds() {
     renderAreaExplorerPager();
     return;
   }
-  list.setAttribute('aria-busy', 'true');
   // "Nearest" is nearest the middle of the map in view, rounded so a nudge doesn't reload the list
   const near = ae.sort === 'nearest' && ae.view ? { nearX: Math.round(ae.view.cx / 64) * 64, nearZ: Math.round(ae.view.cz / 64) * 64 } : {};
   const query = areaExplorerScopeParams({
@@ -8465,6 +8464,8 @@ async function loadAreaExplorerFinds() {
   // A refresh of the same list keeps what's there.
   let skeletonTimer = null;
   if (ae.renderedFindsQuery !== query) {
+    // Dimmed while another list loads; a refresh of the same list isn't, so it doesn't blink
+    list.setAttribute('aria-busy', 'true');
     const showSkeleton = () => { if (ae.findsRequestId === requestId) list.innerHTML = renderAreaExplorerFindsSkeleton(); };
     if (list.querySelector('.area-explorer-find')) skeletonTimer = setTimeout(showSkeleton, AREA_EXPLORER_SKELETON_DELAY_MS);
     else showSkeleton();
@@ -8478,9 +8479,13 @@ async function loadAreaExplorerFinds() {
     const refresh = ae.renderedFindsQuery === query;
     const anchor = refresh ? areaExplorerListAnchor(list) : null;
     const shown = refresh ? areaExplorerListIds(list) : null;
-    list.innerHTML = data.finds.length
+    if (refresh && data.finds.length && list.querySelectorAll) patchAreaExplorerList(list, data.finds);
+    else list.innerHTML = data.finds.length
       ? data.finds.map(find => renderAreaExplorerFind(find)).join('')
       : `<li class="area-explorer-empty">${ae.q ? 'Nothing matches the search.' : ae.kind === 'FAVORITE' ? 'No favorites here yet: star a find to keep it in this tab.' : 'No finds of this kind yet.'}</li>`;
+    if (!(refresh && data.finds.length && list.querySelectorAll) && list.children) {
+      [...list.children].forEach((item, index) => { if (data.finds[index]) rememberAreaExplorerItem(item, renderAreaExplorerFind(data.finds[index])); });
+    }
     if (!refresh) {
       list.scrollTop = 0;
       setAreaExplorerNewFinds(0);
@@ -8497,6 +8502,36 @@ async function loadAreaExplorerFinds() {
     clearTimeout(skeletonTimer);
     if (ae.findsRequestId === requestId) list.removeAttribute('aria-busy');
   }
+}
+
+/**
+ * The same list again, newer: the finds that haven't changed keep their elements, and a changed one
+ * keeps its loaded icon, so nothing blinks or loads its picture again.
+ */
+function patchAreaExplorerList(list, finds) {
+  const old = new Map([...list.querySelectorAll(':scope > [data-find-id]')].map(item => [item.dataset.findId, item]));
+  const template = document.createElement('template');
+  const items = finds.map(find => {
+    const html = renderAreaExplorerFind(find);
+    const kept = old.get(String(find.id));
+    if (kept && kept.areaExplorerHtml === html) return kept;
+    template.innerHTML = html;
+    const item = template.content.firstElementChild;
+    rememberAreaExplorerItem(item, html);
+    const oldIcon = kept?.querySelector('.area-explorer-find-icon img');
+    const newIcon = item.querySelector('.area-explorer-find-icon img');
+    // The same picture (its src may since be the fallback's): the one already loaded
+    if (oldIcon && newIcon && kept.areaExplorerIcon === item.areaExplorerIcon) newIcon.replaceWith(oldIcon);
+    return item;
+  });
+  list.replaceChildren(...items);
+}
+
+/** What a find's element was drawn from, so a refresh can tell whether it changed. */
+function rememberAreaExplorerItem(item, html) {
+  item.areaExplorerHtml = html;
+  const icon = item.querySelector?.('.area-explorer-find-icon img');
+  item.areaExplorerIcon = icon ? `${icon.getAttribute('src')}\u0000${icon.dataset.fallback || ''}` : '';
 }
 
 /** The first find showing at the top of the scrolled list, and how far down it sits; null at the very top. */
