@@ -7058,6 +7058,9 @@ async function loadAreaExplorerData(full) {
   // Refreshes can overlap while the mod uploads: an older answer never replaces a newer one
   const requestId = (ae.summaryRequestId || 0) + 1;
   ae.summaryRequestId = requestId;
+  // Site Commands need nothing from the summary: asked for at once, not after it and the item icons
+  const commandsLoad = state.currentUser.role === 'admin' && full ? loadAreaExplorerCommands() : null;
+  commandsLoad?.catch(() => {});
   const [summary, mapScopes] = await Promise.all([
     fetchJson('/api/area-explorer/summary'), fetchJson('/api/area-explorer/map/scopes'),
     // The site's item pictures, for the finds' and highlights' icons
@@ -7094,7 +7097,7 @@ async function loadAreaExplorerData(full) {
     ae.tokensDirty = false;
     work.push(loadAreaExplorerTokens());
   }
-  if (state.currentUser.role === 'admin' && full) work.push(loadAreaExplorerCommands());
+  if (commandsLoad) work.push(commandsLoad);
   if (full || ae.logServer !== areaExplorerLogServer()) work.push(loadAreaExplorerLog());
   // The runs' timelines: afresh on the page's load and when the mods sent finds
   loadAreaExplorerRunTimelines({ force: full || ae.runTimelinesDirty });
@@ -10290,7 +10293,16 @@ const AREA_EXPLORER_COMMAND_STATES = Object.freeze({
 });
 
 async function loadAreaExplorerCommands() {
-  const { commands } = await fetchJson(`/api/area-explorer/commands?limit=${AREA_EXPLORER_COMMANDS_SHOWN}`);
+  const list = $('#areaExplorerCommands');
+  // Never loaded yet: say so, rather than an empty panel
+  if (list && !areaExplorerState().commands) list.innerHTML = '<li class="area-explorer-empty">Loading commands&hellip;</li>';
+  let commands;
+  try {
+    ({ commands } = await fetchJson(`/api/area-explorer/commands?limit=${AREA_EXPLORER_COMMANDS_SHOWN}`));
+  } catch (error) {
+    if (list && !areaExplorerState().commands) list.innerHTML = '<li class="area-explorer-empty">Could not load the commands.</li>';
+    throw error;
+  }
   areaExplorerState().commands = commands;
   renderAreaExplorerCommands();
 }

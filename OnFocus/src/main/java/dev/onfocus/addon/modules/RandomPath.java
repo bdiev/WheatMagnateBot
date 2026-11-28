@@ -39,6 +39,11 @@ import java.util.Random;
  * only show the client's guesses swapping. A spot that missed is remembered and filled as soon as
  * it's in reach again, before new ones; only walking well away from it forgets it. A spot out of
  * reach isn't placed at all: the server refuses it, and the client would show it placed until it does.
+ * <p>
+ * The picked block is switched to and kept selected (held switch-delay ticks before placing) rather
+ * than swapped to and back in one instant: that let the server place from the slot you were already
+ * holding, skewing the mix heavily towards it. A kept spot that turned out a different block than
+ * the one picked is reported.
  */
 public class RandomPath extends Module {
     private static final int ROTATION_PRIORITY = 50;
@@ -65,8 +70,18 @@ public class RandomPath extends Module {
 
     private final Setting<Boolean> autoSwitch = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-switch")
-        .description("Automatically switches to the chosen block in your hotbar before placing.")
+        .description("Automatically switches to the chosen block in your hotbar before placing. It stays selected afterwards, so the server always places from the same slot the client did.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> switchDelay = sgGeneral.add(new IntSetting.Builder()
+        .name("switch-delay")
+        .description("Ticks to hold a newly selected block before placing it. Switching and placing in the same instant can reach the server with the old slot still selected, so it places whatever you were holding instead of the picked block - skewing the mix towards it. 0 places right after switching.")
+        .defaultValue(1)
+        .range(0, 20)
+        .sliderRange(0, 5)
+        .visible(autoSwitch::get)
         .build()
     );
 
@@ -167,12 +182,24 @@ public class RandomPath extends Module {
     private final Long2ObjectMap<Spot> spots = new Long2ObjectOpenHashMap<>();
     private final Random random = new Random();
 
+    /** Ticks the current hotbar slot has been selected; whether a switch was already made this tick. */
+    private int heldTicks, lastSlot = -1;
+    private boolean switchedThisTick;
+    /** Kept spots that ended up as a different block than the one picked - see tickSpots. */
+    private int wrongBlocks;
+
     public RandomPath() {
         super(OnFocusAddon.CATEGORY, "random-path", "Places a weighted-random block from your mix under your feet wherever there's empty space, weaving a mixed-material path as you walk.");
     }
 
     private void report(String fmt, Object... args) {
         if (notify.get()) info(fmt, args);
+    }
+
+    @Override
+    public void onActivate() {
+        lastSlot = -1;
+        wrongBlocks = 0;
     }
 
     @Override
@@ -183,6 +210,15 @@ public class RandomPath extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null) return;
+
+        int slot = mc.player.getInventory().selectedSlot;
+        if (slot != lastSlot) {
+            lastSlot = slot;
+            heldTicks = 0;
+        } else if (heldTicks < Integer.MAX_VALUE) {
+            heldTicks++;
+        }
+        switchedThisTick = false;
 
         int cap = radius.get() > 0 ? blocksPerTick.get() : 1;
         boolean eligible = hasEligibleBlocks();
@@ -199,9 +235,10 @@ public class RandomPath extends Module {
                 if (spots.containsKey(key)) continue; // tracked: tickSpots sees to it
                 if (!BlockUtils.canPlace(pos) || !inReach(pos)) continue;
 
-                Block block = place(pos, null);
-                if (block != null) {
-                    spots.put(key, new Spot(block, verifyDelay.get()));
+                Pick pick = place(pos, null);
+                if (pick != null) {
+                    // Not sent yet (still switching to it): tickSpots places it once it's held
+                    spots.put(key, new Spot(pick.block, pick.sent, pick.sent ? verifyDelay.get() : 0));
                     placed++;
                 }
             }
@@ -256,7 +293,16 @@ public class RandomPath extends Module {
                     continue;
                 }
                 spot.shown = true;
-                if (--spot.wait <= 0) it.remove(); // stayed: the server kept it
+                if (--spot.wait <= 0) {
+                    // Stayed: the server kept it - but maybe as another block than the one picked
+                    it.remove();
+                    Block actual = mc.world.getBlockState(pos).getBlock();
+                    if (actual != spot.block) {
+                        wrongBlocks++;
+                        report("(highlight)%d, %d, %d(default) became %s instead of %s (%d so far) - the server placed another hotbar block.",
+                            pos.getX(), pos.getY(), pos.getZ(), actual.getName().getString(), spot.block.getName().getString(), wrongBlocks);
+                    }
+                }
                 continue;
             }
 
@@ -283,9 +329,10 @@ public class RandomPath extends Module {
             }
 
             if (budget <= 0 || !inReach(pos)) continue; // kept: placed once it's in reach
-            Block block = place(pos, spot.block);
-            if (block == null) continue;
-            spot.block = block;
+            Pick pick = place(pos, spot.block);
+            if (pick == null) continue;
+            spot.block = pick.block;
+            if (!pick.sent) continue; // switched to it: placed once it's been held long enough
             spot.sent = true;
             spot.wait = verifyDelay.get();
             budget--;
@@ -312,17 +359,20 @@ public class RandomPath extends Module {
     }
 
     /**
-     * Sends a place packet for {@code preferred} if it's still in the hotbar, else for a
-     * weighted-random available block from the mix; the block it sent, or null. Doesn't imply the
-     * server kept it - see tickPending.
+     * Places {@code preferred} if it's still in the hotbar, else a weighted-random available block
+     * from the mix; the block picked and whether its place packet went out (not yet while it's
+     * still being switched to), or null. Doesn't imply the server kept it - see tickSpots.
      * <p>
      * Draws without replacement: if the weighted pick isn't actually in the hotbar, it's dropped
      * from the pool and another is drawn from what's left, still respecting everyone else's
      * relative weight, instead of always falling back to the same runner-up block.
      */
-    private Block place(BlockPos pos, Block preferred) {
+    private Pick place(BlockPos pos, Block preferred) {
         if (BlockUtils.getPlaceSide(pos) == null) return null;
-        if (preferred != null && placeWith(pos, preferred)) return preferred;
+        if (preferred != null) {
+            Result result = placeWith(pos, preferred);
+            if (result != Result.UNAVAILABLE) return new Pick(preferred, result == Result.PLACED);
+        }
 
         List<Map.Entry<Block, PathBlockWeight>> pool = new ArrayList<>();
         int totalWeight = 0;
@@ -346,7 +396,10 @@ public class RandomPath extends Module {
             }
 
             Block block = pool.get(index).getKey();
-            if (block != preferred && placeWith(pos, block)) return block;
+            if (block != preferred) {
+                Result result = placeWith(pos, block);
+                if (result != Result.UNAVAILABLE) return new Pick(block, result == Result.PLACED);
+            }
 
             totalWeight -= pool.get(index).getValue().weight;
             pool.remove(index);
@@ -355,32 +408,58 @@ public class RandomPath extends Module {
         return null;
     }
 
-    /** Sends a place packet for this block, if it's in the hotbar. */
-    private boolean placeWith(BlockPos pos, Block block) {
+    /**
+     * Sends a place packet for this block if it's in hand. One elsewhere in the hotbar is switched to
+     * first and stays selected - no swap back - so the server holds the same slot the client placed
+     * from: a switch, place and switch back all in one instant can reach the server with the slot
+     * change not applied, placing whatever you were holding instead. With switch-delay above 0 the
+     * place waits that many ticks after the switch; only one switch is made per tick.
+     */
+    private Result placeWith(BlockPos pos, Block block) {
         FindItemResult item = InvUtils.findInHotbar(stack ->
             stack.getItem() instanceof BlockItem blockItem && blockItem.getBlock() == block);
-        if (!item.found() || (item.getHand() == null && !autoSwitch.get())) return false;
-        if (!BlockUtils.place(pos, item, rotate.get(), ROTATION_PRIORITY, swing.get(), true)) return false;
+        if (!item.found()) return Result.UNAVAILABLE;
+
+        if (item.getHand() == null) {
+            if (!autoSwitch.get()) return Result.UNAVAILABLE;
+            if (switchedThisTick) return Result.WAITING;
+            InvUtils.swap(item.slot(), false);
+            switchedThisTick = true;
+            lastSlot = item.slot();
+            heldTicks = 0;
+            if (switchDelay.get() > 0) return Result.WAITING;
+        } else if (item.isMainHand() && heldTicks < switchDelay.get()) {
+            return Result.WAITING;
+        }
+
+        if (!BlockUtils.place(pos, item, rotate.get(), ROTATION_PRIORITY, swing.get(), true, false)) return Result.UNAVAILABLE;
         if (render.get()) RenderUtils.renderTickingBlock(pos, sideColor.get(), lineColor.get(), shapeMode.get(), 0, 8, true, false);
-        return true;
+        return Result.PLACED;
     }
 
     @Override
     public String getInfoString() {
+        if (wrongBlocks > 0) return spots.size() + " unconfirmed, " + wrongBlocks + " wrong";
         return spots.isEmpty() ? null : spots.size() + " unconfirmed";
     }
+
+    private enum Result { PLACED, WAITING, UNAVAILABLE }
+
+    /** A block picked for a spot, and whether its place packet went out yet. */
+    private record Pick(Block block, boolean sent) {}
 
     private static final class Spot {
         /** The block placed there: placed again, it's the same one. */
         Block block;
         /** Placed, and its outcome not known yet; shown: the client has had the block there since. */
-        boolean sent = true, shown;
+        boolean sent, shown;
         /** Ticks: till it counts as kept (or as never shown), or before the next go after a miss. */
         int wait;
         int misses;
 
-        Spot(Block block, int wait) {
+        Spot(Block block, boolean sent, int wait) {
             this.block = block;
+            this.sent = sent;
             this.wait = wait;
         }
     }
